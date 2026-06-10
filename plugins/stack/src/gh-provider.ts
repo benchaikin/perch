@@ -9,23 +9,26 @@
  *      — per-PR status, joined onto each layer by `headRefName === branch`.
  *
  * ────────────────────────────────────────────────────────────────────────────
- *  ASSUMPTIONS about `gh stack view --json` (NOT yet pinned against a real
- *  stack — see spec §12 carried-forward note). The parser is tolerant of all
- *  of these; confirming the real shape is a one-file fix in `parseStackView`:
+ *  `gh stack view --json` shape — CONFIRMED against gh-stack v0.0.5. The real
+ *  payload is an object: `{ trunk, currentBranch, branches: [{ name, base,
+ *  isCurrent, isMerged, isQueued, needsRebase }] }`. The parser stays tolerant
+ *  (it predates confirmation and still accepts the variants below), so a future
+ *  gh-stack format change is a one-file fix in `parseStackView`:
  *
- *  A1. The payload is EITHER a top-level JSON array of layers OR an object with
- *      the layers under one of: `layers`, `stack`, `branches`, `entries`.
- *  A2. Layers are listed bottom → top (trunk-adjacent first). If gh emits them
- *      top → bottom we will need to reverse — flagged, easy to flip.
- *  A3. Each layer carries its branch under one of: `branch`, `name`,
- *      `headRefName`, `ref`.
- *  A4. A layer's "needs rebase" is exposed as a boolean under `needsRebase`,
- *      `needs_rebase`, or `rebaseNeeded`, OR as a string `status`/`state`
- *      whose value matches /needs?[ _-]?rebase/i (gh prints "⚠ Needs rebase").
- *      We READ this from gh per the spec rather than recomputing it.
- *  A5. A layer MAY carry its PR number under `prNumber`, `pr`, `number`, or a
- *      nested `pr.number`; and a title under `title` / `pr.title`. These are
- *      optional — we fall back to the `gh pr list` join for status anyway.
+ *  A1. CONFIRMED: object with layers under `branches`. (Also accepts a
+ *      top-level array or `layers`/`stack`/`entries` wrappers, defensively.)
+ *  A2. CONFIRMED: branches are listed bottom → top (trunk-adjacent first).
+ *  A3. CONFIRMED: branch is under `name`. (Also accepts `branch`/`headRefName`/
+ *      `ref`.)
+ *  A4. CONFIRMED: `needsRebase` is a boolean. (Also accepts `needs_rebase`/
+ *      `rebaseNeeded`, or a `status`/`state` string matching /needs rebase/i.)
+ *      Read from gh per the spec rather than recomputed.
+ *  A5. CONFIRMED: a pre-submit layer carries NO inline PR fields (PR number/
+ *      title come from the `gh pr list` join). The parser also accepts inline
+ *      `prNumber`/`number`/`pr.number` + `title`/`pr.title` if a future version
+ *      adds them. gh-stack also emits `base` (a SHA), `isCurrent`, `isMerged`,
+ *      `isQueued` per layer and top-level `trunk`/`currentBranch`, which we
+ *      currently ignore (candidates for richer status later).
  *
  *  `gh pr list --json` field names are stable GitHub CLI output and are NOT
  *  guessed: number, statusCheckRollup, reviewDecision, mergeable, headRefName,

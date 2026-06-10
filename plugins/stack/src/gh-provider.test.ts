@@ -147,6 +147,28 @@ test("parseStackView tolerates a wrapper object and nested pr fields", () => {
   assert.equal(layers[1]?.needsRebase, false);
 });
 
+test("parseStackView handles the real gh-stack v0.0.5 payload", () => {
+  // Captured verbatim from `gh stack view --json` (gh-stack v0.0.5) on a local
+  // 3-branch stack: object with a `branches` array (A1), bottom→top (A2),
+  // branch under `name` (A3), boolean `needsRebase` (A4), no inline PR (A5).
+  const real = JSON.stringify({
+    trunk: "main",
+    currentBranch: "feat-c",
+    branches: [
+      { name: "feat-a", base: "304f134", isCurrent: false, isMerged: false, needsRebase: false },
+      { name: "feat-b", base: "d829a88", isCurrent: false, isMerged: false, needsRebase: false },
+      { name: "feat-c", base: "7bb8702", isCurrent: true, isMerged: false, needsRebase: false },
+    ],
+  });
+  const layers = parseStackView(real);
+  assert.deepEqual(
+    layers.map((l) => l.branch),
+    ["feat-a", "feat-b", "feat-c"],
+  );
+  assert.ok(layers.every((l) => l.needsRebase === false));
+  assert.ok(layers.every((l) => l.prNumber === undefined));
+});
+
 test("parseStackView returns [] for empty or shapeless input", () => {
   assert.deepEqual(parseStackView(""), []);
   assert.deepEqual(parseStackView("{}"), []);
