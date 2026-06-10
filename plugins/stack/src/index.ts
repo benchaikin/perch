@@ -26,11 +26,14 @@ export default definePlugin({
   capabilities: {
     view: read({
       summary: "The current PR stack with per-layer CI & review status",
-      input: z.object({ repo: z.string().optional() }),
+      // `.default({})` so the read is invocable with no args (e.g. `perch stack
+      // view`): a bare invoke sends no input, which a required object would
+      // reject even though every field is optional.
+      input: z.object({ repo: z.string().optional() }).default({}),
       output: StackGraph,
       refresh: { every: "60s", on: ["focus"] },
       view: { kind: "graph", title: "Stack" },
-      run: ({ input }) => ghStackProvider().view(input.repo),
+      run: ({ input }) => ghStackProvider().view(input?.repo),
     }),
     // TODO(M6): action wrappers (sync, submit, push, add, merge, checkout, link, unstack).
   },
