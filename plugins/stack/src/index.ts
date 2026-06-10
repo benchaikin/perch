@@ -9,9 +9,12 @@ import { action, definePlugin, read, z } from "@perch/sdk";
 
 import { ghStackProvider } from "./gh-provider.js";
 import { StackGraph } from "./graph.js";
+import { resolveStackView } from "./resolve-view.js";
 
 export type { Exec, MergeOptions, StackProvider, SyncResult } from "./provider.js";
 export { ghStackProvider } from "./gh-provider.js";
+export { baseRefProvider } from "./base-ref-provider.js";
+export { resolveStackView } from "./resolve-view.js";
 export { CiStatus, StackGraph, StackLayer } from "./graph.js";
 
 /** Per-plugin config: an optional allow-list of `owner/name` repos (spec §6). */
@@ -33,7 +36,9 @@ export default definePlugin({
       output: StackGraph,
       refresh: { every: "60s", on: ["focus"] },
       view: { kind: "graph", title: "Stack" },
-      run: ({ input }) => ghStackProvider().view(input?.repo),
+      // Primary: `gh stack view`; falls back to reconstructing the stack from
+      // open-PR base refs when gh-stack has no view (cross-machine / untracked).
+      run: ({ input, ctx }) => resolveStackView({ repo: input?.repo, log: ctx.log }),
     }),
 
     // ── M6 action wrappers (spec §8.3) ──
