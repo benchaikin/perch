@@ -44,3 +44,6 @@ await build({
 
 await cp(join(src, "renderer", "index.html"), join(dist, "renderer", "index.html"));
 await cp(join(src, "renderer", "renderer.css"), join(dist, "renderer", "renderer.css"));
+
+// Tray icon, loaded by the main process relative to dist/main.js.
+await cp(join(root, "assets", "perch-icon.png"), join(dist, "perch-icon.png"));

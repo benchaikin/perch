@@ -181,16 +181,44 @@ function togglePanel(): void {
   else showPanel();
 }
 
-/** A minimal 1px transparent template image; replace with a real icon later. */
+/** Menu-bar icon height (logical px); macOS picks a sensible size around this. */
+const TRAY_ICON_SIZE = 18;
+
+/**
+ * The tray icon: the Perch bird, bundled at `dist/perch-icon.png` and loaded
+ * relative to this module. A colored (non-template) image so the bird keeps its
+ * colors in the menu bar. Falls back to a painted dot if the asset is missing.
+ */
 function trayImage(): Electron.NativeImage {
-  // 16x16 empty template image keeps the tray slot without bundling an asset.
+  const iconPath = join(dirname(fileURLToPath(import.meta.url)), "perch-icon.png");
+  const img = nativeImage.createFromPath(iconPath);
+  if (img.isEmpty()) return fallbackTrayImage();
+  return img.resize({ width: TRAY_ICON_SIZE, height: TRAY_ICON_SIZE });
+}
+
+/**
+ * Fallback: a generated filled dot template image, used only if the bundled
+ * icon can't be loaded. A template image is defined by its alpha channel
+ * (macOS tints it), so we paint a real shape — a transparent buffer is invisible.
+ */
+function fallbackTrayImage(): Electron.NativeImage {
+  const size = 16;
+  const center = (size - 1) / 2;
+  const radius = 6.5;
+  const buf = Buffer.alloc(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const d = Math.hypot(x - center, y - center);
+      const alpha = d <= radius ? 255 : d <= radius + 1 ? Math.round(255 * (radius + 1 - d)) : 0;
+      const i = (y * size + x) * 4;
+      buf[i] = 0;
+      buf[i + 1] = 0;
+      buf[i + 2] = 0;
+      buf[i + 3] = alpha;
+    }
+  }
   const img = nativeImage.createEmpty();
-  img.addRepresentation({
-    width: 16,
-    height: 16,
-    scaleFactor: 1,
-    buffer: Buffer.alloc(16 * 16 * 4),
-  });
+  img.addRepresentation({ width: size, height: size, scaleFactor: 1, buffer: buf });
   img.setTemplateImage(true);
   return img;
 }
