@@ -169,9 +169,95 @@ test("rollupToCiStatus maps check arrays to normalized status", () => {
   assert.equal(rollupToCiStatus([{ state: "ERROR" }]), "fail");
 });
 
-test("mutating methods throw not-implemented (M6)", async () => {
-  const provider = ghStackProvider({ exec: () => Promise.resolve("[]") });
-  await assert.rejects(() => provider.sync(), /not implemented \(M6\)/);
-  await assert.rejects(() => provider.submit(), /not implemented \(M6\)/);
-  await assert.rejects(() => provider.merge({}), /not implemented \(M6\)/);
+/** Record every `gh` invocation's argv and resolve a fixed stdout. */
+function recordingExec(stdout = ""): { exec: Exec; calls: string[][] } {
+  const calls: string[][] = [];
+  const exec: Exec = (cmd, args) => {
+    assert.equal(cmd, "gh");
+    calls.push(args);
+    return Promise.resolve(stdout);
+  };
+  return { exec, calls };
+}
+
+test("mutations shell to the matching gh stack subcommand with the right argv", async () => {
+  const { exec, calls } = recordingExec();
+  const provider = ghStackProvider({ exec });
+
+  await provider.submit();
+  await provider.push();
+  await provider.add();
+  await provider.add("feat-new");
+  await provider.merge({});
+  await provider.checkout("feat-foo");
+  await provider.checkout(42);
+  await provider.link(["feat-a", 7]);
+  await provider.unstack();
+
+  assert.deepEqual(calls, [
+    ["stack", "submit"],
+    ["stack", "push"],
+    ["stack", "add"],
+    ["stack", "add", "feat-new"],
+    ["stack", "merge"],
+    ["stack", "checkout", "feat-foo"],
+    ["stack", "checkout", "42"],
+    ["stack", "link", "feat-a", "7"],
+    ["stack", "unstack"],
+  ]);
+});
+
+test("mutations pass -R when a repo is supplied", async () => {
+  const { exec, calls } = recordingExec();
+  const provider = ghStackProvider({ exec });
+
+  await provider.submit("owner/repo");
+  await provider.push("owner/repo");
+  await provider.merge({ repo: "owner/repo" });
+
+  assert.deepEqual(calls, [
+    ["-R", "owner/repo", "stack", "submit"],
+    ["-R", "owner/repo", "stack", "push"],
+    ["-R", "owner/repo", "stack", "merge"],
+  ]);
+});
+
+test("sync shells `gh stack sync` and reports success on a clean rebase", async () => {
+  const { exec, calls } = recordingExec("Synced 3 branches onto main.\n");
+  const result = await ghStackProvider({ exec }).sync();
+
+  assert.deepEqual(calls, [["stack", "sync"]]);
+  assert.equal(result.conflict, false);
+  assert.equal(result.needsResolution, undefined);
+  assert.match(result.output, /Synced 3 branches/);
+});
+
+test("sync passes -R and stays clean", async () => {
+  const { exec, calls } = recordingExec("up to date\n");
+  const result = await ghStackProvider({ exec }).sync("owner/repo");
+  assert.deepEqual(calls, [["-R", "owner/repo", "stack", "sync"]]);
+  assert.equal(result.conflict, false);
+});
+
+test("sync maps a conflict-style failure to a conflict SyncResult (no throw)", async () => {
+  // gh stack sync exits non-zero on conflict; the runner rejects, and we map
+  // the conflict-looking output to conflict:true rather than re-throwing.
+  const exec: Exec = () => {
+    const err = new Error(
+      "rebasing feat-middle\nCONFLICT (content): Merge conflict in src/app.ts\n" +
+        "could not apply feat-middle... fix conflicts and then run sync again",
+    );
+    return Promise.reject(err);
+  };
+  const result = await ghStackProvider({ exec }).sync();
+
+  assert.equal(result.conflict, true);
+  assert.ok(result.needsResolution?.includes("feat-middle"), "names the conflicting branch");
+  assert.match(result.output, /Merge conflict/);
+});
+
+test("sync re-throws a genuine (non-conflict) command failure", async () => {
+  const exec: Exec = () =>
+    Promise.reject(new Error("gh: command not found / not a gh stack repository"));
+  await assert.rejects(() => ghStackProvider({ exec }).sync(), /not a gh stack repository/);
 });

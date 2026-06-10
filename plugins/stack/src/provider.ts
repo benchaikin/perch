@@ -9,12 +9,19 @@
  */
 import type { StackGraph } from "./graph.js";
 
-/** Result of a `sync` — implemented in M6, shape stubbed here. */
+/**
+ * Result of a `sync` (the hero action). A cascading rebase can succeed
+ * cleanly or stop on a conflict that needs manual resolution; this result
+ * distinguishes those without throwing, so callers (CLI/GUI) can render a
+ * "resolve then continue" state rather than a hard failure.
+ */
 export interface SyncResult {
   /** True if the cascading rebase left unresolved conflicts. */
   conflict: boolean;
-  /** Branches that need manual resolution, if any. */
+  /** Branches that need manual resolution, if any (best-effort, may be empty). */
   needsResolution?: string[];
+  /** Combined stdout+stderr of `gh stack sync`, for surfacing progress/details. */
+  output: string;
 }
 
 /** Options for `merge` — implemented in M6, shape stubbed here. */

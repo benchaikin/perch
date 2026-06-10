@@ -36,23 +36,102 @@ import { execFile } from "node:child_process";
 
 import type { CiStatus, StackGraph, StackLayer } from "./graph.js";
 import { StackGraph as StackGraphSchema } from "./graph.js";
-import type { Exec, StackProvider, SyncResult } from "./provider.js";
+import type { Exec, MergeOptions, StackProvider, SyncResult } from "./provider.js";
 
-/** Default runner: spawn a real process and resolve its stdout. */
+/**
+ * Default runner: spawn a real process and resolve its stdout. On a non-zero
+ * exit it rejects with the underlying error; for `gh stack sync` we still want
+ * the process output (a conflict exits non-zero but is not a failure), so the
+ * error carries `stdout`/`stderr` which {@link readExecError} reads back.
+ */
 const defaultExec: Exec = (cmd, args) =>
   new Promise((resolve, reject) => {
-    execFile(cmd, args, { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
-      if (err) {
-        reject(err);
-        return;
-      }
-      resolve(stdout);
-    });
+    execFile(
+      cmd,
+      args,
+      { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
+      (err, stdout, stderr) => {
+        if (err) {
+          // Preserve captured output on the error so a non-zero exit (e.g. a
+          // sync conflict) can be inspected rather than swallowed.
+          (err as ExecError).stdout = stdout;
+          (err as ExecError).stderr = stderr;
+          reject(err);
+          return;
+        }
+        resolve(stdout);
+      },
+    );
   });
 
-const NOT_IMPLEMENTED = (method: string): never => {
-  throw new Error(`StackProvider.${method} is not implemented (M6)`);
+/** A child-process error, possibly carrying captured stdio + exit code. */
+type ExecError = Error & {
+  code?: number | string;
+  stdout?: string;
+  stderr?: string;
 };
+
+/**
+ * Extract a best-effort combined-output string from a rejected `exec` error.
+ * Tolerant: tests reject with a plain `Error` whose `message` is the output,
+ * while the real `defaultExec` attaches `stdout`/`stderr`.
+ */
+function readExecError(err: unknown): { output: string; code: number | string | undefined } {
+  if (err && typeof err === "object") {
+    const e = err as ExecError;
+    const parts = [e.stdout ?? "", e.stderr ?? "", e.message ?? ""].filter(
+      (p) => typeof p === "string" && p.length > 0,
+    );
+    return { output: parts.join("\n"), code: e.code };
+  }
+  return { output: String(err), code: undefined };
+}
+
+/**
+ * Conflict-detection heuristic for `gh stack sync` (best-effort — gh-stack's
+ * exact conflict output is NOT pinned, see assumptions below). We treat the
+ * sync as "needs manual resolution" when its combined output matches any of
+ * these markers, which cover both gh-stack's own phrasing and the underlying
+ * `git rebase` conflict text it surfaces.
+ */
+const CONFLICT_MARKERS = [
+  /conflict/i,
+  /needs?[ _-]?(manual[ _-]?)?resolution/i,
+  /resolve .*conflicts?/i,
+  /merge conflict/i,
+  /rebase .*(stopped|paused|halted)/i,
+  /could not apply/i,
+  /fix conflicts and (then )?run/i,
+];
+
+function looksLikeConflict(output: string): boolean {
+  return CONFLICT_MARKERS.some((re) => re.test(output));
+}
+
+/**
+ * Best-effort extraction of the branches that still need manual resolution
+ * from sync output. Matches common git/gh phrasings; returns `undefined` when
+ * nothing identifiable is found (the boolean `conflict` flag is authoritative).
+ */
+function extractNeedsResolution(output: string): string[] | undefined {
+  const branches = new Set<string>();
+  // "CONFLICT (content): Merge conflict in <path>" doesn't name a branch, but
+  // gh-stack tends to log the layer it stopped on, e.g.
+  // "rebasing feat-foo ... conflict" / "could not rebase 'feat-foo'".
+  const patterns = [
+    /(?:rebas(?:e|ing)|could not (?:apply|rebase)|conflict (?:on|in branch))[^\S\r\n]*['"`]?([\w./-]+)['"`]?/gi,
+  ];
+  for (const re of patterns) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(output)) !== null) {
+      const name = m[1];
+      if (name && !/^(content|the|in|on|branch)$/i.test(name)) {
+        branches.add(name);
+      }
+    }
+  }
+  return branches.size > 0 ? [...branches] : undefined;
+}
 
 /** A single check from `statusCheckRollup`. */
 type RollupCheck = {
@@ -279,29 +358,45 @@ export function ghStackProvider(options: GhStackProviderOptions = {}): StackProv
       return StackGraphSchema.parse({ repo, layers } satisfies StackGraph);
     },
 
-    async sync(): Promise<SyncResult> {
-      return NOT_IMPLEMENTED("sync");
+    /**
+     * Hero action: `gh stack sync` (cascading rebase onto trunk). Never throws
+     * on conflict — a non-zero exit whose output looks like a conflict is
+     * mapped to a `SyncResult` with `conflict: true` so callers can render a
+     * "resolve manually, then continue" state. A non-zero exit that does NOT
+     * look like a conflict is a genuine command failure and is re-thrown.
+     */
+    async sync(repo?: string): Promise<SyncResult> {
+      try {
+        const output = await exec("gh", repoArgs(repo, ["stack", "sync"]));
+        return { conflict: false, output };
+      } catch (err) {
+        const { output } = readExecError(err);
+        if (looksLikeConflict(output)) {
+          return { conflict: true, needsResolution: extractNeedsResolution(output), output };
+        }
+        throw err; // genuine failure (auth, not a stack, gh missing, …).
+      }
     },
-    async submit(): Promise<void> {
-      NOT_IMPLEMENTED("submit");
+    async submit(repo?: string): Promise<void> {
+      await exec("gh", repoArgs(repo, ["stack", "submit"]));
     },
-    async push(): Promise<void> {
-      NOT_IMPLEMENTED("push");
+    async push(repo?: string): Promise<void> {
+      await exec("gh", repoArgs(repo, ["stack", "push"]));
     },
-    async add(): Promise<void> {
-      NOT_IMPLEMENTED("add");
+    async add(name?: string): Promise<void> {
+      await exec("gh", ["stack", "add", ...(name ? [name] : [])]);
     },
-    async merge(): Promise<void> {
-      NOT_IMPLEMENTED("merge");
+    async merge(opts: MergeOptions): Promise<void> {
+      await exec("gh", repoArgs(opts.repo, ["stack", "merge"]));
     },
-    async checkout(): Promise<void> {
-      NOT_IMPLEMENTED("checkout");
+    async checkout(ref: string | number): Promise<void> {
+      await exec("gh", ["stack", "checkout", String(ref)]);
     },
-    async link(): Promise<void> {
-      NOT_IMPLEMENTED("link");
+    async link(refs: Array<string | number>): Promise<void> {
+      await exec("gh", ["stack", "link", ...refs.map((r) => String(r))]);
     },
     async unstack(): Promise<void> {
-      NOT_IMPLEMENTED("unstack");
+      await exec("gh", ["stack", "unstack"]);
     },
 
     async version(): Promise<string> {
