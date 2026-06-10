@@ -210,20 +210,21 @@ function togglePanel(): void {
   else showPanel();
 }
 
-/** Menu-bar icon height (logical px); macOS picks a sensible size around this. */
-const TRAY_ICON_SIZE = 18;
-
 /**
- * The tray icon: the Perch bird, bundled at `dist/perch-icon.png` and loaded
- * relative to this module. A colored (non-template) image so the bird keeps its
- * colors in the menu bar. Falls back to a painted dot if the asset is missing.
+ * The tray icon: the Perch bird as a monochrome **template image** (bundled at
+ * `dist/perch-trayTemplate.png`, with a `@2x` retina variant Electron picks up
+ * by filename convention). macOS tints a template image automatically — dark in
+ * a light menu bar, white in a dark one — so it matches the system like a native
+ * menu-bar icon. Falls back to a painted dot if the asset can't be loaded.
+ *
+ * (The full-color `perch-icon.png` is still bundled as an alternative.)
  */
 function trayImage(): Electron.NativeImage {
-  const iconPath = join(dirname(fileURLToPath(import.meta.url)), "perch-icon.png");
+  const iconPath = join(__dirname, "perch-trayTemplate.png");
   const img = nativeImage.createFromPath(iconPath);
   if (img.isEmpty()) return fallbackTrayImage();
-  // Resize by height only so the (non-square) bird keeps its aspect ratio.
-  return img.resize({ height: TRAY_ICON_SIZE });
+  img.setTemplateImage(true);
+  return img;
 }
 
 /**
