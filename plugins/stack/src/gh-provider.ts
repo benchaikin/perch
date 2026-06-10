@@ -303,6 +303,11 @@ export function ghStackProvider(options: GhStackProviderOptions = {}): StackProv
 
   return {
     async view(repo?: string): Promise<StackGraph> {
+      // `gh stack view` determines whether a stack exists (its failure means
+      // "no local stack" → the caller falls back). The `gh pr list` join is
+      // best-effort enrichment: a repo with no remote / no PRs (a local stack
+      // not yet submitted) should still render its branch structure, just
+      // without CI/review status — so a failed PR lookup degrades to "[]".
       const [stackOut, prOut] = await Promise.all([
         exec("gh", ["stack", "view", "--json"]),
         exec(
@@ -313,7 +318,7 @@ export function ghStackProvider(options: GhStackProviderOptions = {}): StackProv
             "--json",
             "number,title,url,statusCheckRollup,reviewDecision,mergeable,headRefName,baseRefName",
           ]),
-        ),
+        ).catch(() => "[]"),
       ]);
 
       const parsedLayers = parseStackView(stackOut);

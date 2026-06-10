@@ -113,6 +113,26 @@ test("view is tolerant of missing PRs and empty status", async () => {
   assert.equal(only?.needsRebase, false);
 });
 
+test("view degrades gracefully when gh pr list fails (e.g. no remote)", async () => {
+  // A local stack with no GitHub remote: `gh stack view` succeeds but
+  // `gh pr list` errors. The stack structure must still render (no PR status).
+  const stack = JSON.stringify({ branches: [{ name: "feat-a" }, { name: "feat-b" }] });
+  const exec: Exec = (_cmd, args) => {
+    if (args[0] === "stack" && args[1] === "view") return Promise.resolve(stack);
+    if (args.includes("pr") && args.includes("list")) {
+      return Promise.reject(new Error("no git remotes found"));
+    }
+    return Promise.reject(new Error(`unexpected: ${args.join(" ")}`));
+  };
+  const graph = await ghStackProvider({ exec }).view();
+  assert.deepEqual(
+    graph.layers.map((l) => l.branch),
+    ["feat-a", "feat-b"],
+  );
+  assert.equal(graph.layers[0]?.ciStatus, "none", "no PR status → ciStatus none");
+  assert.equal(graph.layers[0]?.prNumber, undefined);
+});
+
 test("view passes -R when a repo is supplied to pr list", async () => {
   let sawRepoFlag = false;
   const exec: Exec = (_cmd, args) => {
