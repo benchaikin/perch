@@ -5,9 +5,9 @@
  * each onto the surfaces it opts into. Defaults: CLI always on, GUI on if a
  * view/button is declared, MCP off.
  *
- * NOTE (M0 skeleton): these are the stable type signatures M1 (daemon/registry)
- * and M2 (full SDK) build against. M2 fleshes out expose-resolution, the `ctx`
- * service surface, and runtime input/output validation.
+ * This module is the authoring contract: type definitions, the `read`/`action`/
+ * `definePlugin` constructors, and runtime validation helpers. Expose-resolution
+ * (computing those defaults) lives in `@perch/core`, which owns the projection.
  */
 import { z } from "zod";
 
@@ -63,7 +63,19 @@ export type ActionDef<I, Cfg> = {
   run: (args: { input: I; ctx: CapabilityContext<Cfg> }) => Promise<void> | void;
 };
 
-export type Capability = ReadDef<unknown, unknown, unknown> | ActionDef<unknown, unknown>;
+/**
+ * A capability of any input/output/config shape — the type used wherever
+ * capabilities are stored heterogeneously (the `capabilities` map, the registry).
+ *
+ * The `any` parameters are deliberate and load-bearing: precisely-typed
+ * `read`/`action` definitions only co-exist in one `Record` without per-entry
+ * casts when the element type is bivariant. `unknown` fails under strict
+ * function-parameter variance — a `run` taking a concrete input is not
+ * assignable to one taking `unknown`. The `read`/`action` constructors below
+ * stay fully precise, so authoring keeps complete type-safety.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type Capability = ReadDef<any, any, any> | ActionDef<any, any>;
 
 /** Declare a read (query) capability. */
 export function read<I = void, O = unknown, Cfg = unknown>(
