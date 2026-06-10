@@ -193,7 +193,8 @@ function trayImage(): Electron.NativeImage {
   const iconPath = join(dirname(fileURLToPath(import.meta.url)), "perch-icon.png");
   const img = nativeImage.createFromPath(iconPath);
   if (img.isEmpty()) return fallbackTrayImage();
-  return img.resize({ width: TRAY_ICON_SIZE, height: TRAY_ICON_SIZE });
+  // Resize by height only so the (non-square) bird keeps its aspect ratio.
+  return img.resize({ height: TRAY_ICON_SIZE });
 }
 
 /**
