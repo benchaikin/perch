@@ -5,5 +5,5 @@
     "rootDir": "src"
   },
   "include": ["src"],
-  "references": [{ "path": "../sdk" }, { "path": "../core" }]
+  "references": [{ "path": "../sdk" }, { "path": "../core" }, { "path": "../cli" }]
 }
