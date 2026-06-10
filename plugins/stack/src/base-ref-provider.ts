@@ -33,17 +33,22 @@ import { execFile } from "node:child_process";
 import { rollupToCiStatus } from "./gh-provider.js";
 import type { StackGraph, StackLayer } from "./graph.js";
 import { StackGraph as StackGraphSchema } from "./graph.js";
-import type { Exec, StackProvider, SyncResult } from "./provider.js";
+import type { Exec, ExecOptions, StackProvider, SyncResult } from "./provider.js";
 
-const defaultExec: Exec = (cmd, args) =>
+const defaultExec: Exec = (cmd, args, opts) =>
   new Promise((resolve, reject) => {
-    execFile(cmd, args, { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
-      if (err) {
-        reject(err);
-        return;
-      }
-      resolve(stdout);
-    });
+    execFile(
+      cmd,
+      args,
+      { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, cwd: opts?.cwd },
+      (err, stdout) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolve(stdout);
+      },
+    );
   });
 
 /** Raw `gh pr list` row (only the fields we request). */
@@ -118,6 +123,9 @@ function chainContaining(
 export interface BaseRefProviderOptions {
   /** Injected command runner; defaults to a real `child_process` spawn. */
   exec?: Exec;
+  /** Working directory for every `gh`/`git` call — the targeted repo's path.
+   *  When set, the repo is targeted by cwd and the `-R` flag is dropped. */
+  cwd?: string;
 }
 
 const NOT_SUPPORTED =
@@ -129,8 +137,10 @@ const NOT_SUPPORTED =
  */
 export function baseRefProvider(options: BaseRefProviderOptions = {}): StackProvider {
   const exec = options.exec ?? defaultExec;
+  const cwd = options.cwd;
+  const execOpts: ExecOptions | undefined = cwd ? { cwd } : undefined;
   const repoArgs = (repo: string | undefined, rest: string[]): string[] =>
-    repo ? ["-R", repo, ...rest] : rest;
+    repo && !cwd ? ["-R", repo, ...rest] : rest;
 
   return {
     async view(repo?: string): Promise<StackGraph> {
@@ -144,6 +154,7 @@ export function baseRefProvider(options: BaseRefProviderOptions = {}): StackProv
           "--json",
           "number,title,url,statusCheckRollup,reviewDecision,mergeable,headRefName,baseRefName",
         ]),
+        execOpts,
       );
 
       const prsRaw: unknown = JSON.parse(prOut.trim() || "[]");
@@ -165,7 +176,7 @@ export function baseRefProvider(options: BaseRefProviderOptions = {}): StackProv
       // Anchor on the current branch when it has a PR.
       let anchorHead: string | undefined;
       try {
-        anchorHead = (await exec("git", ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
+        anchorHead = (await exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], execOpts)).trim();
       } catch {
         anchorHead = undefined;
       }

@@ -19,6 +19,9 @@ import type { Exec } from "./provider.js";
 
 export interface ResolveStackViewOptions {
   repo?: string;
+  /** Working directory for every `gh`/`git` call — the targeted repo's path.
+   *  When set, it (not `repo`/`-R`) is the targeting mechanism. */
+  cwd?: string;
   /** Injected runner shared by both providers (tests inject a fixture). */
   exec?: Exec;
   /** Optional log sink; notes when the fallback reconstruction is used. */
@@ -26,17 +29,17 @@ export interface ResolveStackViewOptions {
 }
 
 export async function resolveStackView(options: ResolveStackViewOptions = {}): Promise<StackGraph> {
-  const { repo, exec, log } = options;
+  const { repo, cwd, exec, log } = options;
 
   let primary: StackGraph | undefined;
   try {
-    primary = await ghStackProvider({ exec }).view(repo);
+    primary = await ghStackProvider({ exec, cwd }).view(repo);
     if (primary.layers.length > 0) return primary;
   } catch {
     // gh stack view failed (commonly: no local gh-stack tracking) — reconstruct.
   }
 
-  const reconstructed = await baseRefProvider({ exec }).view(repo);
+  const reconstructed = await baseRefProvider({ exec, cwd }).view(repo);
   if (reconstructed.layers.length > 0) {
     log?.("No gh-stack view; reconstructed the stack from open PR base refs.");
     return reconstructed;

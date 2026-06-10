@@ -13,6 +13,8 @@ export const Channels = {
   refresh: "perch:refresh",
   /** Renderer → main: invoke `stack.sync`. */
   sync: "perch:sync",
+  /** Renderer → main: switch the targeted repo (payload: the repo name). */
+  selectRepo: "perch:select-repo",
 } as const;
 
 /**
@@ -26,6 +28,8 @@ export interface PerchBridge {
   refresh(): void;
   /** Ask the main process to run the Sync action. */
   sync(): void;
+  /** Ask the main process to target a different repo (by name). */
+  selectRepo(name: string): void;
 }
 
 declare global {

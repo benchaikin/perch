@@ -148,6 +148,42 @@ test("view passes -R when a repo is supplied to pr list", async () => {
   assert.equal(sawRepoFlag, true);
 });
 
+test("view runs gh in the configured cwd and DROPS -R (cwd is the target)", async () => {
+  const calls: { args: string[]; cwd?: string }[] = [];
+  const exec: Exec = (cmd, args, opts) => {
+    assert.equal(cmd, "gh");
+    calls.push({ args, cwd: opts?.cwd });
+    if (args[0] === "stack" && args[1] === "view") return Promise.resolve("[]");
+    return Promise.resolve("[]");
+  };
+  // A repo name is still passed, but with cwd set it must NOT become `-R`.
+  await ghStackProvider({ exec, cwd: "/work/main" }).view("owner/repo");
+
+  assert.ok(
+    calls.every((c) => c.cwd === "/work/main"),
+    "every gh call carries the cwd",
+  );
+  const prList = calls.find((c) => c.args.includes("pr") && c.args.includes("list"));
+  assert.ok(prList, "pr list was called");
+  assert.ok(!prList!.args.includes("-R"), "no -R flag when targeting by cwd");
+});
+
+test("mutations carry the configured cwd through Exec", async () => {
+  const calls: { args: string[]; cwd?: string }[] = [];
+  const exec: Exec = (_cmd, args, opts) => {
+    calls.push({ args, cwd: opts?.cwd });
+    return Promise.resolve("");
+  };
+  const provider = ghStackProvider({ exec, cwd: "/work/main" });
+  await provider.submit();
+  await provider.checkout("feat-x");
+
+  assert.ok(
+    calls.every((c) => c.cwd === "/work/main"),
+    "submit + checkout both run in the targeted repo's cwd",
+  );
+});
+
 test("parseStackView tolerates a wrapper object and nested pr fields", () => {
   const wrapped = JSON.stringify({
     layers: [

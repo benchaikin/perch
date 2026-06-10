@@ -81,6 +81,24 @@ test("returns an empty graph when there are no open PRs", async () => {
   assert.equal(graph.layers.length, 0);
 });
 
+test("view runs gh + git in the configured cwd and drops -R", async () => {
+  const calls: { cmd: string; args: string[]; cwd?: string }[] = [];
+  const exec: Exec = (cmd, args, opts) => {
+    calls.push({ cmd, args, cwd: opts?.cwd });
+    if (cmd === "git" && args.includes("rev-parse")) return Promise.resolve("feat-b\n");
+    if (cmd === "gh" && args.includes("pr") && args.includes("list")) return Promise.resolve(PRS);
+    return Promise.reject(new Error(`unexpected: ${cmd} ${args.join(" ")}`));
+  };
+  await baseRefProvider({ exec, cwd: "/work/infra" }).view("owner/repo");
+
+  assert.ok(
+    calls.every((c) => c.cwd === "/work/infra"),
+    "both gh and git calls carry the cwd",
+  );
+  const prList = calls.find((c) => c.cmd === "gh");
+  assert.ok(prList && !prList.args.includes("-R"), "no -R flag when targeting by cwd");
+});
+
 test("mutations are unsupported on a reconstructed stack", async () => {
   const p = baseRefProvider({ exec: fakeExec({ prs: PRS }) });
   await assert.rejects(() => p.sync(), /not supported/);

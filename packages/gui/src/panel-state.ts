@@ -17,6 +17,22 @@
 export const STACK_VIEW_ID = "stack.view";
 /** Canonical capability id of the hero Sync action (added by M6). */
 export const STACK_SYNC_ID = "stack.sync";
+/** Canonical capability id of the configured-repos read (v1.1 repo switcher). */
+export const STACK_REPOS_ID = "stack.repos";
+
+/** One configured repo (mirrors the stack plugin's `RepoEntry`). */
+export interface RepoEntry {
+  /** Display name — the basename of the repo's path. */
+  name: string;
+  /** Local path to the repo. */
+  path: string;
+}
+
+/** `stack.repos`'s output: the configured repos + the default name. */
+export interface ReposResult {
+  repos: RepoEntry[];
+  default?: string;
+}
 
 /** Normalized CI rollup for a layer (mirrors the stack plugin's `CiStatus`). */
 export type CiStatus = "pass" | "fail" | "pending" | "none";
@@ -83,6 +99,10 @@ export interface PanelState {
   rows: LayerRow[];
   /** Whether the Sync button should be enabled (the action exists in the registry). */
   syncAvailable: boolean;
+  /** Configured repo names for the switcher dropdown (empty / single → hidden). */
+  repos: string[];
+  /** The currently-targeted repo name, when one is selected. */
+  selectedRepo?: string;
 }
 
 /** Inputs to {@link buildPanelState}. */
@@ -95,6 +115,10 @@ export interface BuildInput {
   syncAvailable: boolean;
   /** A transient error message (e.g. an invoke failed). */
   error?: string;
+  /** Configured repos from `stack.repos` (drives the switcher dropdown). */
+  repos?: RepoEntry[];
+  /** The currently-targeted repo name (the switcher's selection). */
+  selectedRepo?: string;
 }
 
 /** Map a normalized CI status to a status chip. */
@@ -165,7 +189,12 @@ export function toLayerRow(layer: StackLayer): LayerRow {
  * panel, matching the target UI where the most-recent work reads first.
  */
 export function buildPanelState(input: BuildInput): PanelState {
-  const { graph, daemonUp, syncAvailable, error } = input;
+  const { graph, daemonUp, syncAvailable, error, selectedRepo } = input;
+
+  // The switcher fields ride along on every state so the dropdown stays put
+  // regardless of the stack's load/error status.
+  const repos = (input.repos ?? []).map((r) => r.name);
+  const switcher = { repos, selectedRepo };
 
   if (!daemonUp) {
     return {
@@ -173,15 +202,16 @@ export function buildPanelState(input: BuildInput): PanelState {
       message: "perchd not running — start it with `perchd`",
       rows: [],
       syncAvailable: false,
+      ...switcher,
     };
   }
 
   if (error) {
-    return { status: "error", message: error, rows: [], syncAvailable };
+    return { status: "error", message: error, rows: [], syncAvailable, ...switcher };
   }
 
   if (!graph) {
-    return { status: "empty", message: "Loading stack…", rows: [], syncAvailable };
+    return { status: "empty", message: "Loading stack…", rows: [], syncAvailable, ...switcher };
   }
 
   if (graph.layers.length === 0) {
@@ -191,9 +221,10 @@ export function buildPanelState(input: BuildInput): PanelState {
       repo: graph.repo,
       rows: [],
       syncAvailable,
+      ...switcher,
     };
   }
 
   const rows = [...graph.layers].reverse().map(toLayerRow);
-  return { status: "ok", repo: graph.repo, rows, syncAvailable };
+  return { status: "ok", repo: graph.repo, rows, syncAvailable, ...switcher };
 }
