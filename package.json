@@ -14,7 +14,9 @@
     "typecheck": "tsc -b",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "bins:install": "node scripts/install-bins.mjs",
+    "bins:uninstall": "node scripts/install-bins.mjs --uninstall"
   },
   "devDependencies": {
     "@eslint/js": "^9.14.0",

@@ -152,7 +152,36 @@ additional plugins, Windows support.
 
 - Node.js + a recent `gh` CLI, authenticated (`gh auth status`)
 - `gh stack` extension: `gh extension install github/gh-stack`
+- pnpm
 - macOS or Linux
+
+---
+
+## Install & run
+
+```bash
+pnpm install
+pnpm build
+
+# Put `perch` and `perchd` on your PATH (writes wrappers into ~/.local/bin;
+# override with --dir <path> or PERCH_BIN_DIR). Opt-in — edits no shell profile.
+pnpm bins:install      # (pnpm bins:uninstall to remove)
+```
+
+Then, from inside a repo that has a `gh stack`:
+
+```bash
+perch daemon start      # starts perchd; loads plugins from perch.json
+perch stack view        # (or --json / --watch)
+perch daemon status     # / stop / restart
+```
+
+Config lives at `~/Library/Application Support/Perch/perch.json` (macOS) or
+`${XDG_CONFIG_HOME:-~/.config}/perch/perch.json` (Linux); `perchd` hot-reloads
+it on change. The GUI launches with `pnpm --filter @perch/gui start` (menu-bar
+bird icon → click for the panel; the tray menu can open the config file).
+
+> Prefer pnpm's own linker? `pnpm --filter @perch/cli --filter @perch/core link --global` works too (requires `pnpm setup`).
 
 ---
 
