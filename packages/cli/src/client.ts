@@ -18,6 +18,7 @@ import {
   Methods,
   Notifications,
   type InvokeParams,
+  type RegistryChangedNotification,
   type RegistryListResult,
   type SubscribeParams,
   type SubscribeResult,
@@ -94,6 +95,14 @@ export class PerchClient {
    */
   onUpdate(handler: (note: UpdateNotification) => void): Disposable {
     return this.#conn.onNotification(Notifications.capabilityUpdate, handler);
+  }
+
+  /**
+   * Register a handler for `registry.changed` notifications (fired when the
+   * daemon hot-reloads `perch.json`). Returns a {@link Disposable}.
+   */
+  onRegistryChanged(handler: (note: RegistryChangedNotification) => void): Disposable {
+    return this.#conn.onNotification(Notifications.registryChanged, handler);
   }
 
   /** Tear down the connection and underlying socket. */

@@ -9,10 +9,11 @@
  *
  * NOTE: a visible launch is not verified in CI (no display). See README.
  */
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, Tray, screen } from "electron";
-import { socketPath as defaultSocketPath } from "@perch/core";
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, shell, Tray, screen } from "electron";
+import { configPath as defaultConfigPath, socketPath as defaultSocketPath } from "@perch/core";
 import { DaemonUnavailableError, PerchClient } from "@perch/cli";
 import { Channels } from "./ipc.js";
 import {
@@ -69,6 +70,9 @@ async function connect(): Promise<void> {
     }
   });
 
+  // The daemon hot-reloads perch.json — re-sync when the registry changes.
+  client.onRegistryChanged(() => void reloadFromRegistry());
+
   // Sync is added in parallel by M6 and may be absent here — gate the button on
   // the registry rather than assuming it exists.
   try {
@@ -100,6 +104,31 @@ async function refresh(): Promise<void> {
     buildInput.error = undefined;
   } catch (err) {
     buildInput.error = `stack.view: ${errorMessage(err)}`;
+  }
+  pushState();
+}
+
+/**
+ * Re-sync after the daemon hot-reloads `perch.json`: refresh the registry (Sync
+ * availability) and re-subscribe to `stack.view`, which may have been added or
+ * removed by the config change.
+ */
+async function reloadFromRegistry(): Promise<void> {
+  if (!client) return;
+  try {
+    const caps = await client.registryList();
+    buildInput.syncAvailable = caps.some((c) => c.id === STACK_SYNC_ID);
+    if (caps.some((c) => c.id === STACK_VIEW_ID)) {
+      const sub = await client.subscribe({ id: STACK_VIEW_ID });
+      subscriptionKey = sub.inputKey;
+      if (sub.current !== undefined) buildInput.graph = sub.current as StackGraph;
+      buildInput.error = undefined;
+    } else {
+      // The stack plugin was disabled in config — clear its data.
+      buildInput.graph = { layers: [] };
+    }
+  } catch (err) {
+    buildInput.error = `registry: ${errorMessage(err)}`;
   }
   pushState();
 }
@@ -224,11 +253,38 @@ function fallbackTrayImage(): Electron.NativeImage {
   return img;
 }
 
+/**
+ * The `perch.json` the GUI opens. Created with a sensible default (the stack
+ * plugin enabled) if it doesn't exist yet, so "Open Config" always lands on a
+ * real file. Returns its path.
+ */
+function ensureConfigFile(): string {
+  const path = defaultConfigPath();
+  if (!existsSync(path)) {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${JSON.stringify({ plugins: { stack: {} } }, null, 2)}\n`, "utf8");
+  }
+  return path;
+}
+
+/** Open `perch.json` in the user's default editor. */
+function openConfig(): void {
+  void shell.openPath(ensureConfigFile());
+}
+
+/** Reveal `perch.json` in Finder / the file manager. */
+function revealConfig(): void {
+  shell.showItemInFolder(ensureConfigFile());
+}
+
 function createTray(): void {
   tray = new Tray(trayImage());
   tray.setToolTip("Perch");
   const menu = Menu.buildFromTemplate([
     { label: "Show / Hide", click: () => togglePanel() },
+    { type: "separator" },
+    { label: "Open Config", click: () => openConfig() },
+    { label: "Reveal Config in Finder", click: () => revealConfig() },
     { type: "separator" },
     { label: "Quit", role: "quit" },
   ]);
