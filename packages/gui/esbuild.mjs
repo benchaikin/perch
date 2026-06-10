@@ -49,5 +49,8 @@ await cp(join(src, "renderer", "renderer.css"), join(dist, "renderer", "renderer
 // monochrome template (+ @2x) is the default menu-bar icon; the color PNG is
 // kept as an alternative.
 await cp(join(root, "assets", "perch-trayTemplate.png"), join(dist, "perch-trayTemplate.png"));
-await cp(join(root, "assets", "perch-trayTemplate@2x.png"), join(dist, "perch-trayTemplate@2x.png"));
+await cp(
+  join(root, "assets", "perch-trayTemplate@2x.png"),
+  join(dist, "perch-trayTemplate@2x.png"),
+);
 await cp(join(root, "assets", "perch-icon.png"), join(dist, "perch-icon.png"));
