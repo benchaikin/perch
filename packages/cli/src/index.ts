@@ -20,6 +20,10 @@ import { parseArgs } from "./args.js";
 import { DaemonUnavailableError, PerchClient } from "./client.js";
 import { renderResult } from "./render.js";
 
+// Re-export the RPC client so other frontends (e.g. the M5 GUI) can reuse it
+// rather than re-implementing a vscode-jsonrpc wrapper.
+export { PerchClient, DaemonUnavailableError } from "./client.js";
+
 /** Entry point: parse argv, connect to perchd, dispatch the command. */
 export async function run(argv: string[]): Promise<void> {
   const { positionals, cli, input } = parseArgs(argv.slice(2));

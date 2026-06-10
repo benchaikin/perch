@@ -1,0 +1,178 @@
+:root {
+  --bg: #1e1e1e;
+  --fg: #e6e6e6;
+  --muted: #8a8a8a;
+  --rule: #333;
+  --chip-bg: #2a2a2a;
+  --ok: #4ec9b0;
+  --warn: #d7ba7d;
+  --bad: #f07178;
+  --accent: #4a9eff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  font:
+    12px/1.4 -apple-system,
+    "SF Pro Text",
+    system-ui,
+    sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 8px 10px;
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  -webkit-app-region: drag;
+}
+
+.title {
+  font-weight: 600;
+}
+
+.repo {
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rule {
+  border: none;
+  border-top: 1px solid var(--rule);
+  margin: 6px 0;
+}
+
+.rows {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 2px;
+}
+
+.dot {
+  color: var(--accent);
+  flex: 0 0 auto;
+}
+
+.branch {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pr {
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+
+.chips {
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.chip {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--chip-bg);
+  white-space: nowrap;
+}
+
+.chip.ok {
+  color: var(--ok);
+}
+.chip.warn {
+  color: var(--warn);
+}
+.chip.bad {
+  color: var(--bad);
+}
+.chip.muted {
+  color: var(--muted);
+}
+
+.badge {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid currentColor;
+}
+
+.badge.rebase {
+  color: var(--warn);
+}
+.badge.conflict {
+  color: var(--bad);
+}
+
+.message {
+  color: var(--muted);
+  text-align: center;
+  padding: 16px 8px;
+}
+
+.message.error {
+  color: var(--bad);
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn {
+  flex: 1;
+  padding: 5px 8px;
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  background: #2a2a2a;
+  color: var(--fg);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.btn:hover {
+  background: #333;
+}
+
+.btn-primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

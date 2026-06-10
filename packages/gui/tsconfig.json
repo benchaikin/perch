@@ -2,8 +2,12 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+    // The renderer + preload run in the browser/Electron, so they need DOM types
+    // alongside Node. esbuild produces the actual browser bundles; tsc here is
+    // for type-checking + emitting the Node main process.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"]
   },
   "include": ["src"],
-  "references": [{ "path": "../sdk" }, { "path": "../core" }]
+  "references": [{ "path": "../sdk" }, { "path": "../core" }, { "path": "../cli" }]
 }
