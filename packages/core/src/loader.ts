@@ -103,6 +103,43 @@ export async function loadPlugins(ids: string[]): Promise<PluginDef[]> {
   return plugins;
 }
 
+/**
+ * Load workspace plugins selected by their **plugin id** (the `id` on the
+ * `PluginDef`, e.g. `"stack"`), as opposed to {@link loadPlugins} which takes
+ * package names. This is the path used when booting from `perch.json`, whose
+ * `plugins` map is keyed by plugin id. We discover every workspace plugin
+ * package, import each, and keep those whose default export's `id` is requested.
+ * Throws if any requested id is not found among discovered plugins.
+ */
+export async function loadPluginsByIds(ids: string[]): Promise<PluginDef[]> {
+  if (ids.length === 0) return [];
+  const root = findWorkspaceRoot(dirname(fileURLToPath(import.meta.url)));
+  const discovered = root ? discoverWorkspacePlugins(root) : new Map<string, string>();
+
+  const want = new Set(ids);
+  const byId = new Map<string, PluginDef>();
+  for (const entry of discovered.values()) {
+    let mod: unknown;
+    try {
+      mod = await import(pathToFileURL(entry).href);
+    } catch {
+      // Skip a plugin that fails to import rather than failing the whole boot;
+      // a requested-but-missing id is reported below.
+      continue;
+    }
+    const def = (mod as { default?: unknown }).default;
+    if (isPluginDef(def) && want.has(def.id)) {
+      byId.set(def.id, def);
+    }
+  }
+
+  const missing = ids.filter((id) => !byId.has(id));
+  if (missing.length > 0) {
+    throw new Error(`perchd: no workspace plugin provides id(s): ${missing.join(", ")}`);
+  }
+  return ids.map((id) => byId.get(id)!);
+}
+
 function isPluginDef(value: unknown): value is PluginDef {
   if (!value || typeof value !== "object") return false;
   const v = value as Record<string, unknown>;

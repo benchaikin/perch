@@ -18,6 +18,7 @@
 import { socketPath as defaultSocketPath, type CapabilityMeta } from "@perch/core";
 import { parseArgs } from "./args.js";
 import { DaemonUnavailableError, PerchClient } from "./client.js";
+import { runDaemonCommand } from "./daemon.js";
 import { renderResult } from "./render.js";
 
 // Re-export the RPC client so other frontends (e.g. the M5 GUI) can reuse it
@@ -28,6 +29,14 @@ export { PerchClient, DaemonUnavailableError } from "./client.js";
 export async function run(argv: string[]): Promise<void> {
   const { positionals, cli, input } = parseArgs(argv.slice(2));
   const socket = cli.socket ?? defaultSocketPath();
+
+  // Built-in `daemon` command group — manages the daemon process itself, so it
+  // is handled BEFORE the registry dispatch (which requires a running daemon).
+  if (positionals[0] === "daemon") {
+    const code = await runDaemonCommand(positionals[1], { socket: cli.socket });
+    if (code !== 0) process.exitCode = code;
+    return;
+  }
 
   let client: PerchClient;
   try {

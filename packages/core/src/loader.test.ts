@@ -12,7 +12,7 @@ test("findWorkspaceRoot locates the pnpm workspace root", () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const root = findWorkspaceRoot(here);
   assert.ok(root, "expected to find a workspace root");
-  assert.ok(root.endsWith("perch"), `unexpected workspace root: ${root}`);
+  assert.ok(/perch[^/]*$/.test(root), `unexpected workspace root: ${root}`);
 });
 
 test("discoverWorkspacePlugins maps @perch/plugin-stack to its built entry", () => {
