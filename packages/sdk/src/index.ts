@@ -37,6 +37,10 @@ export type ViewHint = {
 export interface CapabilityContext<Cfg = unknown> {
   config: Cfg;
   log: (message: string) => void;
+  /** Cancellation signal, fulfilled by the daemon when a call is aborted
+   *  (client disconnect, superseding refresh, shutdown). Optional so existing
+   *  call sites and tests need not provide one. */
+  signal?: AbortSignal;
 }
 
 export type ReadDef<I, O, Cfg> = {
@@ -84,6 +88,75 @@ export type PluginDef<Cfg = unknown> = {
 /** Define a Perch plugin. */
 export function definePlugin<Cfg = unknown>(def: PluginDef<Cfg>): PluginDef<Cfg> {
   return def;
+}
+
+/** The canonical registry id for a capability: `${pluginId}.${capName}`. */
+export type CapabilityId = string;
+
+/** Build the canonical registry id for a capability. */
+export function capabilityId(pluginId: string, capName: string): CapabilityId {
+  return `${pluginId}.${capName}`;
+}
+
+/**
+ * Validate `raw` against a capability's `input` schema if present, otherwise
+ * pass it through unchanged. Lets zod throw on validation failure.
+ *
+ * Accepts any capability shape carrying an optional `input` schema (reads and
+ * actions of any `I`); the result type follows the schema when known.
+ */
+export function parseInput<I>(cap: { input?: z.ZodType<I> }, raw: unknown): I {
+  if (cap.input) {
+    return cap.input.parse(raw);
+  }
+  return raw as I;
+}
+
+/**
+ * Validate a read's produced `value` against its `output` schema if present,
+ * otherwise pass it through unchanged. Actions declare no `output`, so this is
+ * a pass-through for them. Lets zod throw on validation failure.
+ */
+export function parseOutput<O>(cap: { output?: z.ZodType<O> }, value: unknown): O {
+  if (cap.output) {
+    return cap.output.parse(value);
+  }
+  return value as O;
+}
+
+/**
+ * Validate a plugin's `raw` config against its `config` schema if present,
+ * otherwise pass it through unchanged. Lets zod throw on validation failure.
+ */
+export function parseConfig<Cfg>(plugin: { config?: z.ZodType<Cfg> }, raw: unknown): Cfg {
+  if (plugin.config) {
+    return plugin.config.parse(raw);
+  }
+  return raw as Cfg;
+}
+
+const REFRESH_UNITS = {
+  ms: 1,
+  s: 1_000,
+  m: 60_000,
+  h: 3_600_000,
+} as const;
+
+/**
+ * Convert a refresh interval string (e.g. "500ms", "60s", "5m", "2h") to
+ * milliseconds. Throws on malformed input. The unit suffix is required;
+ * `ms` is matched before `s` so it is never misread as seconds.
+ */
+export function parseRefreshInterval(every: string): number {
+  const match = /^(\d+)(ms|s|m|h)$/.exec(every);
+  if (!match) {
+    throw new Error(
+      `Invalid refresh interval: ${JSON.stringify(every)} (expected e.g. "500ms", "60s", "5m", "2h")`,
+    );
+  }
+  const value = Number(match[1]);
+  const unit = match[2] as keyof typeof REFRESH_UNITS;
+  return value * REFRESH_UNITS[unit];
 }
 
 /** Re-exported so plugin authors don't depend on zod directly. */
