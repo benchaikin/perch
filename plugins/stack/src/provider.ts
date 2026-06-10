@@ -52,9 +52,19 @@ export interface StackProvider {
   version(): Promise<string>;
 }
 
+/** Options for an {@link Exec} invocation. */
+export interface ExecOptions {
+  /** Working directory to run the command in. This is how a specific repo is
+   *  targeted: `gh stack`/`gh pr list` read the repo from their cwd's git
+   *  remote, so running with `cwd` set scopes the command to that repo. */
+  cwd?: string;
+}
+
 /**
- * Injected command runner: runs `cmd` with `args` and resolves its stdout.
- * The real implementation spawns a child process; tests pass a fixture-backed
- * stub so the suite never shells out. All `gh` invocations go through this.
+ * Injected command runner: runs `cmd` with `args` (optionally in `opts.cwd`)
+ * and resolves its stdout. The real implementation spawns a child process;
+ * tests pass a fixture-backed stub so the suite never shells out. All `gh`/`git`
+ * invocations go through this. The third argument is optional so existing fake
+ * execs (which ignore it) stay compatible.
  */
-export type Exec = (cmd: string, args: string[]) => Promise<string>;
+export type Exec = (cmd: string, args: string[], opts?: ExecOptions) => Promise<string>;

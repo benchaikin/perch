@@ -39,20 +39,23 @@ import { execFile } from "node:child_process";
 
 import type { CiStatus, StackGraph, StackLayer } from "./graph.js";
 import { StackGraph as StackGraphSchema } from "./graph.js";
-import type { Exec, MergeOptions, StackProvider, SyncResult } from "./provider.js";
+import type { Exec, ExecOptions, MergeOptions, StackProvider, SyncResult } from "./provider.js";
 
 /**
  * Default runner: spawn a real process and resolve its stdout. On a non-zero
  * exit it rejects with the underlying error; for `gh stack sync` we still want
  * the process output (a conflict exits non-zero but is not a failure), so the
  * error carries `stdout`/`stderr` which {@link readExecError} reads back.
+ *
+ * `opts.cwd` targets a specific repo: with it set, `gh` infers the repo from
+ * that directory's git remote, which is how per-repo targeting works.
  */
-const defaultExec: Exec = (cmd, args) =>
+const defaultExec: Exec = (cmd, args, opts) =>
   new Promise((resolve, reject) => {
     execFile(
       cmd,
       args,
-      { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
+      { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, cwd: opts?.cwd },
       (err, stdout, stderr) => {
         if (err) {
           // Preserve captured output on the error so a non-zero exit (e.g. a
@@ -291,15 +294,25 @@ export function parseStackView(stdout: string): ParsedLayer[] {
 export interface GhStackProviderOptions {
   /** Injected command runner; defaults to a real `child_process` spawn. */
   exec?: Exec;
+  /** Working directory for every `gh`/`git` call — the targeted repo's path.
+   *  When set, it is the targeting mechanism (gh infers the repo from its
+   *  remote) and the `-R owner/repo` plumbing for `gh pr list` is dropped. */
+  cwd?: string;
 }
 
 /** Build the primary gh-stack-backed provider. */
 export function ghStackProvider(options: GhStackProviderOptions = {}): StackProvider {
   const exec = options.exec ?? defaultExec;
+  const cwd = options.cwd;
+  const execOpts: ExecOptions | undefined = cwd ? { cwd } : undefined;
 
-  /** `gh` args with a `-R owner/repo` prefix when a repo is given. */
+  /**
+   * `gh` args with a `-R owner/repo` prefix when a repo is given AND no `cwd`
+   * is set. With a `cwd`, the repo is targeted by the working directory, so the
+   * `-R` flag is dropped (gh infers the repo from the cwd's remote).
+   */
   const repoArgs = (repo: string | undefined, rest: string[]): string[] =>
-    repo ? ["-R", repo, ...rest] : rest;
+    repo && !cwd ? ["-R", repo, ...rest] : rest;
 
   return {
     async view(repo?: string): Promise<StackGraph> {
@@ -309,7 +322,7 @@ export function ghStackProvider(options: GhStackProviderOptions = {}): StackProv
       // not yet submitted) should still render its branch structure, just
       // without CI/review status — so a failed PR lookup degrades to "[]".
       const [stackOut, prOut] = await Promise.all([
-        exec("gh", ["stack", "view", "--json"]),
+        exec("gh", ["stack", "view", "--json"], execOpts),
         exec(
           "gh",
           repoArgs(repo, [
@@ -318,6 +331,7 @@ export function ghStackProvider(options: GhStackProviderOptions = {}): StackProv
             "--json",
             "number,title,url,statusCheckRollup,reviewDecision,mergeable,headRefName,baseRefName",
           ]),
+          execOpts,
         ).catch(() => "[]"),
       ]);
 
@@ -375,7 +389,7 @@ export function ghStackProvider(options: GhStackProviderOptions = {}): StackProv
      */
     async sync(repo?: string): Promise<SyncResult> {
       try {
-        const output = await exec("gh", repoArgs(repo, ["stack", "sync"]));
+        const output = await exec("gh", repoArgs(repo, ["stack", "sync"]), execOpts);
         return { conflict: false, output };
       } catch (err) {
         const { output } = readExecError(err);
@@ -386,29 +400,29 @@ export function ghStackProvider(options: GhStackProviderOptions = {}): StackProv
       }
     },
     async submit(repo?: string): Promise<void> {
-      await exec("gh", repoArgs(repo, ["stack", "submit"]));
+      await exec("gh", repoArgs(repo, ["stack", "submit"]), execOpts);
     },
     async push(repo?: string): Promise<void> {
-      await exec("gh", repoArgs(repo, ["stack", "push"]));
+      await exec("gh", repoArgs(repo, ["stack", "push"]), execOpts);
     },
     async add(name?: string): Promise<void> {
-      await exec("gh", ["stack", "add", ...(name ? [name] : [])]);
+      await exec("gh", ["stack", "add", ...(name ? [name] : [])], execOpts);
     },
     async merge(opts: MergeOptions): Promise<void> {
-      await exec("gh", repoArgs(opts.repo, ["stack", "merge"]));
+      await exec("gh", repoArgs(opts.repo, ["stack", "merge"]), execOpts);
     },
     async checkout(ref: string | number): Promise<void> {
-      await exec("gh", ["stack", "checkout", String(ref)]);
+      await exec("gh", ["stack", "checkout", String(ref)], execOpts);
     },
     async link(refs: Array<string | number>): Promise<void> {
-      await exec("gh", ["stack", "link", ...refs.map((r) => String(r))]);
+      await exec("gh", ["stack", "link", ...refs.map((r) => String(r))], execOpts);
     },
     async unstack(): Promise<void> {
-      await exec("gh", ["stack", "unstack"]);
+      await exec("gh", ["stack", "unstack"], execOpts);
     },
 
     async version(): Promise<string> {
-      const out = await exec("gh", ["stack", "version"]);
+      const out = await exec("gh", ["stack", "version"], execOpts);
       return out.trim();
     },
   };

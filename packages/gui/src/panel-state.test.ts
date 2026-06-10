@@ -112,3 +112,42 @@ test("buildPanelState propagates a transient error over data", () => {
   assert.equal(state.status, "error");
   assert.equal(state.message, "boom");
 });
+
+test("buildPanelState threads the repo list + selection through to the renderer", () => {
+  const graph: StackGraph = { layers: [{ branch: "feat-a", ciStatus: "pass" }] };
+  const state = buildPanelState({
+    graph,
+    daemonUp: true,
+    syncAvailable: true,
+    repos: [
+      { name: "main", path: "/work/main" },
+      { name: "infra", path: "/work/infra" },
+    ],
+    selectedRepo: "infra",
+  });
+  assert.deepEqual(state.repos, ["main", "infra"]);
+  assert.equal(state.selectedRepo, "infra");
+});
+
+test("buildPanelState defaults repos to [] and rides the switcher on every status", () => {
+  // No repos input → empty list (renderer hides the dropdown).
+  const down = buildPanelState({ daemonUp: false, syncAvailable: false });
+  assert.deepEqual(down.repos, []);
+  assert.equal(down.selectedRepo, undefined);
+
+  // The switcher fields are present even on the daemon-down / error states so
+  // the dropdown doesn't flicker away when the stack fails to load.
+  const err = buildPanelState({
+    daemonUp: true,
+    syncAvailable: true,
+    error: "boom",
+    repos: [
+      { name: "main", path: "/work/main" },
+      { name: "infra", path: "/work/infra" },
+    ],
+    selectedRepo: "main",
+  });
+  assert.equal(err.status, "error");
+  assert.deepEqual(err.repos, ["main", "infra"]);
+  assert.equal(err.selectedRepo, "main");
+});

@@ -20,6 +20,9 @@ const bridge: PerchBridge = {
   sync() {
     ipcRenderer.send(Channels.sync);
   },
+  selectRepo(name) {
+    ipcRenderer.send(Channels.selectRepo, name);
+  },
 };
 
 contextBridge.exposeInMainWorld("perch", bridge);

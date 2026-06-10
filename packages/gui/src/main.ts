@@ -18,10 +18,12 @@ import { DaemonUnavailableError, PerchClient } from "@perch/cli";
 import { Channels } from "./ipc.js";
 import {
   buildPanelState,
+  STACK_REPOS_ID,
   STACK_SYNC_ID,
   STACK_VIEW_ID,
   type BuildInput,
   type PanelState,
+  type ReposResult,
   type StackGraph,
 } from "./panel-state.js";
 
@@ -43,6 +45,45 @@ let subscriptionKey: string | undefined;
 function pushState(): void {
   const state = buildPanelState(buildInput);
   panel?.webContents.send(Channels.stateFromMain, state satisfies PanelState);
+}
+
+/** The `stack.view` input for the currently-selected repo (omit when none). */
+function viewInput(): { repo: string } | undefined {
+  return buildInput.selectedRepo ? { repo: buildInput.selectedRepo } : undefined;
+}
+
+/**
+ * Fetch the configured repos (`stack.repos`) and reconcile `selectedRepo`:
+ * keep the current selection if it still exists, else fall back to the read's
+ * default. Tolerant — if the read is absent (older plugin) repos stay empty.
+ */
+async function loadRepos(): Promise<void> {
+  if (!client) return;
+  try {
+    const result = (await client.invoke({ id: STACK_REPOS_ID })) as ReposResult;
+    buildInput.repos = result.repos;
+    const names = new Set(result.repos.map((r) => r.name));
+    if (!buildInput.selectedRepo || !names.has(buildInput.selectedRepo)) {
+      buildInput.selectedRepo = result.default;
+    }
+  } catch {
+    // `stack.repos` not available (stack plugin disabled / older) — no switcher.
+    buildInput.repos = [];
+    buildInput.selectedRepo = undefined;
+  }
+}
+
+/**
+ * (Re)subscribe to `stack.view` for the current `selectedRepo` and seed the
+ * graph from the subscription's current value. The subscription key is tracked
+ * so live `capability.update` notes for this exact (id, input) are matched.
+ */
+async function subscribeView(): Promise<void> {
+  if (!client) return;
+  const sub = await client.subscribe({ id: STACK_VIEW_ID, input: viewInput() });
+  subscriptionKey = sub.inputKey;
+  if (sub.current !== undefined) buildInput.graph = sub.current as StackGraph;
+  buildInput.error = undefined;
 }
 
 /** Connect to perchd, subscribe to `stack.view`, and detect Sync availability. */
@@ -82,11 +123,11 @@ async function connect(): Promise<void> {
     buildInput.syncAvailable = false;
   }
 
-  // Subscribe for the current value + live deltas.
+  // Populate the repo switcher, then subscribe for the selected repo's value +
+  // live deltas.
+  await loadRepos();
   try {
-    const sub = await client.subscribe({ id: STACK_VIEW_ID });
-    subscriptionKey = sub.inputKey;
-    if (sub.current !== undefined) buildInput.graph = sub.current as StackGraph;
+    await subscribeView();
   } catch (err) {
     buildInput.error = `stack.view: ${errorMessage(err)}`;
   }
@@ -100,7 +141,10 @@ async function refresh(): Promise<void> {
     return;
   }
   try {
-    buildInput.graph = (await client.invoke({ id: STACK_VIEW_ID })) as StackGraph;
+    buildInput.graph = (await client.invoke({
+      id: STACK_VIEW_ID,
+      input: viewInput(),
+    })) as StackGraph;
     buildInput.error = undefined;
   } catch (err) {
     buildInput.error = `stack.view: ${errorMessage(err)}`;
@@ -119,16 +163,40 @@ async function reloadFromRegistry(): Promise<void> {
     const caps = await client.registryList();
     buildInput.syncAvailable = caps.some((c) => c.id === STACK_SYNC_ID);
     if (caps.some((c) => c.id === STACK_VIEW_ID)) {
-      const sub = await client.subscribe({ id: STACK_VIEW_ID });
-      subscriptionKey = sub.inputKey;
-      if (sub.current !== undefined) buildInput.graph = sub.current as StackGraph;
-      buildInput.error = undefined;
+      // The repo list can change with the config — refresh it (reconciling the
+      // selection), then re-subscribe to `stack.view` for the selected repo.
+      await loadRepos();
+      await subscribeView();
     } else {
-      // The stack plugin was disabled in config — clear its data.
+      // The stack plugin was disabled in config — clear its data + switcher.
       buildInput.graph = { layers: [] };
+      buildInput.repos = [];
+      buildInput.selectedRepo = undefined;
     }
   } catch (err) {
     buildInput.error = `registry: ${errorMessage(err)}`;
+  }
+  pushState();
+}
+
+/**
+ * Switch the targeted repo from the renderer's dropdown: unsubscribe the old
+ * `stack.view` input, update the selection, and re-subscribe for the new repo.
+ * Ignores a no-op (same repo) or an unknown name.
+ */
+async function selectRepo(name: string): Promise<void> {
+  if (!client || name === buildInput.selectedRepo) return;
+  if (!buildInput.repos?.some((r) => r.name === name)) return;
+  const previous = viewInput();
+  buildInput.selectedRepo = name;
+  buildInput.graph = undefined; // show "Loading…" until the new repo's view lands.
+  pushState();
+  try {
+    // Drop the old subscription so the daemon can stop polling that repo.
+    void client.unsubscribe({ id: STACK_VIEW_ID, input: previous }).catch(() => {});
+    await subscribeView();
+  } catch (err) {
+    buildInput.error = `stack.view: ${errorMessage(err)}`;
   }
   pushState();
 }
@@ -137,7 +205,7 @@ async function reloadFromRegistry(): Promise<void> {
 async function sync(): Promise<void> {
   if (!client || !buildInput.syncAvailable) return;
   try {
-    await client.invoke({ id: STACK_SYNC_ID });
+    await client.invoke({ id: STACK_SYNC_ID, input: viewInput() });
     await refresh();
   } catch (err) {
     buildInput.error = `stack.sync: ${errorMessage(err)}`;
@@ -297,6 +365,7 @@ function createTray(): void {
 function registerIpc(): void {
   ipcMain.on(Channels.refresh, () => void refresh());
   ipcMain.on(Channels.sync, () => void sync());
+  ipcMain.on(Channels.selectRepo, (_event, name: string) => void selectRepo(name));
 }
 
 app.whenReady().then(() => {

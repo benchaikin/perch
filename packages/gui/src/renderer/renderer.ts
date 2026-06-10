@@ -8,6 +8,7 @@
 import type { LayerRow, PanelState } from "../panel-state.js";
 
 const repoEl = byId("repo");
+const repoSwitcher = byId("repo-switcher") as HTMLSelectElement;
 const rowsEl = byId("rows");
 const syncBtn = byId("sync") as HTMLButtonElement;
 const refreshBtn = byId("refresh") as HTMLButtonElement;
@@ -77,9 +78,36 @@ function messageEl(text: string, isError: boolean): HTMLElement {
   return el;
 }
 
+/**
+ * Render the repo-switcher dropdown. Shown only when more than one repo is
+ * configured; otherwise hidden (single/no repo needs no chooser). Rebuilt from
+ * state each push so it tracks config hot-reloads and the active selection.
+ */
+function renderSwitcher(repos: string[], selected: string | undefined): void {
+  const show = repos.length > 1;
+  repoSwitcher.hidden = !show;
+  if (!show) {
+    repoSwitcher.replaceChildren();
+    return;
+  }
+  repoSwitcher.replaceChildren();
+  for (const name of repos) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    if (name === selected) opt.selected = true;
+    repoSwitcher.append(opt);
+  }
+}
+
 /** Apply a {@link PanelState} to the DOM. */
 function render(state: PanelState): void {
-  repoEl.textContent = state.repo ? `Stack: ${state.repo}` : "";
+  const hasSwitcher = state.repos.length > 1;
+  // The dropdown names the repo when present; otherwise fall back to the static
+  // label (selected repo, else the graph's resolved repo).
+  const label = state.selectedRepo ?? state.repo;
+  repoEl.textContent = !hasSwitcher && label ? `Stack: ${label}` : "";
+  renderSwitcher(state.repos, state.selectedRepo);
   rowsEl.replaceChildren();
 
   if (state.status === "ok") {
@@ -95,5 +123,6 @@ function render(state: PanelState): void {
 
 syncBtn.addEventListener("click", () => window.perch.sync());
 refreshBtn.addEventListener("click", () => window.perch.refresh());
+repoSwitcher.addEventListener("change", () => window.perch.selectRepo(repoSwitcher.value));
 
 window.perch.onState(render);

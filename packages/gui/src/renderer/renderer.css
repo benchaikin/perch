@@ -58,6 +58,23 @@ body {
   white-space: nowrap;
 }
 
+.repo-switcher {
+  margin-left: auto;
+  max-width: 60%;
+  font: inherit;
+  font-size: 11px;
+  color: var(--fg);
+  background: var(--chip-bg);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 1px 4px;
+  -webkit-app-region: no-drag;
+}
+
+.repo-switcher[hidden] {
+  display: none;
+}
+
 .rule {
   border: none;
   border-top: 1px solid var(--rule);
