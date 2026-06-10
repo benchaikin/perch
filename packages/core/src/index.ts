@@ -14,11 +14,17 @@ import { loadConfig, pluginsFromConfig } from "./config.js";
 import { createEventBus } from "./event-bus.js";
 import type { InvokerDeps, PluginConfigs } from "./invoker.js";
 import { loadPlugins, loadPluginsByIds } from "./loader.js";
-import { pidPath as defaultPidPath, socketPath as defaultSocketPath } from "./paths.js";
+import {
+  configPath as defaultConfigPath,
+  pidPath as defaultPidPath,
+  socketPath as defaultSocketPath,
+} from "./paths.js";
 import { removePidFile, writePidFile } from "./pidfile.js";
+import { applyReload, diffConfigs, isEmptyDiff } from "./reload.js";
 import { Registry } from "./registry.js";
 import { Scheduler } from "./scheduler.js";
 import { RpcServer } from "./server.js";
+import { ConfigWatcher } from "./watcher.js";
 
 export const VERSION = "0.0.0";
 
@@ -56,8 +62,13 @@ export type {
   SubscribeParams,
   SubscribeResult,
   UpdateNotification,
+  RegistryChangedNotification,
   RegistryListResult,
 } from "./rpc.js";
+export { diffConfigs, applyReload, isEmptyDiff } from "./reload.js";
+export type { ConfigDiff, ReloadState, LoadPlugins } from "./reload.js";
+export { ConfigWatcher } from "./watcher.js";
+export type { ConfigWatcherOptions } from "./watcher.js";
 
 /** Options for {@link startDaemon}. */
 export interface StartDaemonOptions {
@@ -84,6 +95,21 @@ export interface StartDaemonOptions {
    * Set a string to override the pidfile path.
    */
   pidFile?: boolean | string;
+  /**
+   * Watch `perch.json` and hot-apply changes (add/remove/reconfigure plugins)
+   * without restarting. Defaults to `true` unless `pluginDefs` is provided (test
+   * mode), so tests never depend on fs-watch timing. The watcher is stopped on
+   * `stop()`.
+   */
+  watch?: boolean;
+  /** Debounce window (ms) for coalescing rapid config writes. Default 200. */
+  reloadDebounceMs?: number;
+  /**
+   * Loader used by live reloads to resolve newly-enabled plugins by id. Defaults
+   * to {@link loadPluginsByIds} (workspace discovery). Injectable so tests can
+   * supply pre-built {@link PluginDef}s without dynamic import.
+   */
+  loadPlugins?: (ids: string[]) => Promise<PluginDef[]>;
 }
 
 /** A running daemon. Call {@link RunningDaemon.stop} for graceful shutdown. */
@@ -94,7 +120,14 @@ export interface RunningDaemon {
   registry: Registry;
   /** Absolute path of the bound Unix socket. */
   socketPath: string;
-  /** Stop timers, close the server, unlink the socket, and abort capability ctx. */
+  /**
+   * Re-read `perch.json` and hot-apply any plugin add/remove/reconfigure. This
+   * is what the config watcher invokes; exposed so callers/tests can trigger a
+   * reload deterministically. Invalid config is logged and ignored (current
+   * state preserved). Resolves once the reload (if any) has been applied.
+   */
+  reload: () => Promise<void>;
+  /** Stop timers, the config watcher, close the server, unlink the socket. */
   stop: () => Promise<void>;
 }
 
@@ -152,10 +185,78 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Run
     await writePidFile(process.pid, pidFilePath);
   }
 
+  // Resolve the config path used for live reloads. Reload only makes sense when
+  // booting from the config file (not when tests inject pluginDefs), so the
+  // watcher defaults off in test mode. An explicit `plugins` override still
+  // reloads from the file: argv selects the initial set, the file drives changes.
+  const reloadConfigPath = options.configPath ?? defaultConfigPath();
+
+  // Serialize reloads so overlapping fs events can't interleave registry edits.
+  let reloadChain: Promise<void> = Promise.resolve();
+  const reload = (): Promise<void> => {
+    const next = reloadChain.then(() => runReload());
+    // Swallow rejections on the chain itself; runReload already handles errors.
+    reloadChain = next.catch(() => {});
+    return next;
+  };
+
+  async function runReload(): Promise<void> {
+    let parsed;
+    try {
+      parsed = pluginsFromConfig(await loadConfig(reloadConfigPath));
+    } catch (err) {
+      // Invalid JSON/schema: keep running with the current config.
+      console.error(`perchd: reload skipped, config invalid: ${errorMessage(err)}`);
+      return;
+    }
+
+    const diff = diffConfigs({
+      desiredIds: parsed.ids,
+      desiredConfigs: parsed.configs,
+      currentIds: registry.pluginIds(),
+      currentConfigs: configs,
+    });
+    if (isEmptyDiff(diff)) return;
+
+    const applied = await applyReload(
+      {
+        registry,
+        scheduler,
+        cache,
+        configs,
+        plugins,
+        load: options.loadPlugins ?? loadPluginsByIds,
+      },
+      diff,
+      parsed.configs,
+    );
+    server.broadcastRegistryChanged(applied);
+    console.error(
+      `perchd: reloaded config — added [${applied.added.join(", ")}] ` +
+        `removed [${applied.removed.join(", ")}] updated [${applied.updated.join(", ")}]`,
+    );
+  }
+
+  // Watch `perch.json` and hot-apply changes. Default on for the real daemon,
+  // off in test mode (injected pluginDefs) so the suite stays deterministic.
+  const wantWatch = options.watch ?? options.pluginDefs === undefined;
+  let watcher: ConfigWatcher | undefined;
+  if (wantWatch) {
+    watcher = new ConfigWatcher({
+      configPath: reloadConfigPath,
+      debounceMs: options.reloadDebounceMs,
+      onChange: () => {
+        void reload();
+      },
+    });
+    watcher.start();
+  }
+
   let stopped = false;
   const stop = async (): Promise<void> => {
     if (stopped) return;
     stopped = true;
+    watcher?.stop();
     controller.abort();
     scheduler.stop();
     await server.close();
@@ -176,5 +277,10 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Run
     process.once("SIGTERM", onSignal);
   }
 
-  return { server, registry, socketPath: path, stop };
+  return { server, registry, socketPath: path, reload, stop };
+}
+
+/** Structured `unknown`-error → message. */
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }

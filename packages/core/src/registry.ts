@@ -108,6 +108,36 @@ export class Registry {
     }
   }
 
+  /**
+   * Remove every capability owned by `pluginId` (runtime reload: a plugin was
+   * disabled). Returns the canonical ids that were removed (empty if the plugin
+   * had no registered capabilities). Safe to call for an unknown plugin.
+   */
+  unregister(pluginId: string): string[] {
+    const removed: string[] = [];
+    for (const [id, entry] of this.#byId) {
+      if (entry.pluginId === pluginId) {
+        this.#byId.delete(id);
+        removed.push(id);
+      }
+    }
+    return removed;
+  }
+
+  /** The ids of every plugin with at least one registered capability. */
+  pluginIds(): string[] {
+    const ids = new Set<string>();
+    for (const entry of this.#byId.values()) {
+      ids.add(entry.pluginId);
+    }
+    return [...ids];
+  }
+
+  /** Registered capabilities owned by `pluginId` (empty if none). */
+  byPlugin(pluginId: string): RegisteredCapability[] {
+    return this.all().filter((entry) => entry.pluginId === pluginId);
+  }
+
   /** Look up a registered capability by canonical id. */
   get(id: string): RegisteredCapability | undefined {
     return this.#byId.get(id);

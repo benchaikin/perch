@@ -23,6 +23,7 @@ import {
   Methods,
   Notifications,
   type InvokeParams,
+  type RegistryChangedNotification,
   type RegistryListResult,
   type SubscribeParams,
   type SubscribeResult,
@@ -84,6 +85,18 @@ export class RpcServer {
   /** The socket path the server is (or will be) bound to. */
   get socketPath(): string {
     return this.#deps.socketPath;
+  }
+
+  /**
+   * Push a `registry.changed` notification to every connected client (after a
+   * config reload added/removed/reconfigured plugins). Clients re-fetch
+   * `registry.list` in response. Best-effort: failures to a single connection
+   * are swallowed so one dead socket can't block the rest.
+   */
+  broadcastRegistryChanged(payload: RegistryChangedNotification): void {
+    for (const conn of this.#connections) {
+      conn.notifyRegistryChanged(payload);
+    }
   }
 
   #onConnection(socket: Socket): void {
@@ -184,6 +197,11 @@ class ClientConnection {
     if (this.#subs.has(subKey(notification.id, notification.inputKey))) {
       void this.#conn.sendNotification(Notifications.capabilityUpdate, notification);
     }
+  }
+
+  /** Send a `registry.changed` notification (unconditional fan-out). */
+  notifyRegistryChanged(payload: RegistryChangedNotification): void {
+    void this.#conn.sendNotification(Notifications.registryChanged, payload);
   }
 
   listen(): void {

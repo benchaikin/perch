@@ -23,6 +23,12 @@ export const Methods = {
 export const Notifications = {
   /** `capability.update` — fresh read data for a subscription. Payload: {@link UpdateNotification}. */
   capabilityUpdate: "capability.update",
+  /**
+   * `registry.changed` — the set of capabilities changed (a config reload added,
+   * removed, or reconfigured plugins). Clients should re-fetch `registry.list`
+   * and refresh their UI. Payload: {@link RegistryChangedNotification}.
+   */
+  registryChanged: "registry.changed",
 } as const;
 
 /** Params for `capability.invoke`, `capability.subscribe`, `capability.unsubscribe`. */
@@ -54,6 +60,20 @@ export interface UpdateNotification {
   inputKey: string;
   /** Fresh, output-validated data. */
   data: unknown;
+}
+
+/**
+ * Payload of a `registry.changed` notification. Summarizes which plugins were
+ * affected so clients can log/diff; the authoritative new state is obtained by
+ * re-calling `registry.list`.
+ */
+export interface RegistryChangedNotification {
+  /** Plugin ids newly enabled by the reload. */
+  added: string[];
+  /** Plugin ids newly disabled by the reload. */
+  removed: string[];
+  /** Plugin ids whose per-plugin config changed (still enabled). */
+  updated: string[];
 }
 
 /** Result of `registry.list`. */

@@ -34,6 +34,35 @@ export class Scheduler {
     return `${id} ${key}`;
   }
 
+  /** Split a composite poller key back into its `(capabilityId, inputKey)`. */
+  #splitId(mapKey: string): string {
+    return mapKey.slice(0, mapKey.indexOf(" "));
+  }
+
+  /**
+   * Stop and drop every poller whose capability id starts with `${pluginId}.`
+   * (runtime reload: a plugin was disabled or its config changed). Clears the
+   * underlying timers; refcounts are discarded since the owning capability is
+   * going away. Returns the number of pollers removed.
+   *
+   * Note: server-side subscription bookkeeping (per-connection `#subs`) is left
+   * intact deliberately — a later `unsubscribe` for a now-gone capability is a
+   * no-op here, so there is nothing to leak.
+   */
+  stopForPlugin(pluginId: string): number {
+    const prefix = `${pluginId}.`;
+    let removed = 0;
+    for (const [mapKey, poller] of this.#pollers) {
+      const id = this.#splitId(mapKey);
+      if (id === pluginId || id.startsWith(prefix)) {
+        if (poller.timer) clearInterval(poller.timer);
+        this.#pollers.delete(mapKey);
+        removed += 1;
+      }
+    }
+    return removed;
+  }
+
   /**
    * Register a subscription to a read. Starts (or shares) a poller if the read
    * declares `refresh.every`. Returns the input key the subscription is bound
