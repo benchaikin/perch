@@ -3,13 +3,19 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/main.js",
   "scripts": {
-    "build": "tsc -b"
+    "build": "tsc -b && node esbuild.mjs",
+    "start": "electron .",
+    "test": "node --import tsx --test src/**/*.test.ts"
   },
   "dependencies": {
+    "@perch/cli": "workspace:*",
     "@perch/core": "workspace:*",
     "@perch/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "esbuild": "^0.24.0"
   }
 }

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'"
+    />
+    <title>Perch</title>
+    <link rel="stylesheet" href="./renderer.css" />
+  </head>
+  <body>
+    <div id="panel" class="panel">
+      <header class="header">
+        <span class="title">Perch</span>
+        <span id="repo" class="repo"></span>
+      </header>
+      <hr class="rule" />
+      <main id="rows" class="rows"></main>
+      <hr class="rule" />
+      <footer class="actions">
+        <button id="sync" class="btn btn-primary">Sync</button>
+        <button id="refresh" class="btn">Refresh</button>
+      </footer>
+    </div>
+    <script src="./renderer.js"></script>
+  </body>
+</html>
