@@ -57,6 +57,10 @@ export default definePlugin({
       output: StackGraph,
       refresh: { every: "60s", on: ["focus"] },
       view: { kind: "graph", title: "Stack" },
+      // The enriched stack read is where MCP earns its place: agents can read
+      // live stack state (CI/review/needs-rebase) as a typed tool. Actions stay
+      // MCP-off — agents drive `gh stack` directly (it ships its own skill).
+      expose: { mcp: true },
       // Resolve the requested repo to a cwd and run `gh`/`git` there — that cwd
       // is the per-repo targeting mechanism. With no repos configured the cwd is
       // undefined and the providers run in `process.cwd()` (back-compat).
