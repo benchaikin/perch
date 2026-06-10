@@ -34,8 +34,12 @@ async function capture(fn: () => Promise<number>): Promise<{ code: number; out: 
 }
 
 test("daemon status against a dead socket reports not running, exit 1", async () => {
-  const socket = join(mkdtempSync(join(tmpdir(), "perch-daemon-test-")), "perchd.sock");
-  const { code, out } = await capture(() => runDaemonCommand("status", { socket }));
+  // Isolate BOTH the socket and the pidfile in a temp dir (neither exists), so
+  // the test never reads the real daemon's pidfile / socket on this machine.
+  const dir = mkdtempSync(join(tmpdir(), "perch-daemon-test-"));
+  const socket = join(dir, "perchd.sock");
+  const pid = join(dir, "perchd.pid");
+  const { code, out } = await capture(() => runDaemonCommand("status", { socket, pid }));
   assert.equal(code, 1);
   assert.match(out, /not running/);
 });

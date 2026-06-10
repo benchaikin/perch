@@ -32,6 +32,9 @@ import { DaemonUnavailableError, PerchClient } from "./client.js";
 export interface DaemonOptions {
   /** Override the socket path (defaults to the platform paths shim). */
   socket?: string;
+  /** Override the pidfile path (defaults to the platform paths shim). Mainly
+   *  for hermetic tests, so status/stop don't read the real daemon's pidfile. */
+  pid?: string;
 }
 
 /** Outcome of a daemon command: exit code + nothing else (it prints itself). */
@@ -99,7 +102,7 @@ async function isRunning(socket: string): Promise<{ up: boolean; capCount?: numb
 /** `perch daemon status`. */
 export async function daemonStatus(opts: DaemonOptions): Promise<DaemonRunResult> {
   const socket = opts.socket ?? defaultSocketPath();
-  const pid = await readPidFile();
+  const pid = await readPidFile(opts.pid);
   const { up, capCount } = await isRunning(socket);
 
   if (up) {
@@ -145,7 +148,7 @@ export async function daemonStart(opts: DaemonOptions): Promise<DaemonRunResult>
 /** `perch daemon stop`. */
 export async function daemonStop(opts: DaemonOptions): Promise<DaemonRunResult> {
   const socket = opts.socket ?? defaultSocketPath();
-  const pid = await readPidFile();
+  const pid = await readPidFile(opts.pid);
 
   if (pid === undefined || !isProcessAlive(pid)) {
     console.log("perchd is not running");
@@ -172,7 +175,7 @@ export async function daemonStop(opts: DaemonOptions): Promise<DaemonRunResult> 
 /** `perch daemon restart`. */
 export async function daemonRestart(opts: DaemonOptions): Promise<DaemonRunResult> {
   const socket = opts.socket ?? defaultSocketPath();
-  if ((await isRunning(socket)).up || (await readPidFile()) !== undefined) {
+  if ((await isRunning(socket)).up || (await readPidFile(opts.pid)) !== undefined) {
     const stop = await daemonStop(opts);
     if (stop.exitCode !== 0) return stop;
   }
