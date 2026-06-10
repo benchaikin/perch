@@ -25,6 +25,9 @@ pnpm-debug.log*
 .perch/
 *.sock
 
+# Dex task store (local task state, not source)
+.dex/
+
 # Env & secrets
 .env
 .env.*
