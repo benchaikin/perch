@@ -5,10 +5,16 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "perch-mcp": "./dist/bin.js"
+  },
   "scripts": {
-    "build": "tsc -b"
+    "build": "tsc -b",
+    "test": "node --import tsx --test src/**/*.test.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@perch/cli": "workspace:*",
     "@perch/core": "workspace:*",
     "@perch/sdk": "workspace:*"
   }
