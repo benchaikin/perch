@@ -1,0 +1,6 @@
+node_modules/
+dist/
+pnpm-lock.yaml
+
+# Hand-authored docs (ASCII diagrams/tables) — keep as written.
+*.md
