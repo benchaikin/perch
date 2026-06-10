@@ -9,10 +9,12 @@
     "perch": "./dist/bin.js"
   },
   "scripts": {
-    "build": "tsc -b"
+    "build": "tsc -b",
+    "test": "node --import tsx --test src/**/*.test.ts"
   },
   "dependencies": {
     "@perch/core": "workspace:*",
-    "@perch/sdk": "workspace:*"
+    "@perch/sdk": "workspace:*",
+    "vscode-jsonrpc": "^9.0.0"
   }
 }

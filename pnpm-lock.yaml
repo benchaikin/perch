@@ -38,6 +38,9 @@ importers:
       '@perch/sdk':
         specifier: workspace:*
         version: link:../sdk
+      vscode-jsonrpc:
+        specifier: ^9.0.0
+        version: 9.0.0
 
   packages/core:
     dependencies:
