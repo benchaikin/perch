@@ -12,10 +12,22 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, shell, Tray, screen } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  shell,
+  Tray,
+  screen,
+} from "electron";
 import { configPath as defaultConfigPath, socketPath as defaultSocketPath } from "@perch/core";
 import { DaemonUnavailableError, PerchClient } from "@perch/cli";
 import { Channels } from "./ipc.js";
+import { addRepo, removeRepo, reposFromConfig, setDefault, toEntries } from "./repos.js";
+import { SettingsChannels, type SettingsResult } from "./settings-ipc.js";
 import {
   buildPanelState,
   STACK_PRS_ID,
@@ -36,6 +48,7 @@ function windowStatePath(): string {
 
 let tray: Tray | null = null;
 let panel: BrowserWindow | null = null;
+let settingsWindow: BrowserWindow | null = null;
 let client: PerchClient | null = null;
 /** Pending debounced size-save timer, cleared on each resize. */
 let saveSizeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -400,12 +413,134 @@ function revealConfig(): void {
   shell.showItemInFolder(ensureConfigFile());
 }
 
+/**
+ * Ensure we have a connected {@link PerchClient}, reusing the one the panel
+ * already established or connecting on demand (the Settings window may be opened
+ * before the panel's connect resolves). Returns null when the daemon is down so
+ * callers can render a read-only "daemon not running" state.
+ */
+async function ensureClient(): Promise<PerchClient | null> {
+  if (client) return client;
+  const socket = process.env.PERCH_SOCKET ?? defaultSocketPath();
+  try {
+    client = await PerchClient.connect(socket);
+    return client;
+  } catch (err) {
+    if (err instanceof DaemonUnavailableError) return null;
+    throw err;
+  }
+}
+
+/** Read the current configured repos as display rows over a connected client. */
+async function loadSettings(): Promise<SettingsResult> {
+  const c = await ensureClient();
+  if (!c) return { repos: [], daemonUp: false };
+  const config = await c.configGet();
+  return { repos: toEntries(reposFromConfig(config)), daemonUp: true };
+}
+
+/**
+ * Persist a new repos array via `config.update` (the daemon hot-reloads and the
+ * panel refreshes via `registry.changed`) and return the refreshed list.
+ */
+async function persistRepos(c: PerchClient, repos: string[]): Promise<SettingsResult> {
+  const config = await c.configUpdate({ patch: { plugins: { stack: { repos } } } });
+  return { repos: toEntries(reposFromConfig(config)), daemonUp: true };
+}
+
+/** Wrap a settings op so daemon/RPC failures surface inline rather than throw. */
+async function settingsOp(
+  fn: (c: PerchClient) => Promise<SettingsResult>,
+): Promise<SettingsResult> {
+  const c = await ensureClient();
+  if (!c) return { repos: [], daemonUp: false };
+  try {
+    return await fn(c);
+  } catch (err) {
+    const config = await c.configGet().catch(() => null);
+    const repos = config ? toEntries(reposFromConfig(config)) : [];
+    return { repos, daemonUp: true, error: errorMessage(err) };
+  }
+}
+
+/**
+ * Add a repo: show a native folder picker, validate the chosen directory, and
+ * (on success) append it + persist. A cancelled picker returns the current list
+ * unchanged; a validation failure returns it with the reason as an inline error.
+ */
+async function addRepoFlow(c: PerchClient): Promise<SettingsResult> {
+  const pickerOptions = {
+    title: "Add a stack repository",
+    properties: ["openDirectory" as const],
+  };
+  const picked =
+    settingsWindow && !settingsWindow.isDestroyed()
+      ? await dialog.showOpenDialog(settingsWindow, pickerOptions)
+      : await dialog.showOpenDialog(pickerOptions);
+  const config = await c.configGet();
+  const current = reposFromConfig(config);
+  if (picked.canceled || picked.filePaths.length === 0) {
+    return { repos: toEntries(current), daemonUp: true };
+  }
+
+  const path = picked.filePaths[0]!;
+  const valid = await c.validateRepoPath({ path });
+  if (!valid.ok) {
+    return {
+      repos: toEntries(current),
+      daemonUp: true,
+      error: valid.reason ?? `Not a usable git repo: ${path}`,
+    };
+  }
+  return persistRepos(c, addRepo(current, path));
+}
+
+/** Create (or focus) the separate Settings window. */
+function showSettingsWindow(): void {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.show();
+    settingsWindow.focus();
+    return;
+  }
+
+  const win = new BrowserWindow({
+    width: 480,
+    height: 420,
+    title: "Perch Settings",
+    show: false,
+    resizable: true,
+    fullscreenable: false,
+    backgroundColor: "#1e1e1e",
+    webPreferences: {
+      preload: join(__dirname, "settings-preload.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+
+  win.on("ready-to-show", () => win.show());
+  win.on("closed", () => {
+    settingsWindow = null;
+  });
+  win.webContents.on("preload-error", (_e, p, error) => {
+    console.error(`[settings preload-error] ${p}: ${error?.stack ?? error}`);
+  });
+  win.webContents.on("console-message", (_e, _level, message, line, sourceId) => {
+    console.error(`[settings renderer] ${message} (${sourceId}:${line})`);
+  });
+
+  void win.loadFile(join(__dirname, "settings", "index.html"));
+  settingsWindow = win;
+}
+
 function createTray(): void {
   tray = new Tray(trayImage());
   tray.setToolTip("Perch");
   const menu = Menu.buildFromTemplate([
     { label: "Show / Hide", click: () => togglePanel() },
     { type: "separator" },
+    { label: "Settings…", click: () => showSettingsWindow() },
     { label: "Open Config", click: () => openConfig() },
     { label: "Reveal Config in Finder", click: () => revealConfig() },
     { type: "separator" },
@@ -420,6 +555,20 @@ function registerIpc(): void {
   ipcMain.on(Channels.refresh, () => void refresh());
   ipcMain.on(Channels.sync, (_event, repo: string) => void sync(repo));
   ipcMain.on(Channels.openPr, (_event, url: string) => openPr(url));
+
+  // Settings window: request/response handlers returning the refreshed repo list.
+  ipcMain.handle(SettingsChannels.list, () => loadSettings());
+  ipcMain.handle(SettingsChannels.add, () => settingsOp((c) => addRepoFlow(c)));
+  ipcMain.handle(SettingsChannels.remove, (_event, path: string) =>
+    settingsOp(async (c) =>
+      persistRepos(c, removeRepo(reposFromConfig(await c.configGet()), path)),
+    ),
+  );
+  ipcMain.handle(SettingsChannels.setDefault, (_event, path: string) =>
+    settingsOp(async (c) =>
+      persistRepos(c, setDefault(reposFromConfig(await c.configGet()), path)),
+    ),
+  );
 }
 
 app.whenReady().then(() => {
