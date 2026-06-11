@@ -9,6 +9,7 @@ import { action, definePlugin, read, z } from "@perch/sdk";
 
 import { ghStackProvider } from "./gh-provider.js";
 import { StackGraph } from "./graph.js";
+import { prNotifications } from "./notify.js";
 import { buildPrOverview, PrOverview } from "./prs.js";
 import { reposResult, ReposResult, resolveRepoCwd } from "./repos.js";
 import { resolveStackView } from "./resolve-view.js";
@@ -19,6 +20,7 @@ export { baseRefProvider } from "./base-ref-provider.js";
 export { resolveStackView } from "./resolve-view.js";
 export { CiStatus, StackGraph, StackLayer } from "./graph.js";
 export { allChains, chainContaining } from "./chains.js";
+export { prNotifications } from "./notify.js";
 export { buildPrOverview, PrGroup, PrInfo, PrOverview, PrRepo } from "./prs.js";
 export { RepoEntry, ReposResult, reposResult, resolveRepoCwd, toRepoEntries } from "./repos.js";
 
@@ -107,6 +109,16 @@ export default definePlugin({
       view: { kind: "list", title: "My PRs" },
       expose: { mcp: true },
       run: ({ ctx }) => buildPrOverview({ repos: configRepos(ctx.config), log: ctx.log }),
+      // Diff each poll's overview against the previous one and surface notable PR
+      // transitions (CI/review/conflict/rebase/opened/closed) as notifications.
+      // The hook's `prev`/`next` carry the schema's *input* type (defaulted
+      // fields optional); `PrOverview.parse` normalizes them to the strict
+      // output shape `prNotifications` diffs over.
+      notify: ({ prev, next }) =>
+        prNotifications(
+          prev === undefined ? undefined : PrOverview.parse(prev),
+          PrOverview.parse(next),
+        ),
     }),
 
     // ── M6 action wrappers (spec §8.3) ──
