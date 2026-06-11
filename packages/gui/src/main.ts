@@ -249,10 +249,17 @@ function showNativeNotification(note: NotificationPayload): void {
   if (!Notification.isSupported()) return;
   if (!shouldShowNotification(note, appStartTime)) return;
 
-  const notification = new Notification(toNotifyOptions(note));
+  const notification = new Notification({ ...toNotifyOptions(note), icon: notificationIcon() });
   const { openUrl } = note;
   if (openUrl) notification.on("click", () => void shell.openExternal(openUrl));
   notification.show();
+}
+
+/** The full-color Perch bird, used as the notification icon. Loaded once. */
+let notifyIcon: ReturnType<typeof nativeImage.createFromPath> | undefined;
+function notificationIcon(): ReturnType<typeof nativeImage.createFromPath> {
+  notifyIcon ??= nativeImage.createFromPath(join(__dirname, "perch-icon.png"));
+  return notifyIcon;
 }
 
 /** Best-effort human-readable message from an RPC/JS error. */
@@ -618,7 +625,9 @@ if (!app.requestSingleInstanceLock()) {
   app.on("second-instance", () => showPanel());
 
   app.whenReady().then(() => {
-    // macOS: keep the app out of the Dock — it's a menu-bar utility.
+    // macOS: set the app icon (which notification banners use) to the bird,
+    // then keep the app out of the Dock — it's a menu-bar utility.
+    app.dock?.setIcon(notificationIcon());
     app.dock?.hide();
     registerIpc();
     createTray();
