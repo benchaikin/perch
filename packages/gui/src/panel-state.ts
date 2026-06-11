@@ -89,7 +89,7 @@ export type GroupRow =
   | { kind: "pr"; pr: PrRow }
   | {
       kind: "stack";
-      /** Layers top-first (tip reads at the top), matching the stack panel. */
+      /** Layers base-first (the trunk-adjacent base #1 reads at the top). */
       rows: PrRow[];
       /** Whether the Sync action should show for this stack (gh-stack tracked). */
       tracked: boolean;
@@ -197,9 +197,9 @@ function toGroupRow(group: PrGroup, repoName: string): GroupRow {
   if (group.kind === "pr") {
     return { kind: "pr", pr: toPrRow(group.pr) };
   }
-  // Stack layers arrive bottom → top; render tip-first so the latest work reads
-  // at the top, matching the v1 stack panel.
-  const rows = [...group.layers].reverse().map(toPrRow);
+  // Stack layers arrive bottom → top; keep that order so the base (#1) reads at
+  // the top of the group, ascending to the tip.
+  const rows = group.layers.map(toPrRow);
   return {
     kind: "stack",
     rows,

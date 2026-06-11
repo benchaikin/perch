@@ -105,8 +105,8 @@ function stackGroupEl(group: Extract<GroupRow, { kind: "stack" }>): HTMLElement 
 
   const layers = document.createElement("div");
   layers.className = "stack-layers";
-  // Rows are tip-first; number so the trunk-adjacent base is 1, up to the tip.
-  group.rows.forEach((row, i) => layers.append(prRowEl(row, group.rows.length - i)));
+  // Rows are base-first; number 1..N from the base (which reads at the top).
+  group.rows.forEach((row, i) => layers.append(prRowEl(row, i + 1)));
   el.append(layers);
 
   return el;

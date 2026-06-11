@@ -99,7 +99,7 @@ test("buildPanelState propagates a transient error over data", () => {
   assert.equal(state.message, "boom");
 });
 
-test("buildPanelState renders standalone PRs flat and stacks nested tip-first", () => {
+test("buildPanelState renders standalone PRs flat and stacks nested base-first", () => {
   const overview: PrOverview = {
     repos: [
       {
@@ -139,10 +139,10 @@ test("buildPanelState renders standalone PRs flat and stacks nested tip-first", 
   assert.equal(stack.tracked, true);
   assert.equal(stack.needsRebase, true);
   assert.equal(stack.repo, "main");
-  // Layers render tip-first (feat-b before feat-a).
+  // Layers render base-first (feat-a #1 before feat-b #2).
   assert.deepEqual(
     stack.rows.map((r) => r.branch),
-    ["feat-b", "feat-a"],
+    ["feat-a", "feat-b"],
   );
 });
 
