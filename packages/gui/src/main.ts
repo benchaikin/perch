@@ -24,15 +24,20 @@ import {
   type PanelState,
   type PrOverview,
 } from "./panel-state.js";
+import { MIN_WINDOW_SIZE, readWindowSize, writeWindowSize } from "./window-state.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const PANEL_WIDTH = 320;
-const PANEL_HEIGHT = 320;
+/** Where the user's resized panel size is persisted (GUI-local UI state). */
+function windowStatePath(): string {
+  return join(app.getPath("userData"), "window-state.json");
+}
 
 let tray: Tray | null = null;
 let panel: BrowserWindow | null = null;
 let client: PerchClient | null = null;
+/** Pending debounced size-save timer, cleared on each resize. */
+let saveSizeTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** Latest inputs to the view-model; updated piecemeal then rebuilt + pushed. */
 const buildInput: BuildInput = { daemonUp: false, syncAvailable: false };
@@ -165,14 +170,33 @@ function errorMessage(err: unknown): string {
   return String(err);
 }
 
+/**
+ * Persist the panel's current size to {@link windowStatePath} so it's sticky
+ * across opens and restarts. Best-effort: a failed write shouldn't crash the
+ * app, just log.
+ */
+function saveCurrentSize(win: BrowserWindow): void {
+  if (win.isDestroyed()) return;
+  const { width, height } = win.getBounds();
+  try {
+    writeWindowSize(windowStatePath(), { width, height });
+  } catch (err) {
+    console.error(`[window-state] save failed: ${errorMessage(err)}`);
+  }
+}
+
 /** Create the frameless, always-on-top, non-activating panel window (hidden). */
 function createPanel(): BrowserWindow {
+  // Restore the user's last size (or the default), clamped to the minimum.
+  const { width, height } = readWindowSize(windowStatePath());
   const win = new BrowserWindow({
-    width: PANEL_WIDTH,
-    height: PANEL_HEIGHT,
+    width,
+    height,
+    minWidth: MIN_WINDOW_SIZE.width,
+    minHeight: MIN_WINDOW_SIZE.height,
     show: false,
     frame: false,
-    resizable: false,
+    resizable: true,
     movable: true,
     fullscreenable: false,
     skipTaskbar: true,
@@ -191,6 +215,28 @@ function createPanel(): BrowserWindow {
   // Pin above normal windows including full-screen apps (menu-bar utility feel).
   win.setAlwaysOnTop(true, "floating");
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+
+  // Persist the size as the user drags the resize handle. Debounced so a single
+  // drag (which fires many `resize` events) results in one write when it settles.
+  win.on("resize", () => {
+    if (saveSizeTimer) clearTimeout(saveSizeTimer);
+    saveSizeTimer = setTimeout(() => {
+      saveSizeTimer = null;
+      saveCurrentSize(win);
+    }, 300);
+  });
+
+  // Also flush on dismiss/close so the latest size is captured even if a resize
+  // was still pending in the debounce window.
+  const flushSize = (): void => {
+    if (saveSizeTimer) {
+      clearTimeout(saveSizeTimer);
+      saveSizeTimer = null;
+    }
+    saveCurrentSize(win);
+  };
+  win.on("hide", flushSize);
+  win.on("close", flushSize);
 
   win.on("blur", () => {
     // Behave like a menu-bar popover: dismiss when focus leaves.
@@ -225,10 +271,13 @@ function showPanel(): void {
   const bounds = tray?.getBounds();
   if (bounds) {
     const display = screen.getDisplayNearestPoint({ x: bounds.x, y: bounds.y });
-    const x = Math.round(bounds.x + bounds.width / 2 - PANEL_WIDTH / 2);
+    // Center on the tray using the panel's live width (it may have been resized
+    // or restored to a persisted size), not a fixed constant.
+    const panelWidth = panel.getBounds().width;
+    const x = Math.round(bounds.x + bounds.width / 2 - panelWidth / 2);
     const y = Math.round(bounds.y + bounds.height + 4);
     // Keep the panel on-screen horizontally.
-    const maxX = display.workArea.x + display.workArea.width - PANEL_WIDTH;
+    const maxX = display.workArea.x + display.workArea.width - panelWidth;
     panel.setPosition(Math.max(display.workArea.x, Math.min(x, maxX)), y, false);
   }
   panel.show();
