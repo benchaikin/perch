@@ -64,7 +64,14 @@ export type {
   UpdateNotification,
   RegistryChangedNotification,
   RegistryListResult,
+  ConfigGetResult,
+  ConfigUpdateParams,
+  ConfigUpdateResult,
+  ValidateRepoPathParams,
+  ValidateRepoPathResult,
 } from "./rpc.js";
+export { getConfig, updateConfig, validateRepoPath } from "./config-store.js";
+export type { ConfigPatch, RepoPathValidation } from "./config-store.js";
 export { diffConfigs, applyReload, isEmptyDiff } from "./reload.js";
 export type { ConfigDiff, ReloadState, LoadPlugins } from "./reload.js";
 export { ConfigWatcher } from "./watcher.js";
@@ -173,7 +180,20 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Run
   const controller = new AbortController();
   const invoker: InvokerDeps = { cache, configs, plugins, signal: controller.signal };
   const scheduler = new Scheduler(invoker, bus);
-  const server = new RpcServer({ registry, scheduler, cache, bus, invoker, socketPath: path });
+
+  // The config path the `config.*` RPC methods read/mutate and the watcher
+  // watches — one path, so an RPC write flows back through the normal reload.
+  const reloadConfigPath = options.configPath ?? defaultConfigPath();
+
+  const server = new RpcServer({
+    registry,
+    scheduler,
+    cache,
+    bus,
+    invoker,
+    socketPath: path,
+    configPath: reloadConfigPath,
+  });
 
   await server.listen();
 
@@ -185,11 +205,11 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Run
     await writePidFile(process.pid, pidFilePath);
   }
 
-  // Resolve the config path used for live reloads. Reload only makes sense when
-  // booting from the config file (not when tests inject pluginDefs), so the
-  // watcher defaults off in test mode. An explicit `plugins` override still
-  // reloads from the file: argv selects the initial set, the file drives changes.
-  const reloadConfigPath = options.configPath ?? defaultConfigPath();
+  // `reloadConfigPath` (computed above for the RPC server) is the path live
+  // reloads read. Reload only makes sense when booting from the config file (not
+  // when tests inject pluginDefs), so the watcher defaults off in test mode. An
+  // explicit `plugins` override still reloads from the file: argv selects the
+  // initial set, the file drives changes.
 
   // Serialize reloads so overlapping fs events can't interleave registry edits.
   let reloadChain: Promise<void> = Promise.resolve();

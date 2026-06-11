@@ -16,18 +16,24 @@ import {
   type MessageConnection,
 } from "vscode-jsonrpc/node";
 import { Cache, inputKey } from "./cache.js";
+import { getConfig, updateConfig, validateRepoPath } from "./config-store.js";
 import type { EventBus } from "./event-bus.js";
 import { invokeCapability, type InvokerDeps } from "./invoker.js";
 import { Registry, type RegisteredCapability } from "./registry.js";
 import {
   Methods,
   Notifications,
+  type ConfigGetResult,
+  type ConfigUpdateParams,
+  type ConfigUpdateResult,
   type InvokeParams,
   type RegistryChangedNotification,
   type RegistryListResult,
   type SubscribeParams,
   type SubscribeResult,
   type UpdateNotification,
+  type ValidateRepoPathParams,
+  type ValidateRepoPathResult,
 } from "./rpc.js";
 import type { Scheduler } from "./scheduler.js";
 
@@ -39,6 +45,12 @@ export interface ServerDeps {
   bus: EventBus;
   invoker: InvokerDeps;
   socketPath: string;
+  /**
+   * Path to `perch.json` the `config.*` methods read and mutate. Writes are
+   * atomic; the daemon's config watcher picks them up and drives the reload —
+   * the server never triggers a reload itself.
+   */
+  configPath: string;
 }
 
 /** A running RPC server; call {@link RpcServer.close} to shut down. */
@@ -178,6 +190,27 @@ class ClientConnection {
       this.#deps.scheduler.unsubscribe(entry.id, inputKey);
       this.#subs.delete(subKey(entry.id, inputKey));
     });
+
+    this.#conn.onRequest(Methods.configGet, (): Promise<ConfigGetResult> => {
+      return getConfig(this.#deps.configPath);
+    });
+
+    // Deep-merge + validate + atomic write. We deliberately do NOT reload here:
+    // the atomic rename is a watcher event, so the daemon's watch → reload →
+    // `registry.changed` path applies the change (single source of truth).
+    this.#conn.onRequest(
+      Methods.configUpdate,
+      (params: ConfigUpdateParams): Promise<ConfigUpdateResult> => {
+        return updateConfig(params.patch, this.#deps.configPath);
+      },
+    );
+
+    this.#conn.onRequest(
+      Methods.configValidateRepoPath,
+      (params: ValidateRepoPathParams): Promise<ValidateRepoPathResult> => {
+        return validateRepoPath(params.path);
+      },
+    );
 
     this.#conn.onClose(() => this.#cleanup());
     this.#socket.on("close", () => this.#cleanup());
