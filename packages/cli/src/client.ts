@@ -21,6 +21,7 @@ import {
   type ConfigUpdateParams,
   type ConfigUpdateResult,
   type InvokeParams,
+  type NotificationPayload,
   type RegistryChangedNotification,
   type RegistryListResult,
   type SubscribeParams,
@@ -108,6 +109,21 @@ export class PerchClient {
    */
   onRegistryChanged(handler: (note: RegistryChangedNotification) => void): Disposable {
     return this.#conn.onNotification(Notifications.registryChanged, handler);
+  }
+
+  /** `notifications.subscribe` — begin receiving `notification` pushes. */
+  subscribeNotifications(): Promise<void> {
+    return this.#conn.sendRequest(Methods.notificationsSubscribe);
+  }
+
+  /** `notifications.unsubscribe` — stop receiving `notification` pushes. */
+  unsubscribeNotifications(): Promise<void> {
+    return this.#conn.sendRequest(Methods.notificationsUnsubscribe);
+  }
+
+  /** Register a handler for `notification` pushes. Returns a {@link Disposable}. */
+  onNotification(handler: (note: NotificationPayload) => void): Disposable {
+    return this.#conn.onNotification(Notifications.notification, handler);
   }
 
   /** `config.get` — the current `perch.json`. */
