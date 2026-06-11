@@ -23,8 +23,7 @@
     "appId": "com.perch.app",
     "productName": "Perch",
     "directories": {
-      "output": "release",
-      "buildResources": "build"
+      "output": "release"
     },
     "files": [
       "dist/**/*",
@@ -33,7 +32,7 @@
     "mac": {
       "target": "dir",
       "identity": null,
-      "icon": "build/icon.png",
+      "icon": "assets/icon.png",
       "category": "public.app-category.developer-tools"
     }
   }
