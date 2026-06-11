@@ -86,7 +86,12 @@ export interface PrRow {
   needsRebase: boolean;
   /** True when this PR has a merge conflict — render a "conflict" badge. */
   conflict: boolean;
+  /** Health for the row's marker color: `"ok"` (green) or `"warn"` (orange). */
+  health: Health;
 }
+
+/** A PR/stack marker's health: clean (green) vs. needs-attention (orange). */
+export type Health = "ok" | "warn";
 
 /** A rendered group: either a single PR row or a nested stack of rows. */
 export type GroupRow =
@@ -99,6 +104,8 @@ export type GroupRow =
       tracked: boolean;
       /** Stack-level "needs rebase" flag (any layer). */
       needsRebase: boolean;
+      /** Whole-stack health for the linking bar color (`"warn"` if any layer is). */
+      health: Health;
       /** The repo name to sync (Sync invokes `stack.sync` with this repo). */
       repo: string;
     };
@@ -192,6 +199,19 @@ export function mergeableChip(mergeable: Mergeable | undefined): Chip | undefine
   }
 }
 
+/**
+ * A PR needs attention (`"warn"`) when CI is failing, it has a merge conflict,
+ * it needs a rebase, or changes were requested; otherwise it's clean (`"ok"`).
+ */
+export function prHealth(pr: PrInfo): Health {
+  const problem =
+    pr.ciStatus === "fail" ||
+    (pr.conflict ?? false) ||
+    (pr.needsRebase ?? false) ||
+    pr.reviewDecision === "CHANGES_REQUESTED";
+  return problem ? "warn" : "ok";
+}
+
 /** Derive a single rendered PR row from a raw {@link PrInfo}. */
 export function toPrRow(pr: PrInfo): PrRow {
   const chips: Chip[] = [ciChip(pr.ciStatus ?? "none")];
@@ -207,6 +227,7 @@ export function toPrRow(pr: PrInfo): PrRow {
     chips,
     needsRebase: pr.needsRebase ?? false,
     conflict: pr.conflict ?? false,
+    health: prHealth(pr),
   };
 }
 
@@ -218,11 +239,15 @@ function toGroupRow(group: PrGroup, repoName: string): GroupRow {
   // Stack layers arrive bottom → top; keep that order so the base (#1) reads at
   // the top of the group, ascending to the tip.
   const rows = group.layers.map(toPrRow);
+  const needsRebase = group.needsRebase ?? false;
+  // The stack is healthy only when every layer is clean and nothing needs rebase.
+  const health: Health = needsRebase || rows.some((r) => r.health === "warn") ? "warn" : "ok";
   return {
     kind: "stack",
     rows,
     tracked: group.tracked ?? false,
-    needsRebase: group.needsRebase ?? false,
+    needsRebase,
+    health,
     repo: repoName,
   };
 }

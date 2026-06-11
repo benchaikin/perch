@@ -122,11 +122,18 @@ body {
 }
 
 .stack-group {
-  border-left: 2px solid var(--accent);
+  /* The linking bar's color is set by health (.ok / .warn) below. */
+  border-left: 2px solid var(--ok);
   padding-left: 6px;
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+.stack-group.ok {
+  border-left-color: var(--ok);
+}
+.stack-group.warn {
+  border-left-color: var(--warn);
 }
 
 .stack-head {
@@ -160,12 +167,19 @@ body {
   font-size: 10px;
 }
 
+/* Standalone-PR marker; colored by health (.ok green / .warn orange). */
 .dot {
-  color: var(--accent);
   flex: 0 0 auto;
 }
+.dot.ok {
+  color: var(--ok);
+}
+.dot.warn {
+  color: var(--warn);
+}
 
-/* Position number on a stacked PR (1 = trunk-adjacent base, up to the tip). */
+/* Position number on a stacked PR (1 = trunk-adjacent base, up to the tip),
+   colored by that layer's health (.ok green / .warn orange). */
 .num {
   flex: 0 0 auto;
   width: 16px;
@@ -174,10 +188,16 @@ body {
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: rgba(74, 158, 255, 0.15);
-  color: var(--accent);
   font-size: 10px;
   font-weight: 600;
+}
+.num.ok {
+  background: rgba(78, 201, 176, 0.15);
+  color: var(--ok);
+}
+.num.warn {
+  background: rgba(215, 186, 125, 0.15);
+  color: var(--warn);
 }
 
 .branch {

@@ -68,12 +68,13 @@ function prRowEl(row: PrRow, pos?: number): HTMLElement {
   el.addEventListener("click", () => window.perch.openPr(row.url));
 
   // Stacked PRs get a position number (1 = trunk-adjacent base); standalone a dot.
+  // The marker is colored by the PR's health (green = clean, orange = attention).
   const marker = document.createElement("span");
   if (pos !== undefined) {
-    marker.className = "num";
+    marker.className = `num ${row.health}`;
     marker.textContent = String(pos);
   } else {
-    marker.className = "dot";
+    marker.className = `dot ${row.health}`;
     marker.textContent = "●";
   }
   el.append(marker);
@@ -102,7 +103,8 @@ function prRowEl(row: PrRow, pos?: number): HTMLElement {
 /** Build a nested stack group: a "stack of N" header + indented PR rows. */
 function stackGroupEl(group: Extract<GroupRow, { kind: "stack" }>): HTMLElement {
   const el = document.createElement("div");
-  el.className = "stack-group";
+  // The linking bar is colored by whole-stack health (green = clean, orange = attention).
+  el.className = `stack-group ${group.health}`;
 
   const head = document.createElement("div");
   head.className = "stack-head";

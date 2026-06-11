@@ -81,6 +81,50 @@ test("toPrRow accumulates review + mergeable chips and badges", () => {
   );
 });
 
+test("PR health is warn on CI fail / conflict / needs-rebase / changes, else ok", () => {
+  assert.equal(toPrRow({ ...basePr }).health, "ok");
+  assert.equal(toPrRow({ ...basePr, ciStatus: "pending" }).health, "ok");
+  assert.equal(toPrRow({ ...basePr, reviewDecision: "APPROVED" }).health, "ok");
+  assert.equal(toPrRow({ ...basePr, ciStatus: "fail" }).health, "warn");
+  assert.equal(toPrRow({ ...basePr, conflict: true }).health, "warn");
+  assert.equal(toPrRow({ ...basePr, needsRebase: true }).health, "warn");
+  assert.equal(toPrRow({ ...basePr, reviewDecision: "CHANGES_REQUESTED" }).health, "warn");
+});
+
+test("stack health is warn when any layer (or the stack) needs attention", () => {
+  const stackOverview = (tip: Partial<typeof basePr> & Record<string, unknown>): PrOverview => ({
+    repos: [
+      {
+        name: "r",
+        groups: [
+          {
+            kind: "stack",
+            tracked: true,
+            needsRebase: false,
+            layers: [
+              { ...basePr, number: 1, headRefName: "a", baseRefName: "main" },
+              { ...basePr, number: 2, headRefName: "b", baseRefName: "a", ...tip },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  const clean = buildPanelState({
+    overview: stackOverview({}),
+    daemonUp: true,
+    syncAvailable: true,
+  }).repos[0]!.groups[0]!;
+  const dirty = buildPanelState({
+    overview: stackOverview({ ciStatus: "fail" }),
+    daemonUp: true,
+    syncAvailable: true,
+  }).repos[0]!.groups[0]!;
+  if (clean.kind !== "stack" || dirty.kind !== "stack") throw new Error("expected stacks");
+  assert.equal(clean.health, "ok");
+  assert.equal(dirty.health, "warn");
+});
+
 test("buildPanelState surfaces a daemon-down state without crashing", () => {
   const state = buildPanelState({ daemonUp: false, syncAvailable: false });
   assert.equal(state.status, "daemon-down");
