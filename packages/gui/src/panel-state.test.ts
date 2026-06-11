@@ -10,8 +10,8 @@ import {
   ciChip,
   mergeableChip,
   reviewChip,
-  toLayerRow,
-  type StackGraph,
+  toPrRow,
+  type PrOverview,
 } from "./panel-state.js";
 
 test("ciChip maps each status to a tone", () => {
@@ -35,30 +35,37 @@ test("mergeableChip only chips conflicting/unknown, not clean", () => {
   assert.equal(mergeableChip(undefined), undefined);
 });
 
-test("toLayerRow always includes a CI chip and applies defaults", () => {
-  const row = toLayerRow({ branch: "fix-types" });
-  assert.equal(row.branch, "fix-types");
+const basePr = {
+  number: 1,
+  title: "Add API",
+  url: "https://github.com/o/r/pull/1",
+  headRefName: "add-api",
+  baseRefName: "main",
+};
+
+test("toPrRow always includes a CI chip and applies defaults", () => {
+  const row = toPrRow({ ...basePr });
+  assert.equal(row.branch, "add-api");
+  assert.equal(row.number, 1);
+  assert.equal(row.url, "https://github.com/o/r/pull/1");
   assert.equal(row.needsRebase, false);
   assert.equal(row.conflict, false);
   assert.equal(row.chips.length, 1);
   assert.equal(row.chips[0]?.label, "· CI");
 });
 
-test("toLayerRow accumulates review + mergeable chips", () => {
-  const row = toLayerRow({
-    branch: "add-api",
-    prNumber: 102,
+test("toPrRow accumulates review + mergeable chips and badges", () => {
+  const row = toPrRow({
+    ...basePr,
     ciStatus: "pass",
     reviewDecision: "REVIEW_REQUIRED",
     mergeable: "CONFLICTING",
     needsRebase: true,
     conflict: true,
   });
-  assert.equal(row.prNumber, 102);
   assert.equal(row.needsRebase, true);
   assert.equal(row.conflict, true);
   // CI + review + mergeable.
-  assert.equal(row.chips.length, 3);
   assert.deepEqual(
     row.chips.map((c) => c.tone),
     ["ok", "warn", "bad"],
@@ -69,42 +76,21 @@ test("buildPanelState surfaces a daemon-down state without crashing", () => {
   const state = buildPanelState({ daemonUp: false, syncAvailable: false });
   assert.equal(state.status, "daemon-down");
   assert.match(state.message ?? "", /perchd not running/);
-  assert.equal(state.rows.length, 0);
+  assert.deepEqual(state.repos, []);
   assert.equal(state.syncAvailable, false);
 });
 
-test("buildPanelState shows a loading/empty state before data arrives", () => {
+test("buildPanelState shows a loading state before data arrives", () => {
   const state = buildPanelState({ daemonUp: true, syncAvailable: true });
   assert.equal(state.status, "empty");
   assert.match(state.message ?? "", /Loading/);
 });
 
-test("buildPanelState reports an empty stack distinctly", () => {
-  const graph: StackGraph = { repo: "ashby/main", layers: [] };
-  const state = buildPanelState({ graph, daemonUp: true, syncAvailable: true });
+test("buildPanelState reports 'no open PRs' when every repo is empty", () => {
+  const overview: PrOverview = { repos: [{ name: "main", groups: [] }] };
+  const state = buildPanelState({ overview, daemonUp: true, syncAvailable: true });
   assert.equal(state.status, "empty");
-  assert.equal(state.repo, "ashby/main");
-  assert.match(state.message ?? "", /No stack/);
-});
-
-test("buildPanelState renders rows tip-first (reversed)", () => {
-  const graph: StackGraph = {
-    repo: "ashby/main",
-    layers: [
-      { branch: "fix-types", ciStatus: "pass" },
-      { branch: "add-api", ciStatus: "pending" },
-      { branch: "ui-polish", ciStatus: "none" },
-    ],
-  };
-  const state = buildPanelState({ graph, daemonUp: true, syncAvailable: true });
-  assert.equal(state.status, "ok");
-  assert.equal(state.repo, "ashby/main");
-  // Tip (last layer) renders first.
-  assert.deepEqual(
-    state.rows.map((r) => r.branch),
-    ["ui-polish", "add-api", "fix-types"],
-  );
-  assert.equal(state.syncAvailable, true);
+  assert.match(state.message ?? "", /No open PRs/);
 });
 
 test("buildPanelState propagates a transient error over data", () => {
@@ -113,41 +99,91 @@ test("buildPanelState propagates a transient error over data", () => {
   assert.equal(state.message, "boom");
 });
 
-test("buildPanelState threads the repo list + selection through to the renderer", () => {
-  const graph: StackGraph = { layers: [{ branch: "feat-a", ciStatus: "pass" }] };
-  const state = buildPanelState({
-    graph,
-    daemonUp: true,
-    syncAvailable: true,
+test("buildPanelState renders standalone PRs flat and stacks nested tip-first", () => {
+  const overview: PrOverview = {
     repos: [
-      { name: "main", path: "/work/main" },
-      { name: "infra", path: "/work/infra" },
+      {
+        name: "main",
+        path: "/work/main",
+        groups: [
+          { kind: "pr", pr: { ...basePr, number: 9, headRefName: "solo" } },
+          {
+            kind: "stack",
+            tracked: true,
+            needsRebase: true,
+            layers: [
+              { ...basePr, number: 11, headRefName: "feat-a", baseRefName: "main" },
+              {
+                ...basePr,
+                number: 12,
+                headRefName: "feat-b",
+                baseRefName: "feat-a",
+                needsRebase: true,
+              },
+            ],
+          },
+        ],
+      },
     ],
-    selectedRepo: "infra",
-  });
-  assert.deepEqual(state.repos, ["main", "infra"]);
-  assert.equal(state.selectedRepo, "infra");
+  };
+  const state = buildPanelState({ overview, daemonUp: true, syncAvailable: true });
+  assert.equal(state.status, "ok");
+  assert.equal(state.repos.length, 1);
+  const repo = state.repos[0]!;
+  assert.equal(repo.name, "main");
+
+  const solo = repo.groups[0]!;
+  const stack = repo.groups[1]!;
+  assert.equal(solo.kind, "pr");
+  if (stack.kind !== "stack") throw new Error("expected stack");
+  assert.equal(stack.tracked, true);
+  assert.equal(stack.needsRebase, true);
+  assert.equal(stack.repo, "main");
+  // Layers render tip-first (feat-b before feat-a).
+  assert.deepEqual(
+    stack.rows.map((r) => r.branch),
+    ["feat-b", "feat-a"],
+  );
 });
 
-test("buildPanelState defaults repos to [] and rides the switcher on every status", () => {
-  // No repos input → empty list (renderer hides the dropdown).
-  const down = buildPanelState({ daemonUp: false, syncAvailable: false });
-  assert.deepEqual(down.repos, []);
-  assert.equal(down.selectedRepo, undefined);
-
-  // The switcher fields are present even on the daemon-down / error states so
-  // the dropdown doesn't flicker away when the stack fails to load.
-  const err = buildPanelState({
-    daemonUp: true,
-    syncAvailable: true,
-    error: "boom",
+test("buildPanelState marks an untracked stack so the renderer hides Sync", () => {
+  const overview: PrOverview = {
     repos: [
-      { name: "main", path: "/work/main" },
-      { name: "infra", path: "/work/infra" },
+      {
+        name: "main",
+        groups: [
+          {
+            kind: "stack",
+            tracked: false,
+            layers: [
+              { ...basePr, number: 1, headRefName: "a", baseRefName: "main" },
+              { ...basePr, number: 2, headRefName: "b", baseRefName: "a" },
+            ],
+          },
+        ],
+      },
     ],
-    selectedRepo: "main",
-  });
-  assert.equal(err.status, "error");
-  assert.deepEqual(err.repos, ["main", "infra"]);
-  assert.equal(err.selectedRepo, "main");
+  };
+  const state = buildPanelState({ overview, daemonUp: true, syncAvailable: true });
+  const grp = state.repos[0]!.groups[0]!;
+  if (grp.kind !== "stack") throw new Error("expected stack");
+  assert.equal(grp.tracked, false);
+});
+
+test("buildPanelState surfaces a per-repo error inline and stays ok overall", () => {
+  const overview: PrOverview = {
+    repos: [
+      { name: "flaky", groups: [], error: "gh: 504 Gateway Timeout" },
+      {
+        name: "main",
+        groups: [{ kind: "pr", pr: { ...basePr } }],
+      },
+    ],
+  };
+  const state = buildPanelState({ overview, daemonUp: true, syncAvailable: true });
+  // A repo with an error counts as content → overall ok, not "empty".
+  assert.equal(state.status, "ok");
+  assert.equal(state.repos[0]!.error, "gh: 504 Gateway Timeout");
+  assert.deepEqual(state.repos[0]!.groups, []);
+  assert.equal(state.repos[1]!.groups.length, 1);
 });

@@ -39,3 +39,9 @@ test("stack.repos is empty (no default) when no repos are configured", async () 
 test("stack.repos is not exposed to MCP", () => {
   assert.equal(plugin.capabilities.repos!.expose?.mcp, false);
 });
+
+test("stack.prs is a read exposed to MCP", () => {
+  const prs = plugin.capabilities.prs!;
+  assert.equal(prs.kind, "read");
+  assert.equal(prs.expose?.mcp, true);
+});

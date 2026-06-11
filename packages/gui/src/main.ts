@@ -3,7 +3,7 @@
  *
  * Owns a menu-bar (tray) entry that toggles a frameless, always-on-top,
  * non-activating pinned panel. Connects to `perchd` over JSON-RPC (reusing
- * {@link PerchClient} from `@perch/cli`), subscribes to `stack.view`, and
+ * {@link PerchClient} from `@perch/cli`), subscribes to `stack.prs`, and
  * forwards derived {@link PanelState} to the renderer via IPC. All data-shaping
  * lives in the Electron-free {@link buildPanelState}; this file is wiring only.
  *
@@ -18,13 +18,11 @@ import { DaemonUnavailableError, PerchClient } from "@perch/cli";
 import { Channels } from "./ipc.js";
 import {
   buildPanelState,
-  STACK_REPOS_ID,
+  STACK_PRS_ID,
   STACK_SYNC_ID,
-  STACK_VIEW_ID,
   type BuildInput,
   type PanelState,
-  type ReposResult,
-  type StackGraph,
+  type PrOverview,
 } from "./panel-state.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -47,46 +45,20 @@ function pushState(): void {
   panel?.webContents.send(Channels.stateFromMain, state satisfies PanelState);
 }
 
-/** The `stack.view` input for the currently-selected repo (omit when none). */
-function viewInput(): { repo: string } | undefined {
-  return buildInput.selectedRepo ? { repo: buildInput.selectedRepo } : undefined;
-}
-
 /**
- * Fetch the configured repos (`stack.repos`) and reconcile `selectedRepo`:
- * keep the current selection if it still exists, else fall back to the read's
- * default. Tolerant — if the read is absent (older plugin) repos stay empty.
+ * (Re)subscribe to `stack.prs` and seed the overview from the subscription's
+ * current value. The subscription key is tracked so live `capability.update`
+ * notes for this exact (id, input) are matched.
  */
-async function loadRepos(): Promise<void> {
+async function subscribePrs(): Promise<void> {
   if (!client) return;
-  try {
-    const result = (await client.invoke({ id: STACK_REPOS_ID })) as ReposResult;
-    buildInput.repos = result.repos;
-    const names = new Set(result.repos.map((r) => r.name));
-    if (!buildInput.selectedRepo || !names.has(buildInput.selectedRepo)) {
-      buildInput.selectedRepo = result.default;
-    }
-  } catch {
-    // `stack.repos` not available (stack plugin disabled / older) — no switcher.
-    buildInput.repos = [];
-    buildInput.selectedRepo = undefined;
-  }
-}
-
-/**
- * (Re)subscribe to `stack.view` for the current `selectedRepo` and seed the
- * graph from the subscription's current value. The subscription key is tracked
- * so live `capability.update` notes for this exact (id, input) are matched.
- */
-async function subscribeView(): Promise<void> {
-  if (!client) return;
-  const sub = await client.subscribe({ id: STACK_VIEW_ID, input: viewInput() });
+  const sub = await client.subscribe({ id: STACK_PRS_ID });
   subscriptionKey = sub.inputKey;
-  if (sub.current !== undefined) buildInput.graph = sub.current as StackGraph;
+  if (sub.current !== undefined) buildInput.overview = sub.current as PrOverview;
   buildInput.error = undefined;
 }
 
-/** Connect to perchd, subscribe to `stack.view`, and detect Sync availability. */
+/** Connect to perchd, subscribe to `stack.prs`, and detect Sync availability. */
 async function connect(): Promise<void> {
   const socket = process.env.PERCH_SOCKET ?? defaultSocketPath();
   try {
@@ -104,8 +76,8 @@ async function connect(): Promise<void> {
 
   // Live updates: refresh the view-model whenever a matching update arrives.
   client.onUpdate((note) => {
-    if (note.id === STACK_VIEW_ID && note.inputKey === subscriptionKey) {
-      buildInput.graph = note.data as StackGraph;
+    if (note.id === STACK_PRS_ID && note.inputKey === subscriptionKey) {
+      buildInput.overview = note.data as PrOverview;
       buildInput.error = undefined;
       pushState();
     }
@@ -114,8 +86,8 @@ async function connect(): Promise<void> {
   // The daemon hot-reloads perch.json — re-sync when the registry changes.
   client.onRegistryChanged(() => void reloadFromRegistry());
 
-  // Sync is added in parallel by M6 and may be absent here — gate the button on
-  // the registry rather than assuming it exists.
+  // Sync may be absent (stack plugin disabled) — gate the buttons on the
+  // registry rather than assuming it exists.
   try {
     const caps = await client.registryList();
     buildInput.syncAvailable = caps.some((c) => c.id === STACK_SYNC_ID);
@@ -123,38 +95,32 @@ async function connect(): Promise<void> {
     buildInput.syncAvailable = false;
   }
 
-  // Populate the repo switcher, then subscribe for the selected repo's value +
-  // live deltas.
-  await loadRepos();
   try {
-    await subscribeView();
+    await subscribePrs();
   } catch (err) {
-    buildInput.error = `stack.view: ${errorMessage(err)}`;
+    buildInput.error = `stack.prs: ${errorMessage(err)}`;
   }
   pushState();
 }
 
-/** Re-invoke `stack.view` on demand (Refresh button). */
+/** Re-invoke `stack.prs` on demand (Refresh button). */
 async function refresh(): Promise<void> {
   if (!client) {
     await connect();
     return;
   }
   try {
-    buildInput.graph = (await client.invoke({
-      id: STACK_VIEW_ID,
-      input: viewInput(),
-    })) as StackGraph;
+    buildInput.overview = (await client.invoke({ id: STACK_PRS_ID })) as PrOverview;
     buildInput.error = undefined;
   } catch (err) {
-    buildInput.error = `stack.view: ${errorMessage(err)}`;
+    buildInput.error = `stack.prs: ${errorMessage(err)}`;
   }
   pushState();
 }
 
 /**
  * Re-sync after the daemon hot-reloads `perch.json`: refresh the registry (Sync
- * availability) and re-subscribe to `stack.view`, which may have been added or
+ * availability) and re-subscribe to `stack.prs`, which may have been added or
  * removed by the config change.
  */
 async function reloadFromRegistry(): Promise<void> {
@@ -162,16 +128,11 @@ async function reloadFromRegistry(): Promise<void> {
   try {
     const caps = await client.registryList();
     buildInput.syncAvailable = caps.some((c) => c.id === STACK_SYNC_ID);
-    if (caps.some((c) => c.id === STACK_VIEW_ID)) {
-      // The repo list can change with the config — refresh it (reconciling the
-      // selection), then re-subscribe to `stack.view` for the selected repo.
-      await loadRepos();
-      await subscribeView();
+    if (caps.some((c) => c.id === STACK_PRS_ID)) {
+      await subscribePrs();
     } else {
-      // The stack plugin was disabled in config — clear its data + switcher.
-      buildInput.graph = { layers: [] };
-      buildInput.repos = [];
-      buildInput.selectedRepo = undefined;
+      // The stack plugin was disabled in config — clear its data.
+      buildInput.overview = { repos: [] };
     }
   } catch (err) {
     buildInput.error = `registry: ${errorMessage(err)}`;
@@ -179,38 +140,21 @@ async function reloadFromRegistry(): Promise<void> {
   pushState();
 }
 
-/**
- * Switch the targeted repo from the renderer's dropdown: unsubscribe the old
- * `stack.view` input, update the selection, and re-subscribe for the new repo.
- * Ignores a no-op (same repo) or an unknown name.
- */
-async function selectRepo(name: string): Promise<void> {
-  if (!client || name === buildInput.selectedRepo) return;
-  if (!buildInput.repos?.some((r) => r.name === name)) return;
-  const previous = viewInput();
-  buildInput.selectedRepo = name;
-  buildInput.graph = undefined; // show "Loading…" until the new repo's view lands.
-  pushState();
-  try {
-    // Drop the old subscription so the daemon can stop polling that repo.
-    void client.unsubscribe({ id: STACK_VIEW_ID, input: previous }).catch(() => {});
-    await subscribeView();
-  } catch (err) {
-    buildInput.error = `stack.view: ${errorMessage(err)}`;
-  }
-  pushState();
-}
-
-/** Invoke `stack.sync` (Sync button); no-op if the action is unavailable. */
-async function sync(): Promise<void> {
+/** Invoke `stack.sync` for a repo (Sync button); no-op if unavailable. */
+async function sync(repo: string): Promise<void> {
   if (!client || !buildInput.syncAvailable) return;
   try {
-    await client.invoke({ id: STACK_SYNC_ID, input: viewInput() });
+    await client.invoke({ id: STACK_SYNC_ID, input: { repo } });
     await refresh();
   } catch (err) {
     buildInput.error = `stack.sync: ${errorMessage(err)}`;
     pushState();
   }
+}
+
+/** Open a PR's URL in the user's default browser. */
+function openPr(url: string): void {
+  void shell.openExternal(url);
 }
 
 /** Best-effort human-readable message from an RPC/JS error. */
@@ -364,8 +308,8 @@ function createTray(): void {
 
 function registerIpc(): void {
   ipcMain.on(Channels.refresh, () => void refresh());
-  ipcMain.on(Channels.sync, () => void sync());
-  ipcMain.on(Channels.selectRepo, (_event, name: string) => void selectRepo(name));
+  ipcMain.on(Channels.sync, (_event, repo: string) => void sync(repo));
+  ipcMain.on(Channels.openPr, (_event, url: string) => openPr(url));
 }
 
 app.whenReady().then(() => {

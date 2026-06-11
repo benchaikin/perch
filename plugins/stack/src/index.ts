@@ -9,6 +9,7 @@ import { action, definePlugin, read, z } from "@perch/sdk";
 
 import { ghStackProvider } from "./gh-provider.js";
 import { StackGraph } from "./graph.js";
+import { buildPrOverview, PrOverview } from "./prs.js";
 import { reposResult, ReposResult, resolveRepoCwd } from "./repos.js";
 import { resolveStackView } from "./resolve-view.js";
 
@@ -17,6 +18,8 @@ export { ghStackProvider } from "./gh-provider.js";
 export { baseRefProvider } from "./base-ref-provider.js";
 export { resolveStackView } from "./resolve-view.js";
 export { CiStatus, StackGraph, StackLayer } from "./graph.js";
+export { allChains, chainContaining } from "./chains.js";
+export { buildPrOverview, PrGroup, PrInfo, PrOverview, PrRepo } from "./prs.js";
 export { RepoEntry, ReposResult, reposResult, resolveRepoCwd, toRepoEntries } from "./repos.js";
 
 /**
@@ -84,6 +87,26 @@ export default definePlugin({
       output: ReposResult,
       expose: { mcp: false },
       run: ({ ctx }) => reposResult(configRepos(ctx.config)),
+    }),
+
+    /**
+     * The cross-repo "My PRs" overview: every configured repo's open PRs
+     * (authored by the current user), with stacked PRs grouped together (spec
+     * `docs/prs-view.md`). Best-effort per repo — one repo's failure doesn't
+     * fail the whole overview.
+     *
+     * Opted into MCP: the cross-repo "my PRs + status" read is high-value for
+     * agents (a single typed answer to "what are my open PRs and are they
+     * green?" spanning all repos).
+     */
+    prs: read({
+      summary: "Your open PRs across all configured repos, with stacks grouped",
+      input: z.object({}).default({}),
+      output: PrOverview,
+      refresh: { every: "60s", on: ["focus"] },
+      view: { kind: "list", title: "My PRs" },
+      expose: { mcp: true },
+      run: ({ ctx }) => buildPrOverview({ repos: configRepos(ctx.config), log: ctx.log }),
     }),
 
     // ── M6 action wrappers (spec §8.3) ──

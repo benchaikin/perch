@@ -17,11 +17,11 @@ const bridge: PerchBridge = {
   refresh() {
     ipcRenderer.send(Channels.refresh);
   },
-  sync() {
-    ipcRenderer.send(Channels.sync);
+  sync(repo) {
+    ipcRenderer.send(Channels.sync, repo);
   },
-  selectRepo(name) {
-    ipcRenderer.send(Channels.selectRepo, name);
+  openPr(url) {
+    ipcRenderer.send(Channels.openPr, url);
   },
 };
 

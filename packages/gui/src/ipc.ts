@@ -9,12 +9,12 @@ import type { PanelState } from "./panel-state.js";
 export const Channels = {
   /** Main → renderer: a fresh {@link PanelState} to render. */
   stateFromMain: "perch:state",
-  /** Renderer → main: re-invoke `stack.view`. */
+  /** Renderer → main: re-invoke `stack.prs`. */
   refresh: "perch:refresh",
-  /** Renderer → main: invoke `stack.sync`. */
+  /** Renderer → main: invoke `stack.sync` for a repo (payload: the repo name). */
   sync: "perch:sync",
-  /** Renderer → main: switch the targeted repo (payload: the repo name). */
-  selectRepo: "perch:select-repo",
+  /** Renderer → main: open a PR's URL in the browser (payload: the URL). */
+  openPr: "perch:open-pr",
 } as const;
 
 /**
@@ -24,12 +24,12 @@ export const Channels = {
 export interface PerchBridge {
   /** Subscribe to panel-state pushes. Returns an unsubscribe function. */
   onState(handler: (state: PanelState) => void): () => void;
-  /** Ask the main process to re-fetch the stack. */
+  /** Ask the main process to re-fetch the PRs overview. */
   refresh(): void;
-  /** Ask the main process to run the Sync action. */
-  sync(): void;
-  /** Ask the main process to target a different repo (by name). */
-  selectRepo(name: string): void;
+  /** Ask the main process to run the Sync action for a repo (by name). */
+  sync(repo: string): void;
+  /** Ask the main process to open a PR's URL in the browser. */
+  openPr(url: string): void;
 }
 
 declare global {

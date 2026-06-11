@@ -1,40 +1,24 @@
 /**
- * Electron-free panel state + view-model derivation.
+ * Electron-free panel state + view-model derivation for the "My PRs" panel.
  *
  * This module owns ALL the data-shaping logic the GUI needs and deliberately
  * imports nothing from Electron, so it can be unit-tested with plain Node. The
- * main process subscribes to `stack.view` over RPC and feeds the raw
- * {@link StackGraph} (plus a "daemon down" / "sync availability" signal) through
+ * main process subscribes to `stack.prs` over RPC and feeds the raw
+ * {@link PrOverview} (plus a "daemon down" / "sync availability" signal) through
  * {@link buildPanelState}; the renderer receives the resulting {@link PanelState}
  * and draws it verbatim — no business logic lives in the renderer.
  *
- * The {@link StackGraph} shape is duplicated here (rather than depending on the
- * stack plugin) because the GUI is a thin client of the daemon: it only knows
- * the wire shape of `stack.view`'s output, not the plugin's internals.
+ * The `PrOverview` shape is duplicated here (rather than depending on the stack
+ * plugin) because the GUI is a thin client of the daemon: it only knows the wire
+ * shape of `stack.prs`'s output, not the plugin's internals.
  */
 
-/** Canonical capability id of the stack read the panel renders. */
-export const STACK_VIEW_ID = "stack.view";
-/** Canonical capability id of the hero Sync action (added by M6). */
+/** Canonical capability id of the cross-repo "My PRs" read the panel renders. */
+export const STACK_PRS_ID = "stack.prs";
+/** Canonical capability id of the hero Sync action. */
 export const STACK_SYNC_ID = "stack.sync";
-/** Canonical capability id of the configured-repos read (v1.1 repo switcher). */
-export const STACK_REPOS_ID = "stack.repos";
 
-/** One configured repo (mirrors the stack plugin's `RepoEntry`). */
-export interface RepoEntry {
-  /** Display name — the basename of the repo's path. */
-  name: string;
-  /** Local path to the repo. */
-  path: string;
-}
-
-/** `stack.repos`'s output: the configured repos + the default name. */
-export interface ReposResult {
-  repos: RepoEntry[];
-  default?: string;
-}
-
-/** Normalized CI rollup for a layer (mirrors the stack plugin's `CiStatus`). */
+/** Normalized CI rollup for a PR (mirrors the stack plugin's `CiStatus`). */
 export type CiStatus = "pass" | "fail" | "pending" | "none";
 
 /** GitHub review decision, passed through verbatim when present. */
@@ -43,26 +27,39 @@ export type ReviewDecision = "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED
 /** GitHub mergeable state, passed through verbatim when present. */
 export type Mergeable = "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
 
-/** One layer of the stack as it arrives over RPC (the wire shape of a layer). */
-export interface StackLayer {
-  branch: string;
-  prNumber?: number;
-  title?: string;
+/** One open PR as it arrives over RPC (the wire shape of `PrInfo`). */
+export interface PrInfo {
+  number: number;
+  title: string;
+  url: string;
+  headRefName: string;
+  baseRefName: string;
   ciStatus?: CiStatus;
   reviewDecision?: ReviewDecision;
   mergeable?: Mergeable;
   needsRebase?: boolean;
   conflict?: boolean;
-  url?: string;
 }
 
-/** `stack.view`'s output: an ordered linear chain, bottom → top. */
-export interface StackGraph {
-  repo?: string;
-  layers: StackLayer[];
+/** A group is either a standalone PR or a stack of ≥2 chained PRs. */
+export type PrGroup =
+  | { kind: "pr"; pr: PrInfo }
+  | { kind: "stack"; layers: PrInfo[]; tracked?: boolean; needsRebase?: boolean };
+
+/** One configured repo's PRs, grouped (the wire shape of `PrRepo`). */
+export interface PrRepo {
+  name: string;
+  path?: string;
+  groups: PrGroup[];
+  error?: string;
 }
 
-/** A status chip rendered next to a layer. `tone` drives its color. */
+/** `stack.prs`'s output: every configured repo's PRs, grouped. */
+export interface PrOverview {
+  repos: PrRepo[];
+}
+
+/** A status chip rendered next to a PR. `tone` drives its color. */
 export interface Chip {
   /** Short glyph + label, e.g. `"✓ CI"`. */
   label: string;
@@ -72,19 +69,43 @@ export interface Chip {
   hint: string;
 }
 
-/** A single rendered row of the stack panel. */
-export interface LayerRow {
+/** A single rendered PR row. */
+export interface PrRow {
+  number: number;
+  title: string;
+  /** Web URL of the PR — the renderer makes the row clickable to open it. */
+  url: string;
   branch: string;
-  prNumber?: number;
-  title?: string;
-  /** Web URL of the PR, if known (renderer may make the row clickable). */
-  url?: string;
   /** Status chips (CI / review / mergeable), already mapped to glyphs + tones. */
   chips: Chip[];
-  /** True when this layer's base advanced past it — render a "needs rebase" badge. */
+  /** True when this PR's base advanced past it — render a "needs rebase" badge. */
   needsRebase: boolean;
-  /** True when this layer has a merge conflict — render a "conflict" badge. */
+  /** True when this PR has a merge conflict — render a "conflict" badge. */
   conflict: boolean;
+}
+
+/** A rendered group: either a single PR row or a nested stack of rows. */
+export type GroupRow =
+  | { kind: "pr"; pr: PrRow }
+  | {
+      kind: "stack";
+      /** Layers top-first (tip reads at the top), matching the stack panel. */
+      rows: PrRow[];
+      /** Whether the Sync action should show for this stack (gh-stack tracked). */
+      tracked: boolean;
+      /** Stack-level "needs rebase" flag (any layer). */
+      needsRebase: boolean;
+      /** The repo name to sync (Sync invokes `stack.sync` with this repo). */
+      repo: string;
+    };
+
+/** One repo section in the rendered panel. */
+export interface RepoSection {
+  name: string;
+  /** Inline note shown under the header when the repo's lookup failed. */
+  error?: string;
+  /** Standalone PR rows + nested stack groups, in overview order. */
+  groups: GroupRow[];
 }
 
 /** The complete state the renderer needs to draw the panel. */
@@ -93,32 +114,22 @@ export interface PanelState {
   status: "ok" | "empty" | "daemon-down" | "error";
   /** Human-readable message for non-`ok` states (e.g. "perchd not running"). */
   message?: string;
-  /** Repo label for the header, when known. */
-  repo?: string;
-  /** Rendered rows (top of the stack first, so the tip reads at the top). */
-  rows: LayerRow[];
-  /** Whether the Sync button should be enabled (the action exists in the registry). */
+  /** Repo sections, in overview order. */
+  repos: RepoSection[];
+  /** Whether the Sync action exists in the registry (gates the Sync buttons). */
   syncAvailable: boolean;
-  /** Configured repo names for the switcher dropdown (empty / single → hidden). */
-  repos: string[];
-  /** The currently-targeted repo name, when one is selected. */
-  selectedRepo?: string;
 }
 
 /** Inputs to {@link buildPanelState}. */
 export interface BuildInput {
-  /** The latest `stack.view` data, or `undefined` if none has arrived yet. */
-  graph?: StackGraph;
+  /** The latest `stack.prs` data, or `undefined` if none has arrived yet. */
+  overview?: PrOverview;
   /** False when the daemon socket is unreachable. */
   daemonUp: boolean;
-  /** Whether `stack.sync` is present in `registry.list` (M6 ships it). */
+  /** Whether `stack.sync` is present in `registry.list`. */
   syncAvailable: boolean;
   /** A transient error message (e.g. an invoke failed). */
   error?: string;
-  /** Configured repos from `stack.repos` (drives the switcher dropdown). */
-  repos?: RepoEntry[];
-  /** The currently-targeted repo name (the switcher's selection). */
-  selectedRepo?: string;
 }
 
 /** Map a normalized CI status to a status chip. */
@@ -163,68 +174,83 @@ export function mergeableChip(mergeable: Mergeable | undefined): Chip | undefine
   }
 }
 
-/** Derive a single rendered row from a raw stack layer. */
-export function toLayerRow(layer: StackLayer): LayerRow {
-  const chips: Chip[] = [ciChip(layer.ciStatus ?? "none")];
-  const review = reviewChip(layer.reviewDecision);
+/** Derive a single rendered PR row from a raw {@link PrInfo}. */
+export function toPrRow(pr: PrInfo): PrRow {
+  const chips: Chip[] = [ciChip(pr.ciStatus ?? "none")];
+  const review = reviewChip(pr.reviewDecision);
   if (review) chips.push(review);
-  const merge = mergeableChip(layer.mergeable);
+  const merge = mergeableChip(pr.mergeable);
   if (merge) chips.push(merge);
   return {
-    branch: layer.branch,
-    prNumber: layer.prNumber,
-    title: layer.title,
-    url: layer.url,
+    number: pr.number,
+    title: pr.title,
+    url: pr.url,
+    branch: pr.headRefName,
     chips,
-    needsRebase: layer.needsRebase ?? false,
-    conflict: layer.conflict ?? false,
+    needsRebase: pr.needsRebase ?? false,
+    conflict: pr.conflict ?? false,
   };
+}
+
+/** Derive a rendered group row from a raw {@link PrGroup} in repo `repoName`. */
+function toGroupRow(group: PrGroup, repoName: string): GroupRow {
+  if (group.kind === "pr") {
+    return { kind: "pr", pr: toPrRow(group.pr) };
+  }
+  // Stack layers arrive bottom → top; render tip-first so the latest work reads
+  // at the top, matching the v1 stack panel.
+  const rows = [...group.layers].reverse().map(toPrRow);
+  return {
+    kind: "stack",
+    rows,
+    tracked: group.tracked ?? false,
+    needsRebase: group.needsRebase ?? false,
+    repo: repoName,
+  };
+}
+
+/** Total PR count across a repo's groups (a stack counts as its layers). */
+function repoPrCount(repo: PrRepo): number {
+  let n = 0;
+  for (const g of repo.groups) n += g.kind === "stack" ? g.layers.length : 1;
+  return n;
 }
 
 /**
  * Build the full {@link PanelState} from raw inputs. Pure: same inputs → same
  * output, no side effects. The renderer draws whatever this returns.
- *
- * Layers are reversed so the tip (top of the stack) renders at the top of the
- * panel, matching the target UI where the most-recent work reads first.
  */
 export function buildPanelState(input: BuildInput): PanelState {
-  const { graph, daemonUp, syncAvailable, error, selectedRepo } = input;
-
-  // The switcher fields ride along on every state so the dropdown stays put
-  // regardless of the stack's load/error status.
-  const repos = (input.repos ?? []).map((r) => r.name);
-  const switcher = { repos, selectedRepo };
+  const { overview, daemonUp, syncAvailable, error } = input;
 
   if (!daemonUp) {
     return {
       status: "daemon-down",
       message: "perchd not running — start it with `perchd`",
-      rows: [],
+      repos: [],
       syncAvailable: false,
-      ...switcher,
     };
   }
 
   if (error) {
-    return { status: "error", message: error, rows: [], syncAvailable, ...switcher };
+    return { status: "error", message: error, repos: [], syncAvailable };
   }
 
-  if (!graph) {
-    return { status: "empty", message: "Loading stack…", rows: [], syncAvailable, ...switcher };
+  if (!overview) {
+    return { status: "empty", message: "Loading…", repos: [], syncAvailable };
   }
 
-  if (graph.layers.length === 0) {
-    return {
-      status: "empty",
-      message: "No stack here — nothing to show",
-      repo: graph.repo,
-      rows: [],
-      syncAvailable,
-      ...switcher,
-    };
+  const repos: RepoSection[] = overview.repos.map((repo) => ({
+    name: repo.name,
+    error: repo.error,
+    groups: repo.groups.map((g) => toGroupRow(g, repo.name)),
+  }));
+
+  // "Empty" when every repo has neither PRs nor an error to surface.
+  const anyContent = overview.repos.some((r) => repoPrCount(r) > 0 || r.error);
+  if (!anyContent) {
+    return { status: "empty", message: "No open PRs", repos, syncAvailable };
   }
 
-  const rows = [...graph.layers].reverse().map(toLayerRow);
-  return { status: "ok", repo: graph.repo, rows, syncAvailable, ...switcher };
+  return { status: "ok", repos, syncAvailable };
 }

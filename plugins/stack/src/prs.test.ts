@@ -1,0 +1,216 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import { buildPrOverview, PrGroup } from "./prs.js";
+import type { Exec, ExecOptions } from "./provider.js";
+
+/** A repo with one standalone PR + a 2-PR stack (feat-a ← feat-b). */
+const REPO_A_PRS = JSON.stringify([
+  {
+    number: 10,
+    title: "Standalone fix",
+    url: "https://github.com/o/a/pull/10",
+    headRefName: "fix-typo",
+    baseRefName: "main",
+    statusCheckRollup: [{ status: "COMPLETED", conclusion: "SUCCESS" }],
+    reviewDecision: "APPROVED",
+    mergeable: "MERGEABLE",
+  },
+  {
+    number: 11,
+    title: "Stack base",
+    url: "https://github.com/o/a/pull/11",
+    headRefName: "feat-a",
+    baseRefName: "main",
+    statusCheckRollup: [{ status: "IN_PROGRESS", conclusion: null }],
+    reviewDecision: "REVIEW_REQUIRED",
+    mergeable: "MERGEABLE",
+  },
+  {
+    number: 12,
+    title: "Stack tip",
+    url: "https://github.com/o/a/pull/12",
+    headRefName: "feat-b",
+    baseRefName: "feat-a",
+    statusCheckRollup: [{ status: "COMPLETED", conclusion: "FAILURE" }],
+    reviewDecision: "CHANGES_REQUESTED",
+    mergeable: "CONFLICTING",
+  },
+]);
+
+/** A second repo with a single standalone PR. */
+const REPO_B_PRS = JSON.stringify([
+  {
+    number: 5,
+    title: "Infra bump",
+    url: "https://github.com/o/b/pull/5",
+    headRefName: "bump-deps",
+    baseRefName: "main",
+    statusCheckRollup: [],
+    reviewDecision: null,
+    mergeable: "MERGEABLE",
+  },
+]);
+
+/** gh stack view --json for repo A's stack (feat-a ← feat-b), feat-b needs rebase. */
+const REPO_A_STACK_VIEW = JSON.stringify({
+  branches: [
+    { name: "feat-a", needsRebase: false },
+    { name: "feat-b", needsRebase: true },
+  ],
+});
+
+type Call = { cmd: string; args: string[]; cwd?: string };
+
+/** Build a fake exec keyed by cwd, routing pr-list / stack-view per repo. */
+function fakeExec(byCwd: Record<string, { prs?: string; stackView?: string; prError?: Error }>): {
+  exec: Exec;
+  calls: Call[];
+} {
+  const calls: Call[] = [];
+  const exec: Exec = (cmd, args, opts?: ExecOptions) => {
+    calls.push({ cmd, args, cwd: opts?.cwd });
+    const repo = byCwd[opts?.cwd ?? ""];
+    if (!repo) return Promise.reject(new Error(`no fixture for cwd ${opts?.cwd}`));
+    if (cmd === "gh" && args.includes("pr") && args.includes("list")) {
+      if (repo.prError) return Promise.reject(repo.prError);
+      return Promise.resolve(repo.prs ?? "[]");
+    }
+    if (cmd === "gh" && args[0] === "stack" && args[1] === "view") {
+      if (repo.stackView) return Promise.resolve(repo.stackView);
+      return Promise.reject(new Error("no stack"));
+    }
+    return Promise.reject(new Error(`unexpected exec: ${cmd} ${args.join(" ")}`));
+  };
+  return { exec, calls };
+}
+
+const stackGroups = (groups: PrGroup[]): Extract<PrGroup, { kind: "stack" }>[] =>
+  groups.filter((g): g is Extract<PrGroup, { kind: "stack" }> => g.kind === "stack");
+const prGroups = (groups: PrGroup[]): Extract<PrGroup, { kind: "pr" }>[] =>
+  groups.filter((g): g is Extract<PrGroup, { kind: "pr" }> => g.kind === "pr");
+
+test("groups a standalone PR + a 2-chain in one repo, with status mapping", async () => {
+  const { exec } = fakeExec({ "/work/a": { prs: REPO_A_PRS } });
+  const overview = await buildPrOverview({
+    repos: ["/work/a"],
+    exec,
+    hasGhStack: () => false,
+  });
+
+  assert.equal(overview.repos.length, 1);
+  const repo = overview.repos[0]!;
+  assert.equal(repo.name, "a");
+  assert.equal(repo.path, "/work/a");
+  assert.equal(repo.error, undefined);
+
+  // One standalone + one stack.
+  const solos = prGroups(repo.groups);
+  const stacks = stackGroups(repo.groups);
+  assert.equal(solos.length, 1);
+  assert.equal(stacks.length, 1);
+
+  assert.equal(solos[0]!.pr.number, 10);
+  assert.equal(solos[0]!.pr.ciStatus, "pass");
+  assert.equal(solos[0]!.pr.reviewDecision, "APPROVED");
+
+  // Stack bottom → top: feat-a (#11) then feat-b (#12).
+  const stack = stacks[0]!;
+  assert.deepEqual(
+    stack.layers.map((l) => l.headRefName),
+    ["feat-a", "feat-b"],
+  );
+  assert.deepEqual(
+    stack.layers.map((l) => l.number),
+    [11, 12],
+  );
+  assert.equal(stack.layers[0]!.ciStatus, "pending");
+  assert.equal(stack.layers[1]!.ciStatus, "fail");
+  assert.equal(stack.layers[1]!.mergeable, "CONFLICTING");
+  assert.equal(stack.layers[1]!.conflict, true);
+  // No gh-stack tracking → not tracked.
+  assert.equal(stack.tracked, false);
+});
+
+test("covers multiple repos", async () => {
+  const { exec, calls } = fakeExec({
+    "/work/a": { prs: REPO_A_PRS },
+    "/work/b": { prs: REPO_B_PRS },
+  });
+  const overview = await buildPrOverview({
+    repos: ["/work/a", "/work/b"],
+    exec,
+    hasGhStack: () => false,
+  });
+
+  assert.deepEqual(
+    overview.repos.map((r) => r.name),
+    ["a", "b"],
+  );
+  // Each repo's gh pr list ran in its own cwd.
+  const cwds = calls.filter((c) => c.args.includes("list")).map((c) => c.cwd);
+  assert.deepEqual(cwds.sort(), ["/work/a", "/work/b"]);
+
+  const b = overview.repos[1]!;
+  assert.equal(b.groups.length, 1);
+  assert.equal(prGroups(b.groups)[0]!.pr.number, 5);
+});
+
+test("one repo's error is isolated; others still resolve", async () => {
+  const { exec } = fakeExec({
+    "/work/a": { prError: new Error("gh: 504 Gateway Timeout") },
+    "/work/b": { prs: REPO_B_PRS },
+  });
+  const overview = await buildPrOverview({
+    repos: ["/work/a", "/work/b"],
+    exec,
+    hasGhStack: () => false,
+  });
+
+  const [a, b] = overview.repos;
+  assert.equal(a!.error, "gh: 504 Gateway Timeout");
+  assert.deepEqual(a!.groups, []);
+  // The healthy repo is unaffected.
+  assert.equal(b!.error, undefined);
+  assert.equal(b!.groups.length, 1);
+});
+
+test("gh-stack enrichment marks the matching group tracked + applies needsRebase", async () => {
+  const { exec } = fakeExec({
+    "/work/a": { prs: REPO_A_PRS, stackView: REPO_A_STACK_VIEW },
+  });
+  const overview = await buildPrOverview({
+    repos: ["/work/a"],
+    exec,
+    hasGhStack: () => true, // repo A has local .git/gh-stack tracking.
+  });
+
+  const stacks = stackGroups(overview.repos[0]!.groups);
+  assert.equal(stacks.length, 1);
+  const stack = stacks[0]!;
+  assert.equal(stack.tracked, true);
+  // feat-b needs rebase per gh-stack → stack-level needsRebase true.
+  assert.equal(stack.needsRebase, true);
+  assert.equal(stack.layers.find((l) => l.headRefName === "feat-b")!.needsRebase, true);
+  assert.equal(stack.layers.find((l) => l.headRefName === "feat-a")!.needsRebase, false);
+  // Ordering still bottom → top.
+  assert.deepEqual(
+    stack.layers.map((l) => l.headRefName),
+    ["feat-a", "feat-b"],
+  );
+});
+
+test("enrichment is resilient: gh stack view failure leaves base-ref grouping", async () => {
+  const { exec } = fakeExec({ "/work/a": { prs: REPO_A_PRS } }); // no stackView → rejects
+  const overview = await buildPrOverview({
+    repos: ["/work/a"],
+    exec,
+    hasGhStack: () => true,
+  });
+  const stack = stackGroups(overview.repos[0]!.groups)[0]!;
+  assert.equal(stack.tracked, false);
+  assert.deepEqual(
+    stack.layers.map((l) => l.headRefName),
+    ["feat-a", "feat-b"],
+  );
+});

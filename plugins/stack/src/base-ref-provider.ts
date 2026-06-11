@@ -30,6 +30,7 @@
  */
 import { execFile } from "node:child_process";
 
+import { chainContaining } from "./chains.js";
 import { rollupToCiStatus } from "./gh-provider.js";
 import type { StackGraph, StackLayer } from "./graph.js";
 import { StackGraph as StackGraphSchema } from "./graph.js";
@@ -85,39 +86,18 @@ function prToLayer(pr: PrRow): StackLayer {
 }
 
 /** Build the ordered (bottom → top) PR chain that contains `anchorHead`. */
-function chainContaining(
+function prChainContaining(
   anchorHead: string,
   prByHead: Map<string, PrRow>,
   prByBase: Map<string, PrRow>,
 ): PrRow[] {
-  const anchor = prByHead.get(anchorHead);
-  if (!anchor) return [];
-
-  const chain: PrRow[] = [anchor];
-
-  // Walk DOWN: while this layer's base is another PR's head, prepend it.
-  let base = anchor.baseRefName;
-  const seenDown = new Set<string>([anchorHead]);
-  while (base && prByHead.has(base) && !seenDown.has(base)) {
-    const lower = prByHead.get(base)!;
-    chain.unshift(lower);
-    seenDown.add(base);
-    base = lower.baseRefName;
-  }
-
-  // Walk UP: while some PR's base is this tip's head, append it. The cycle
-  // guard tracks heads we've already followed (seeded empty, marked before
-  // following) so the first step — from the anchor's own head — isn't blocked.
-  let head = anchor.headRefName;
-  const seenUp = new Set<string>();
-  while (head && prByBase.has(head) && !seenUp.has(head)) {
-    seenUp.add(head);
-    const upper = prByBase.get(head)!;
-    chain.push(upper);
-    head = upper.headRefName;
-  }
-
-  return chain;
+  return chainContaining(
+    anchorHead,
+    prByHead,
+    prByBase,
+    (pr) => pr.headRefName,
+    (pr) => pr.baseRefName,
+  );
 }
 
 export interface BaseRefProviderOptions {
@@ -183,7 +163,7 @@ export function baseRefProvider(options: BaseRefProviderOptions = {}): StackProv
 
       let chain: PrRow[] = [];
       if (anchorHead && prByHead.has(anchorHead)) {
-        chain = chainContaining(anchorHead, prByHead, prByBase);
+        chain = prChainContaining(anchorHead, prByHead, prByBase);
       } else {
         // No PR for the current branch: use the single maximal chain if exactly
         // one root exists (a PR whose base is not any open PR's head = trunk).
@@ -191,7 +171,7 @@ export function baseRefProvider(options: BaseRefProviderOptions = {}): StackProv
           (pr) => !pr.baseRefName || !prByHead.has(pr.baseRefName),
         );
         if (roots.length === 1) {
-          chain = chainContaining(roots[0]!.headRefName!, prByHead, prByBase);
+          chain = prChainContaining(roots[0]!.headRefName!, prByHead, prByBase);
         }
         // Otherwise ambiguous → leave empty rather than guess.
       }
