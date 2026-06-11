@@ -112,10 +112,17 @@ function stackGroupEl(group: Extract<GroupRow, { kind: "stack" }>): HTMLElement 
     const sync = document.createElement("button");
     sync.className = "btn btn-primary btn-sm";
     const inFlight = syncingRepos.includes(group.repo);
-    sync.textContent = inFlight ? "Syncing…" : "Sync";
     sync.disabled = inFlight;
     sync.title = `Rebase this stack onto trunk (${group.repo})`;
-    if (!inFlight) sync.addEventListener("click", () => window.perch.sync(group.repo));
+    if (inFlight) {
+      // A spinner while the cascading rebase runs (it can take a few seconds).
+      const spinner = document.createElement("i");
+      spinner.className = "fa-solid fa-circle-notch fa-spin";
+      sync.append(spinner, " Syncing…");
+    } else {
+      sync.textContent = "Sync";
+      sync.addEventListener("click", () => window.perch.sync(group.repo));
+    }
     head.append(sync);
   }
   el.append(head);
