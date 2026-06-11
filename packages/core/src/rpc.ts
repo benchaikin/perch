@@ -5,6 +5,7 @@
  *
  * Transport: JSON-RPC 2.0 over a Unix domain socket via `vscode-jsonrpc`.
  */
+import type { SettingsField } from "@perch/sdk";
 import type { PerchConfig } from "./config.js";
 import type { DeliveredNotification } from "./notifications.js";
 import type { CapabilityMeta } from "./registry.js";
@@ -25,6 +26,12 @@ export const Methods = {
   configUpdate: "config.update",
   /** `config.validateRepoPath` → {@link ValidateRepoPathResult}. Params: {@link ValidateRepoPathParams}. */
   configValidateRepoPath: "config.validateRepoPath",
+  /**
+   * `settings.describe` → {@link SettingsDescribeResult}. No params. Returns, per
+   * loaded plugin that declares a settings descriptor, its id/name/fields with the
+   * current config value (or the field's default) merged into each field.
+   */
+  settingsDescribe: "settings.describe",
   /**
    * `notifications.subscribe` → void. No params. Opts this connection into the
    * `notification` stream (all sources; filtering is a client concern).
@@ -129,6 +136,37 @@ export interface ValidateRepoPathResult {
   /** Human-readable explanation when `ok` is false. */
   reason?: string;
 }
+
+/**
+ * One field of a `settings.describe` result: the plugin-declared
+ * {@link SettingsField} metadata plus the field's **current value**, resolved by
+ * the server (the value at `plugins[pluginId].{key}` in `perch.json`, or the
+ * field's `default` when unset). Clients render the control from the metadata and
+ * seed it with `value`.
+ */
+export interface SettingsFieldState extends SettingsField {
+  /** Current value: the configured value, or {@link SettingsField.default} when unset. */
+  value: unknown;
+}
+
+/** One plugin's section in a `settings.describe` result. */
+export interface PluginSettingsDescription {
+  /** The plugin id; its config lives at `plugins[pluginId]`. */
+  pluginId: string;
+  /** Display name (falls back to `pluginId`). */
+  name: string;
+  /** The plugin's fields, each with its current {@link SettingsFieldState.value}. */
+  fields: SettingsFieldState[];
+}
+
+/**
+ * Result of `settings.describe`: one entry per loaded plugin that declares a
+ * settings descriptor, in registration order. A client can render a full settings
+ * form from this and write edits back via `config.update`.
+ */
+export type SettingsDescribeResult = PluginSettingsDescription[];
+
+export type { SettingsField };
 
 /**
  * Payload of a `notification` notification: a {@link DeliveredNotification}

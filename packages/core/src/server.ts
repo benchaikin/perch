@@ -30,6 +30,8 @@ import {
   type InvokeParams,
   type RegistryChangedNotification,
   type RegistryListResult,
+  type SettingsDescribeResult,
+  type SettingsFieldState,
   type SubscribeParams,
   type SubscribeResult,
   type UpdateNotification,
@@ -235,6 +237,22 @@ class ClientConnection {
       },
     );
 
+    // Describe each plugin's settings descriptor merged with its current config
+    // values (read from `perch.json`; field `default` used when unset). Reads only
+    // — clients write edits back through `config.update`.
+    this.#conn.onRequest(Methods.settingsDescribe, async (): Promise<SettingsDescribeResult> => {
+      const config = await getConfig(this.#deps.configPath);
+      const plugins = (config.plugins ?? {}) as Record<string, unknown>;
+      return this.#deps.registry.settingsDescriptors().map((plugin) => {
+        const pluginConfig = plugins[plugin.pluginId];
+        const fields: SettingsFieldState[] = plugin.fields.map((field) => {
+          const current = readConfigPath(pluginConfig, field.key);
+          return { ...field, value: current === undefined ? field.default : current };
+        });
+        return { pluginId: plugin.pluginId, name: plugin.name, fields };
+      });
+    });
+
     this.#conn.onClose(() => this.#cleanup());
     this.#socket.on("close", () => this.#cleanup());
     this.#socket.on("error", () => this.#cleanup());
@@ -301,6 +319,23 @@ function keyFor(entry: RegisteredCapability, rawInput: unknown): string {
   const cap = entry.cap;
   const input: unknown = cap.input ? cap.input.parse(rawInput) : rawInput;
   return inputKey(input);
+}
+
+/**
+ * Read a (possibly dotted) `key` out of a plugin's config object. Returns
+ * `undefined` when any segment is missing or the value isn't an object — the
+ * caller falls back to the field's `default`. Dotted keys (`"a.b"`) address
+ * nested config; a plain key is the common case.
+ */
+function readConfigPath(pluginConfig: unknown, key: string): unknown {
+  let current = pluginConfig;
+  for (const segment of key.split(".")) {
+    if (typeof current !== "object" || current === null || Array.isArray(current)) {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return current;
 }
 
 /** Unlink a socket path if it exists (stale from a prior run). */

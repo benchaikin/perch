@@ -87,6 +87,46 @@ test("Registry: indexes capabilities under `${pluginId}.${name}` with metadata",
   assert.equal(goMeta.refresh, undefined);
 });
 
+test("Registry: settingsDescriptors exposes declared descriptors with display name", () => {
+  const withSettings = definePlugin({
+    id: "stack",
+    name: "Stack",
+    settings: [{ key: "showDrafts", type: "boolean", label: "Show drafts", default: false }],
+    capabilities: {},
+  });
+  const noSettings = definePlugin({ id: "noop", capabilities: {} });
+
+  const registry = new Registry();
+  registry.register(withSettings);
+  registry.register(noSettings);
+
+  const descriptors = registry.settingsDescriptors();
+  assert.equal(descriptors.length, 1);
+  const [stack] = descriptors;
+  assert.ok(stack);
+  assert.equal(stack.pluginId, "stack");
+  assert.equal(stack.name, "Stack");
+  assert.deepEqual(stack.fields, withSettings.settings);
+});
+
+test("Registry: unregister drops a plugin's settings descriptor", () => {
+  const plugin = definePlugin({
+    id: "stack",
+    settings: [{ key: "x", type: "string", label: "X" }],
+    capabilities: {},
+  });
+  const registry = new Registry();
+  registry.register(plugin);
+  assert.equal(registry.settingsDescriptors().length, 1);
+  registry.unregister("stack");
+  assert.equal(registry.settingsDescriptors().length, 0);
+  // Name falls back to id when none is declared.
+  registry.register(plugin);
+  const [reregistered] = registry.settingsDescriptors();
+  assert.ok(reregistered);
+  assert.equal(reregistered.name, "stack");
+});
+
 test("Registry: rejects duplicate capability ids", () => {
   const a = definePlugin({
     id: "dup",

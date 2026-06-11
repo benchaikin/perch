@@ -31,7 +31,7 @@ export const VERSION = "0.0.0";
 
 // Public surface for clients and other packages (CLI/GUI/MCP build against these).
 export { resolveExpose, Registry } from "./registry.js";
-export type { CapabilityMeta, RegisteredCapability } from "./registry.js";
+export type { CapabilityMeta, RegisteredCapability, PluginSettings } from "./registry.js";
 export { parseDuration } from "./duration.js";
 export { socketPath } from "./paths.js";
 export { loadPlugins, buildContext } from "./loader.js";
@@ -78,6 +78,10 @@ export type {
   ConfigUpdateResult,
   ValidateRepoPathParams,
   ValidateRepoPathResult,
+  SettingsDescribeResult,
+  SettingsFieldState,
+  PluginSettingsDescription,
+  SettingsField,
   NotificationPayload,
 } from "./rpc.js";
 export { getConfig, updateConfig, validateRepoPath } from "./config-store.js";
