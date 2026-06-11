@@ -129,16 +129,33 @@ body {
   gap: 2px;
 }
 
-.btn-sm {
+/* `.btn.btn-sm` (not `.btn-sm`) so it out-specifies `.btn { flex: 1 }` and the
+   stack Sync button stays compact instead of stretching full-width. */
+.btn.btn-sm {
   flex: 0 0 auto;
   margin-left: auto;
-  padding: 1px 8px;
+  padding: 1px 10px;
   font-size: 10px;
 }
 
 .dot {
   color: var(--accent);
   flex: 0 0 auto;
+}
+
+/* Position number on a stacked PR (1 = trunk-adjacent base, ascending). */
+.num {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(74, 158, 255, 0.15);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
 }
 
 .branch {

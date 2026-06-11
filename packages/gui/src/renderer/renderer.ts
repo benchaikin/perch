@@ -36,17 +36,26 @@ function badgeEl(kind: "rebase" | "conflict", label: string, hint: string): HTML
   return el;
 }
 
-/** Build one PR row; clicking opens the PR in the browser. */
-function prRowEl(row: PrRow): HTMLElement {
+/**
+ * Build one PR row; clicking opens the PR in the browser. When `pos` is given
+ * (a stacked PR), it shows the layer's position number instead of a dot.
+ */
+function prRowEl(row: PrRow, pos?: number): HTMLElement {
   const el = document.createElement("div");
   el.className = "row";
   el.title = `${row.title} — #${row.number}`;
   el.addEventListener("click", () => window.perch.openPr(row.url));
 
-  const dot = document.createElement("span");
-  dot.className = "dot";
-  dot.textContent = "●";
-  el.append(dot);
+  // Stacked PRs get a position number (1 = trunk-adjacent base); standalone a dot.
+  const marker = document.createElement("span");
+  if (pos !== undefined) {
+    marker.className = "num";
+    marker.textContent = String(pos);
+  } else {
+    marker.className = "dot";
+    marker.textContent = "●";
+  }
+  el.append(marker);
 
   const title = document.createElement("span");
   title.className = "branch";
@@ -96,7 +105,8 @@ function stackGroupEl(group: Extract<GroupRow, { kind: "stack" }>): HTMLElement 
 
   const layers = document.createElement("div");
   layers.className = "stack-layers";
-  for (const row of group.rows) layers.append(prRowEl(row));
+  // Rows are tip-first; number them so the trunk-adjacent base is 1 ascending.
+  group.rows.forEach((row, i) => layers.append(prRowEl(row, group.rows.length - i)));
   el.append(layers);
 
   return el;
