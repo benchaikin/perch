@@ -21,6 +21,15 @@ test("ciChip maps each status to a tone", () => {
   assert.equal(ciChip("none").tone, "muted");
 });
 
+test("ciChip shows a spinning arrows-spin icon while CI is building", () => {
+  const pending = ciChip("pending");
+  assert.equal(pending.icon, "arrows-spin");
+  assert.equal(pending.spin, true);
+  // Settled states stay plain text (no icon).
+  assert.equal(ciChip("pass").icon, undefined);
+  assert.equal(ciChip("none").icon, undefined);
+});
+
 test("reviewChip maps decisions and omits when absent", () => {
   assert.equal(reviewChip("APPROVED")?.tone, "ok");
   assert.equal(reviewChip("CHANGES_REQUESTED")?.tone, "bad");

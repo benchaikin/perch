@@ -21,12 +21,24 @@ function byId(id: string): HTMLElement {
   return el;
 }
 
-/** Build a status chip element. */
-function chipEl(label: string, tone: string, hint: string): HTMLElement {
+/** Build a status chip element, optionally led by a (spinning) Font Awesome icon. */
+function chipEl(chip: {
+  label: string;
+  tone: string;
+  hint: string;
+  icon?: string;
+  spin?: boolean;
+}): HTMLElement {
   const el = document.createElement("span");
-  el.className = `chip ${tone}`;
-  el.textContent = label;
-  el.title = hint;
+  el.className = `chip ${chip.tone}`;
+  el.title = chip.hint;
+  if (chip.icon) {
+    const i = document.createElement("i");
+    i.className = `fa-solid fa-${chip.icon}${chip.spin ? " fa-spin" : ""}`;
+    el.append(i, ` ${chip.label}`);
+  } else {
+    el.textContent = chip.label;
+  }
   return el;
 }
 
@@ -72,7 +84,7 @@ function prRowEl(row: PrRow, pos?: number): HTMLElement {
 
   const chips = document.createElement("span");
   chips.className = "chips";
-  for (const c of row.chips) chips.append(chipEl(c.label, c.tone, c.hint));
+  for (const c of row.chips) chips.append(chipEl(c));
   if (row.needsRebase) chips.append(badgeEl("rebase", "rb", "Needs rebase"));
   // A merge conflict is already shown by the `⚠ merge` mergeable chip
   // (mergeable === "CONFLICTING"); don't double-indicate it with a `cf` badge.

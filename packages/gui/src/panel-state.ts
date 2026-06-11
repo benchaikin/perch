@@ -67,6 +67,10 @@ export interface Chip {
   tone: "ok" | "warn" | "bad" | "muted";
   /** Longer description for the chip's `title`/tooltip. */
   hint: string;
+  /** Optional Font Awesome icon name (e.g. `"arrows-spin"`) shown before the label. */
+  icon?: string;
+  /** Animate the icon (Font Awesome `fa-spin`) — e.g. CI in progress. */
+  spin?: boolean;
 }
 
 /** A single rendered PR row. */
@@ -154,7 +158,7 @@ export function ciChip(ci: CiStatus): Chip {
     case "fail":
       return { label: "✗ CI", tone: "bad", hint: "CI failing" };
     case "pending":
-      return { label: "⋯ CI", tone: "warn", hint: "CI running" };
+      return { label: "CI", tone: "warn", hint: "CI running", icon: "arrows-spin", spin: true };
     case "none":
       return { label: "· CI", tone: "muted", hint: "No CI reported" };
   }
