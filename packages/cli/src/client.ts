@@ -17,12 +17,17 @@ import {
 import {
   Methods,
   Notifications,
+  type ConfigGetResult,
+  type ConfigUpdateParams,
+  type ConfigUpdateResult,
   type InvokeParams,
   type RegistryChangedNotification,
   type RegistryListResult,
   type SubscribeParams,
   type SubscribeResult,
   type UpdateNotification,
+  type ValidateRepoPathParams,
+  type ValidateRepoPathResult,
 } from "@perch/core";
 
 /** Raised when the daemon socket cannot be reached. */
@@ -103,6 +108,21 @@ export class PerchClient {
    */
   onRegistryChanged(handler: (note: RegistryChangedNotification) => void): Disposable {
     return this.#conn.onNotification(Notifications.registryChanged, handler);
+  }
+
+  /** `config.get` — the current `perch.json`. */
+  configGet(): Promise<ConfigGetResult> {
+    return this.#conn.sendRequest(Methods.configGet);
+  }
+
+  /** `config.update` — deep-merge a patch into `perch.json`; returns the new config. */
+  configUpdate(params: ConfigUpdateParams): Promise<ConfigUpdateResult> {
+    return this.#conn.sendRequest(Methods.configUpdate, params);
+  }
+
+  /** `config.validateRepoPath` — check a path is an existing git repo. */
+  validateRepoPath(params: ValidateRepoPathParams): Promise<ValidateRepoPathResult> {
+    return this.#conn.sendRequest(Methods.configValidateRepoPath, params);
   }
 
   /** Tear down the connection and underlying socket. */
