@@ -11,17 +11,22 @@
   </head>
   <body>
     <div class="settings">
-      <header class="header">
-        <span class="title">Stack Repositories</span>
-        <span class="subtitle">The first repo is the default.</span>
-      </header>
-      <hr class="rule" />
-      <main id="rows" class="rows"></main>
-      <div id="error" class="error" hidden></div>
-      <hr class="rule" />
-      <footer class="actions">
-        <button id="add" class="btn btn-primary">Add repo…</button>
-      </footer>
+      <main class="sections">
+        <section class="section">
+          <header class="header">
+            <span class="title">Stack Repositories</span>
+            <span class="subtitle">The first repo is the default.</span>
+          </header>
+          <hr class="rule" />
+          <div id="rows" class="rows"></div>
+          <div id="error" class="error" hidden></div>
+          <footer class="actions">
+            <button id="add" class="btn btn-primary">Add repo…</button>
+          </footer>
+        </section>
+
+        <div id="plugins"></div>
+      </main>
     </div>
     <script src="./settings.js"></script>
   </body>

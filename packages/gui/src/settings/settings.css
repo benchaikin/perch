@@ -31,7 +31,20 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
+}
+
+.sections {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   padding: 12px 14px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
 }
 
 .header {
@@ -56,11 +69,67 @@ body {
 }
 
 .rows {
-  flex: 1;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.field-label {
+  font-weight: 500;
+}
+
+.field-stacked {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.field-desc {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.field-control {
+  background: #2a2a2a;
+  color: var(--fg);
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  padding: 5px 8px;
+  font: inherit;
+}
+
+select.field-control {
+  cursor: pointer;
+}
+
+input[type="checkbox"].field-control {
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.muted-note {
+  font-size: 12px;
 }
 
 .repo {
@@ -129,6 +198,7 @@ body {
 .actions {
   display: flex;
   gap: 8px;
+  margin-top: 8px;
 }
 
 .btn {

@@ -8,7 +8,13 @@
  * (the main process owns the folder picker, validation, and config RPCs).
  */
 import { contextBridge, ipcRenderer } from "electron";
-import { SettingsChannels, type PerchSettingsBridge, type SettingsResult } from "./settings-ipc.js";
+import {
+  SettingsChannels,
+  type PerchSettingsBridge,
+  type PluginSettingsResult,
+  type SetFieldRequest,
+  type SettingsResult,
+} from "./settings-ipc.js";
 
 const bridge: PerchSettingsBridge = {
   listRepos(): Promise<SettingsResult> {
@@ -22,6 +28,12 @@ const bridge: PerchSettingsBridge = {
   },
   setDefault(path): Promise<SettingsResult> {
     return ipcRenderer.invoke(SettingsChannels.setDefault, path);
+  },
+  describePlugins(): Promise<PluginSettingsResult> {
+    return ipcRenderer.invoke(SettingsChannels.describePlugins);
+  },
+  setField(request: SetFieldRequest): Promise<PluginSettingsResult> {
+    return ipcRenderer.invoke(SettingsChannels.setField, request);
   },
 };
 

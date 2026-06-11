@@ -35,7 +35,13 @@ import { DaemonUnavailableError, PerchClient } from "@perch/cli";
 import { shouldShowNotification, toNotifyOptions } from "./notify.js";
 import { Channels } from "./ipc.js";
 import { addRepo, removeRepo, reposFromConfig, setDefault, toEntries } from "./repos.js";
-import { SettingsChannels, type SettingsResult } from "./settings-ipc.js";
+import { buildConfigPatch } from "./settings-fields.js";
+import {
+  SettingsChannels,
+  type PluginSettingsResult,
+  type SetFieldRequest,
+  type SettingsResult,
+} from "./settings-ipc.js";
 import {
   buildPanelState,
   STACK_PRS_ID,
@@ -612,6 +618,51 @@ async function addRepoFlow(c: PerchClient): Promise<SettingsResult> {
   return persistRepos(c, addRepo(current, path));
 }
 
+/**
+ * Fetch the per-plugin settings descriptors (`settings.describe`) as a
+ * {@link PluginSettingsResult}. Returns an empty, read-only result when the
+ * daemon is down so the renderer can render a "daemon not running" state.
+ */
+async function loadPluginSettings(): Promise<PluginSettingsResult> {
+  const c = await ensureClient();
+  if (!c) return { plugins: [], daemonUp: false };
+  const plugins = await c.settingsDescribe();
+  return { plugins, daemonUp: true };
+}
+
+/**
+ * Wrap a per-plugin settings op so daemon/RPC failures surface inline (with the
+ * last-known descriptors) rather than throwing across the IPC boundary.
+ */
+async function pluginSettingsOp(
+  fn: (c: PerchClient) => Promise<PluginSettingsResult>,
+): Promise<PluginSettingsResult> {
+  const c = await ensureClient();
+  if (!c) return { plugins: [], daemonUp: false };
+  try {
+    return await fn(c);
+  } catch (err) {
+    const plugins = await c.settingsDescribe().catch(() => []);
+    return { plugins, daemonUp: true, error: errorMessage(err) };
+  }
+}
+
+/**
+ * Persist one plugin field via `config.update` (the daemon hot-reloads and the
+ * panel refreshes via `registry.changed`), then re-describe so the returned
+ * descriptors reflect the written value. `key` may be a dotted path; the patch
+ * sets it nested under `plugins[pluginId]` (see {@link buildConfigPatch}).
+ */
+async function setFieldFlow(
+  c: PerchClient,
+  request: SetFieldRequest,
+): Promise<PluginSettingsResult> {
+  const patch = buildConfigPatch(request.pluginId, request.key, request.value);
+  await c.configUpdate({ patch });
+  const plugins = await c.settingsDescribe();
+  return { plugins, daemonUp: true };
+}
+
 /** Create (or focus) the separate Settings window. */
 function showSettingsWindow(): void {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
@@ -685,6 +736,12 @@ function registerIpc(): void {
     settingsOp(async (c) =>
       persistRepos(c, setDefault(reposFromConfig(await c.configGet()), path)),
     ),
+  );
+
+  // Settings window: per-plugin schema-driven settings (describe + write-back).
+  ipcMain.handle(SettingsChannels.describePlugins, () => loadPluginSettings());
+  ipcMain.handle(SettingsChannels.setField, (_event, request: SetFieldRequest) =>
+    pluginSettingsOp((c) => setFieldFlow(c, request)),
   );
 }
 
