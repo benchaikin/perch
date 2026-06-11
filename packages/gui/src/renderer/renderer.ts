@@ -62,7 +62,8 @@ function prRowEl(row: PrRow): HTMLElement {
   chips.className = "chips";
   for (const c of row.chips) chips.append(chipEl(c.label, c.tone, c.hint));
   if (row.needsRebase) chips.append(badgeEl("rebase", "rb", "Needs rebase"));
-  if (row.conflict) chips.append(badgeEl("conflict", "cf", "Merge conflict"));
+  // A merge conflict is already shown by the `⚠ merge` mergeable chip
+  // (mergeable === "CONFLICTING"); don't double-indicate it with a `cf` badge.
   el.append(chips);
 
   return el;
