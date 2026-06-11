@@ -609,30 +609,32 @@ function registerIpc(): void {
 }
 
 // Single instance: if a Perch GUI is already running, quit immediately so a
-// second launch (e.g. `perch app`) just focuses the existing one rather than
-// adding a duplicate menu-bar icon.
+// second launch (e.g. `perch app`) just focuses the existing one. Everything
+// else MUST be guarded behind the lock — otherwise the second instance still
+// runs `whenReady` and builds a duplicate tray before quitting.
 if (!app.requestSingleInstanceLock()) {
   app.quit();
+} else {
+  app.on("second-instance", () => showPanel());
+
+  app.whenReady().then(() => {
+    // macOS: keep the app out of the Dock — it's a menu-bar utility.
+    app.dock?.hide();
+    registerIpc();
+    createTray();
+    // Preload the (hidden) panel so its renderer is ready before the first open
+    // (instant first paint) and so renderer errors surface immediately.
+    panel = createPanel();
+    void connect();
+  });
+
+  // A menu-bar app stays resident when all windows close.
+  app.on("window-all-closed", () => {
+    /* keep running in the tray */
+  });
+
+  app.on("before-quit", () => {
+    client?.close();
+    client = null;
+  });
 }
-app.on("second-instance", () => showPanel());
-
-app.whenReady().then(() => {
-  // macOS: keep the app out of the Dock — it's a menu-bar utility.
-  app.dock?.hide();
-  registerIpc();
-  createTray();
-  // Preload the (hidden) panel so its renderer is ready before the first open
-  // (instant first paint) and so renderer errors surface immediately.
-  panel = createPanel();
-  void connect();
-});
-
-// A menu-bar app stays resident when all windows close.
-app.on("window-all-closed", () => {
-  /* keep running in the tray */
-});
-
-app.on("before-quit", () => {
-  client?.close();
-  client = null;
-});
