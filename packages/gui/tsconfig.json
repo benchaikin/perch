@@ -12,5 +12,10 @@
     "lib": ["ES2023", "DOM", "DOM.Iterable"]
   },
   "include": ["src"],
-  "references": [{ "path": "../sdk" }, { "path": "../core" }, { "path": "../cli" }]
+  "references": [
+    { "path": "../sdk" },
+    { "path": "../core" },
+    { "path": "../cli" },
+    { "path": "../../plugins/stack" }
+  ]
 }

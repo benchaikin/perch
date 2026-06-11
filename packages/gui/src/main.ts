@@ -9,7 +9,9 @@
  *
  * NOTE: a visible launch is not verified in CI (no display). See README.
  */
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { connect as netConnect } from "node:net";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
@@ -89,6 +91,67 @@ async function subscribePrs(): Promise<void> {
   buildInput.error = undefined;
 }
 
+/**
+ * Whether we've already spawned (or attempted to spawn) the bundled daemon this
+ * session. The GUI self-starts perchd at most once: a second `connect()` that
+ * still fails (e.g. a genuinely broken daemon) renders "daemon down" rather than
+ * spawning a pile of orphan processes.
+ */
+let daemonSpawned = false;
+
+/** Absolute path to the bundled `perchd.cjs` (asar-unpacked when packaged). */
+function perchdEntryPath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, "app.asar.unpacked", "dist", "perchd.cjs")
+    : join(__dirname, "perchd.cjs");
+}
+
+/**
+ * Self-start the bundled daemon. Runs the Electron binary (`process.execPath`,
+ * which is `node` in dev and the app binary when packaged) as plain Node via
+ * `ELECTRON_RUN_AS_NODE` against `dist/perchd.cjs`. Detached + unref'd so the
+ * daemon outlives a GUI relaunch; idempotent via {@link daemonSpawned}.
+ */
+function spawnDaemon(): void {
+  if (daemonSpawned) return;
+  daemonSpawned = true;
+  const entry = perchdEntryPath();
+  try {
+    const child = spawn(process.execPath, [entry], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+      detached: true,
+      stdio: "ignore",
+    });
+    child.unref();
+  } catch (err) {
+    console.error(`[daemon] spawn failed: ${errorMessage(err)}`);
+  }
+}
+
+/** Whether the Unix socket at `path` currently accepts a connection. */
+function socketAccepts(path: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sock = netConnect(path);
+    const done = (ok: boolean): void => {
+      sock.removeAllListeners();
+      sock.destroy();
+      resolve(ok);
+    };
+    sock.once("connect", () => done(true));
+    sock.once("error", () => done(false));
+  });
+}
+
+/** Poll until the socket accepts a connection or `timeoutMs` elapses. */
+async function waitForSocket(path: string, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (await socketAccepts(path)) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
 /** Connect to perchd, subscribe to `stack.prs`, and detect Sync availability. */
 async function connect(): Promise<void> {
   const socket = process.env.PERCH_SOCKET ?? defaultSocketPath();
@@ -96,6 +159,16 @@ async function connect(): Promise<void> {
     client = await PerchClient.connect(socket);
   } catch (err) {
     if (err instanceof DaemonUnavailableError) {
+      // No daemon reachable: spawn the bundled one (once), wait briefly for it to
+      // bind the socket, then retry the connect a single time. If it still isn't
+      // up, fall through to the "daemon down" panel state.
+      if (!daemonSpawned) {
+        spawnDaemon();
+        if (await waitForSocket(socket, 10_000)) {
+          await connect();
+          return;
+        }
+      }
       buildInput.daemonUp = false;
       pushState();
       return;
