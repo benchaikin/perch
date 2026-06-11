@@ -5,6 +5,7 @@
  *
  * Transport: JSON-RPC 2.0 over a Unix domain socket via `vscode-jsonrpc`.
  */
+import type { PerchConfig } from "./config.js";
 import type { CapabilityMeta } from "./registry.js";
 
 /** Request methods (client → server). */
@@ -17,6 +18,12 @@ export const Methods = {
   capabilitySubscribe: "capability.subscribe",
   /** `capability.unsubscribe` → void. Params: {@link SubscribeParams}. */
   capabilityUnsubscribe: "capability.unsubscribe",
+  /** `config.get` → {@link ConfigGetResult} (the current `perch.json`). No params. */
+  configGet: "config.get",
+  /** `config.update` → {@link ConfigUpdateResult} (the new config). Params: {@link ConfigUpdateParams}. */
+  configUpdate: "config.update",
+  /** `config.validateRepoPath` → {@link ValidateRepoPathResult}. Params: {@link ValidateRepoPathParams}. */
+  configValidateRepoPath: "config.validateRepoPath",
 } as const;
 
 /** Notification methods (server → client). */
@@ -78,3 +85,33 @@ export interface RegistryChangedNotification {
 
 /** Result of `registry.list`. */
 export type RegistryListResult = CapabilityMeta[];
+
+/** Result of `config.get`: the current parsed `perch.json` (defaults when absent). */
+export type ConfigGetResult = PerchConfig;
+
+/** Params for `config.update`. */
+export interface ConfigUpdateParams {
+  /**
+   * A partial config deep-merged into the current one. A `null` value at a key
+   * deletes that key; any non-object value (including arrays) replaces wholesale.
+   * The GUI computes the full `plugins.stack.repos` array and sends it here.
+   */
+  patch: Record<string, unknown>;
+}
+
+/** Result of `config.update`: the new, validated config after the merge + write. */
+export type ConfigUpdateResult = PerchConfig;
+
+/** Params for `config.validateRepoPath`. */
+export interface ValidateRepoPathParams {
+  /** Absolute local filesystem path to check. */
+  path: string;
+}
+
+/** Result of `config.validateRepoPath`: whether the path is a usable git repo. */
+export interface ValidateRepoPathResult {
+  /** True iff the path exists, is a directory, and contains a `.git` entry. */
+  ok: boolean;
+  /** Human-readable explanation when `ok` is false. */
+  reason?: string;
+}
