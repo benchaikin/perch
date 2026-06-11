@@ -24,6 +24,7 @@ import {
   type NotificationPayload,
   type RegistryChangedNotification,
   type RegistryListResult,
+  type SettingsDescribeResult,
   type SubscribeParams,
   type SubscribeResult,
   type UpdateNotification,
@@ -124,6 +125,11 @@ export class PerchClient {
   /** Register a handler for `notification` pushes. Returns a {@link Disposable}. */
   onNotification(handler: (note: NotificationPayload) => void): Disposable {
     return this.#conn.onNotification(Notifications.notification, handler);
+  }
+
+  /** `settings.describe` — each plugin's settings descriptor + current values. */
+  settingsDescribe(): Promise<SettingsDescribeResult> {
+    return this.#conn.sendRequest(Methods.settingsDescribe);
   }
 
   /** `config.get` — the current `perch.json`. */
