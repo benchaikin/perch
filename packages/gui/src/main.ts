@@ -19,12 +19,18 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  Notification,
   shell,
   Tray,
   screen,
 } from "electron";
-import { configPath as defaultConfigPath, socketPath as defaultSocketPath } from "@perch/core";
+import {
+  configPath as defaultConfigPath,
+  socketPath as defaultSocketPath,
+  type NotificationPayload,
+} from "@perch/core";
 import { DaemonUnavailableError, PerchClient } from "@perch/cli";
+import { shouldShowNotification, toNotifyOptions } from "./notify.js";
 import { Channels } from "./ipc.js";
 import { addRepo, removeRepo, reposFromConfig, setDefault, toEntries } from "./repos.js";
 import { SettingsChannels, type SettingsResult } from "./settings-ipc.js";
@@ -45,6 +51,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 function windowStatePath(): string {
   return join(app.getPath("userData"), "window-state.json");
 }
+
+/**
+ * When the app started (ms since epoch). Used to drop any notification backlog a
+ * reconnect might replay — see {@link shouldShowNotification}.
+ */
+const appStartTime = Date.now();
 
 let tray: Tray | null = null;
 let panel: BrowserWindow | null = null;
@@ -104,6 +116,14 @@ async function connect(): Promise<void> {
 
   // The daemon hot-reloads perch.json — re-sync when the registry changes.
   client.onRegistryChanged(() => void reloadFromRegistry());
+
+  // Stream daemon notifications and surface each as a native macOS banner.
+  client.onNotification(showNativeNotification);
+  try {
+    await client.subscribeNotifications();
+  } catch (err) {
+    console.error(`[notifications] subscribe failed: ${errorMessage(err)}`);
+  }
 
   // Sync may be absent (stack plugin disabled) — gate the buttons on the
   // registry rather than assuming it exists.
@@ -216,6 +236,23 @@ async function sync(repo: string): Promise<void> {
 /** Open a PR's URL in the user's default browser. */
 function openPr(url: string): void {
   void shell.openExternal(url);
+}
+
+/**
+ * Display an incoming daemon notification as a native macOS banner. The daemon
+ * already de-dupes; we only drop a stale backlog a reconnect might replay (older
+ * than {@link appStartTime}) and skip entirely where the OS can't show banners.
+ * A click opens the PR (`openUrl`) in the default browser. All shaping lives in
+ * the Electron-free {@link toNotifyOptions}/{@link shouldShowNotification}.
+ */
+function showNativeNotification(note: NotificationPayload): void {
+  if (!Notification.isSupported()) return;
+  if (!shouldShowNotification(note, appStartTime)) return;
+
+  const notification = new Notification(toNotifyOptions(note));
+  const { openUrl } = note;
+  if (openUrl) notification.on("click", () => void shell.openExternal(openUrl));
+  notification.show();
 }
 
 /** Best-effort human-readable message from an RPC/JS error. */
