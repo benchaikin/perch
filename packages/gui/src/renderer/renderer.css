@@ -41,13 +41,35 @@ body {
 
 .header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   -webkit-app-region: drag;
 }
 
 .title {
   font-weight: 600;
+}
+
+/* Subtle header icon button (e.g. Refresh), pushed to the top-right. */
+.icon-btn {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 3px 5px;
+  font-size: 12px;
+  line-height: 1;
+  border-radius: 4px;
+  /* Clickable inside the otherwise-draggable header. */
+  -webkit-app-region: no-drag;
+}
+.icon-btn:hover {
+  color: var(--fg);
+  background: #2a2a2a;
+}
+.icon-btn:active {
+  color: var(--accent);
 }
 
 .rule {

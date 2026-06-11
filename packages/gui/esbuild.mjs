@@ -13,12 +13,19 @@
  */
 import { build } from "esbuild";
 import { cp, mkdir } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const src = join(root, "src");
 const dist = join(root, "dist");
+
+// Font Awesome (bundled locally — the renderer CSP blocks any CDN). The CSS and
+// webfonts keep their sibling layout so the @font-face `../webfonts/` urls resolve.
+const faDir = dirname(
+  createRequire(import.meta.url).resolve("@fortawesome/fontawesome-free/package.json"),
+);
 
 await mkdir(join(dist, "renderer"), { recursive: true });
 await mkdir(join(dist, "settings"), { recursive: true });
@@ -71,6 +78,10 @@ await build({
 
 await cp(join(src, "renderer", "index.html"), join(dist, "renderer", "index.html"));
 await cp(join(src, "renderer", "renderer.css"), join(dist, "renderer", "renderer.css"));
+
+// Font Awesome assets for the panel renderer (css/ + webfonts/ siblings).
+await cp(join(faDir, "css", "all.min.css"), join(dist, "renderer", "css", "all.min.css"));
+await cp(join(faDir, "webfonts"), join(dist, "renderer", "webfonts"), { recursive: true });
 await cp(join(src, "settings", "index.html"), join(dist, "settings", "index.html"));
 await cp(join(src, "settings", "settings.css"), join(dist, "settings", "settings.css"));
 
