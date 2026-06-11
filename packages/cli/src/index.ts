@@ -18,6 +18,7 @@
 import { socketPath as defaultSocketPath, type CapabilityMeta } from "@perch/core";
 import { parseArgs } from "./args.js";
 import { DaemonUnavailableError, PerchClient } from "./client.js";
+import { isConfigCommand, runConfigCommand } from "./config.js";
 import { runDaemonCommand } from "./daemon.js";
 import { renderResult } from "./render.js";
 
@@ -34,6 +35,14 @@ export async function run(argv: string[]): Promise<void> {
   // is handled BEFORE the registry dispatch (which requires a running daemon).
   if (positionals[0] === "daemon") {
     const code = await runDaemonCommand(positionals[1], { socket: cli.socket });
+    if (code !== 0) process.exitCode = code;
+    return;
+  }
+
+  // Built-in `config` command group — reads/mutates `perch.json` via the config
+  // RPC. Handled before the registry dispatch; it connects to the daemon itself.
+  if (isConfigCommand(positionals)) {
+    const code = await runConfigCommand(positionals, { socket, json: cli.json });
     if (code !== 0) process.exitCode = code;
     return;
   }
