@@ -86,12 +86,13 @@ export interface PrRow {
   needsRebase: boolean;
   /** True when this PR has a merge conflict — render a "conflict" badge. */
   conflict: boolean;
-  /** Health for the row's marker color: `"ok"` (green) or `"warn"` (orange). */
+  /** Health for the row's marker color: `"ok"` (green) or `"bad"` (error red). */
   health: Health;
 }
 
-/** A PR/stack marker's health: clean (green) vs. needs-attention (orange). */
-export type Health = "ok" | "warn";
+/** A PR/stack marker's health: clean (green) vs. needs-attention (error red,
+ *  matching the conflict / CI-fail chips). */
+export type Health = "ok" | "bad";
 
 /** A rendered group: either a single PR row or a nested stack of rows. */
 export type GroupRow =
@@ -104,7 +105,7 @@ export type GroupRow =
       tracked: boolean;
       /** Stack-level "needs rebase" flag (any layer). */
       needsRebase: boolean;
-      /** Whole-stack health for the linking bar color (`"warn"` if any layer is). */
+      /** Whole-stack health for the linking bar color (`"bad"` if any layer is). */
       health: Health;
       /** The repo name to sync (Sync invokes `stack.sync` with this repo). */
       repo: string;
@@ -209,7 +210,7 @@ export function prHealth(pr: PrInfo): Health {
     (pr.conflict ?? false) ||
     (pr.needsRebase ?? false) ||
     pr.reviewDecision === "CHANGES_REQUESTED";
-  return problem ? "warn" : "ok";
+  return problem ? "bad" : "ok";
 }
 
 /** Derive a single rendered PR row from a raw {@link PrInfo}. */
@@ -241,7 +242,7 @@ function toGroupRow(group: PrGroup, repoName: string): GroupRow {
   const rows = group.layers.map(toPrRow);
   const needsRebase = group.needsRebase ?? false;
   // The stack is healthy only when every layer is clean and nothing needs rebase.
-  const health: Health = needsRebase || rows.some((r) => r.health === "warn") ? "warn" : "ok";
+  const health: Health = needsRebase || rows.some((r) => r.health === "bad") ? "bad" : "ok";
   return {
     kind: "stack",
     rows,

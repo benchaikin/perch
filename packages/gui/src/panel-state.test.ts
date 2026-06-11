@@ -81,14 +81,14 @@ test("toPrRow accumulates review + mergeable chips and badges", () => {
   );
 });
 
-test("PR health is warn on CI fail / conflict / needs-rebase / changes, else ok", () => {
+test("PR health is bad on CI fail / conflict / needs-rebase / changes, else ok", () => {
   assert.equal(toPrRow({ ...basePr }).health, "ok");
   assert.equal(toPrRow({ ...basePr, ciStatus: "pending" }).health, "ok");
   assert.equal(toPrRow({ ...basePr, reviewDecision: "APPROVED" }).health, "ok");
-  assert.equal(toPrRow({ ...basePr, ciStatus: "fail" }).health, "warn");
-  assert.equal(toPrRow({ ...basePr, conflict: true }).health, "warn");
-  assert.equal(toPrRow({ ...basePr, needsRebase: true }).health, "warn");
-  assert.equal(toPrRow({ ...basePr, reviewDecision: "CHANGES_REQUESTED" }).health, "warn");
+  assert.equal(toPrRow({ ...basePr, ciStatus: "fail" }).health, "bad");
+  assert.equal(toPrRow({ ...basePr, conflict: true }).health, "bad");
+  assert.equal(toPrRow({ ...basePr, needsRebase: true }).health, "bad");
+  assert.equal(toPrRow({ ...basePr, reviewDecision: "CHANGES_REQUESTED" }).health, "bad");
 });
 
 test("stack health is warn when any layer (or the stack) needs attention", () => {
@@ -122,7 +122,7 @@ test("stack health is warn when any layer (or the stack) needs attention", () =>
   }).repos[0]!.groups[0]!;
   if (clean.kind !== "stack" || dirty.kind !== "stack") throw new Error("expected stacks");
   assert.equal(clean.health, "ok");
-  assert.equal(dirty.health, "warn");
+  assert.equal(dirty.health, "bad");
 });
 
 test("buildPanelState surfaces a daemon-down state without crashing", () => {
