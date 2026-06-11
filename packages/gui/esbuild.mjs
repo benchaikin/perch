@@ -43,6 +43,13 @@ await build({
   format: "esm",
   target: "node22",
   external: ["electron"],
+  // ESM output has no `require`, but bundled CJS deps (e.g. vscode-jsonrpc)
+  // do a runtime `require("util")`. esbuild's `__require` shim uses the
+  // ambient `require` if one exists, else throws "Dynamic require ... not
+  // supported". Provide a real one via createRequire so those calls resolve.
+  banner: {
+    js: "import { createRequire as __perchCreateRequire } from 'node:module';\nconst require = __perchCreateRequire(import.meta.url);",
+  },
 });
 
 await build({
