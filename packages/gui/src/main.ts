@@ -181,7 +181,7 @@ function createPanel(): BrowserWindow {
     focusable: true,
     backgroundColor: "#1e1e1e",
     webPreferences: {
-      preload: join(__dirname, "preload.js"),
+      preload: join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
@@ -195,6 +195,24 @@ function createPanel(): BrowserWindow {
   win.on("blur", () => {
     // Behave like a menu-bar popover: dismiss when focus leaves.
     if (!win.webContents.isDevToolsOpened()) win.hide();
+  });
+
+  // Push the current state once the renderer is actually loaded. Without this,
+  // the first pushState() (from showPanel, right after show()) races the
+  // renderer registering its onState listener — the message is dropped and the
+  // panel paints blank until the next refresh/poll.
+  win.webContents.on("did-finish-load", () => pushState());
+
+  // Surface renderer/preload failures in the main process log (otherwise a
+  // renderer exception is silent and the panel just sits blank).
+  win.webContents.on("preload-error", (_e, p, error) => {
+    console.error(`[preload-error] ${p}: ${error?.stack ?? error}`);
+  });
+  win.webContents.on("console-message", (_e, _level, message, line, sourceId) => {
+    console.error(`[renderer] ${message} (${sourceId}:${line})`);
+  });
+  win.webContents.on("render-process-gone", (_e, details) => {
+    console.error(`[render-gone] ${details.reason}`);
   });
 
   void win.loadFile(join(__dirname, "renderer", "index.html"));
@@ -317,6 +335,9 @@ app.whenReady().then(() => {
   app.dock?.hide();
   registerIpc();
   createTray();
+  // Preload the (hidden) panel so its renderer is ready before the first open
+  // (instant first paint) and so renderer errors surface immediately.
+  panel = createPanel();
   void connect();
 });
 

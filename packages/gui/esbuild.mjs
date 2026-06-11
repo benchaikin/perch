@@ -24,7 +24,10 @@ await mkdir(join(dist, "renderer"), { recursive: true });
 
 await build({
   entryPoints: [join(src, "preload.ts")],
-  outfile: join(dist, "preload.js"),
+  // MUST be .cjs: the preload is CommonJS, but this package is `"type":
+  // "module"`, so a `.js` preload is treated as ESM and Electron's require() of
+  // it fails (ERR_REQUIRE_ESM) — leaving `window.perch` undefined.
+  outfile: join(dist, "preload.cjs"),
   bundle: true,
   platform: "node",
   format: "cjs",
