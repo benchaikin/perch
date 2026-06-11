@@ -6,6 +6,7 @@
  * Transport: JSON-RPC 2.0 over a Unix domain socket via `vscode-jsonrpc`.
  */
 import type { PerchConfig } from "./config.js";
+import type { DeliveredNotification } from "./notifications.js";
 import type { CapabilityMeta } from "./registry.js";
 
 /** Request methods (client → server). */
@@ -24,6 +25,13 @@ export const Methods = {
   configUpdate: "config.update",
   /** `config.validateRepoPath` → {@link ValidateRepoPathResult}. Params: {@link ValidateRepoPathParams}. */
   configValidateRepoPath: "config.validateRepoPath",
+  /**
+   * `notifications.subscribe` → void. No params. Opts this connection into the
+   * `notification` stream (all sources; filtering is a client concern).
+   */
+  notificationsSubscribe: "notifications.subscribe",
+  /** `notifications.unsubscribe` → void. No params. Opts back out. */
+  notificationsUnsubscribe: "notifications.unsubscribe",
 } as const;
 
 /** Notification methods (server → client). */
@@ -36,6 +44,12 @@ export const Notifications = {
    * and refresh their UI. Payload: {@link RegistryChangedNotification}.
    */
   registryChanged: "registry.changed",
+  /**
+   * `notification` — a change-driven notification produced by a read's `notify`
+   * hook, pushed to connections that called `notifications.subscribe`. Payload:
+   * {@link NotificationPayload}.
+   */
+  notification: "notification",
 } as const;
 
 /** Params for `capability.invoke`, `capability.subscribe`, `capability.unsubscribe`. */
@@ -115,3 +129,11 @@ export interface ValidateRepoPathResult {
   /** Human-readable explanation when `ok` is false. */
   reason?: string;
 }
+
+/**
+ * Payload of a `notification` notification: a {@link DeliveredNotification}
+ * (the plugin's {@link Notification} plus the daemon's id/source/timestamp
+ * stamps). Re-exported as the wire name so clients import it from one place.
+ */
+export type NotificationPayload = DeliveredNotification;
+export type { DeliveredNotification };

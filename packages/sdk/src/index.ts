@@ -33,6 +33,31 @@ export type ViewHint = {
   title?: string;
 } & Record<string, unknown>;
 
+/** Severity of a notification, used by surfaces for styling/iconography. */
+export type NotificationLevel = "info" | "success" | "warning" | "error";
+
+/**
+ * A notification a read emits when its data changes. Produced by a read's
+ * {@link ReadDef.notify} hook and routed by the daemon to its sinks (the GUI,
+ * desktop notifications, etc.).
+ */
+export interface Notification {
+  /** Short headline. */
+  title: string;
+  /** Optional longer detail. */
+  body?: string;
+  /** Severity hint for the surface. Defaults to `"info"` when unset. */
+  level?: NotificationLevel;
+  /**
+   * Optional stable key for de-duplication. The daemon suppresses a repeat of
+   * the same `dedupeKey` within a short window; notifications without a
+   * `dedupeKey` always pass through.
+   */
+  dedupeKey?: string;
+  /** Optional URL a surface may open when the notification is activated. */
+  openUrl?: string;
+}
+
 /** Runtime services handed to a capability's `run`. Expanded in M1/M2. */
 export interface CapabilityContext<Cfg = unknown> {
   config: Cfg;
@@ -52,6 +77,22 @@ export type ReadDef<I, O, Cfg> = {
   view?: ViewHint;
   expose?: Expose;
   run: (args: { input: I; ctx: CapabilityContext<Cfg> }) => Promise<O> | O;
+  /**
+   * Optional change-detection hook. After each successful poll the daemon calls
+   * `notify` with the previous cached output (`prev`) and the fresh output
+   * (`next`), and routes the returned notifications to its sinks. Diff `next`
+   * against `prev` to decide what (if anything) to announce.
+   *
+   * `prev` is `undefined` on the very first poll (nothing cached yet); return
+   * `[]` in that case so an initial load doesn't spam notifications. May be sync
+   * or async; a throw/rejection is caught by the daemon and does not break
+   * polling.
+   */
+  notify?: (args: {
+    prev: O | undefined;
+    next: O;
+    ctx: CapabilityContext<Cfg>;
+  }) => Notification[] | Promise<Notification[]>;
 };
 
 export type ActionDef<I, Cfg, R = void> = {

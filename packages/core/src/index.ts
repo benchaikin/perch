@@ -14,6 +14,7 @@ import { loadConfig, pluginsFromConfig } from "./config.js";
 import { createEventBus } from "./event-bus.js";
 import type { InvokerDeps, PluginConfigs } from "./invoker.js";
 import { loadPlugins, loadPluginsByIds } from "./loader.js";
+import { NotificationService, type NotificationSink } from "./notifications.js";
 import {
   configPath as defaultConfigPath,
   pidPath as defaultPidPath,
@@ -56,6 +57,14 @@ export { createEventBus, TypedEmitter } from "./event-bus.js";
 export type { EventBus, CapabilityUpdate } from "./event-bus.js";
 export { Scheduler } from "./scheduler.js";
 export { RpcServer } from "./server.js";
+export { NotificationService } from "./notifications.js";
+export type {
+  Notification,
+  NotificationLevel,
+  DeliveredNotification,
+  NotificationSink,
+  NotificationServiceOptions,
+} from "./notifications.js";
 export { Methods, Notifications } from "./rpc.js";
 export type {
   InvokeParams,
@@ -69,6 +78,7 @@ export type {
   ConfigUpdateResult,
   ValidateRepoPathParams,
   ValidateRepoPathResult,
+  NotificationPayload,
 } from "./rpc.js";
 export { getConfig, updateConfig, validateRepoPath } from "./config-store.js";
 export type { ConfigPatch, RepoPathValidation } from "./config-store.js";
@@ -117,6 +127,13 @@ export interface StartDaemonOptions {
    * supply pre-built {@link PluginDef}s without dynamic import.
    */
   loadPlugins?: (ids: string[]) => Promise<PluginDef[]>;
+  /**
+   * Enable the notification subsystem: run reads' `notify` hooks after each
+   * poll, arm persistent pollers for notify-reads, and route notifications to
+   * subscribed clients. Defaults to `true`. Set `false` to disable in tests that
+   * don't exercise notifications.
+   */
+  notifications?: boolean;
 }
 
 /** A running daemon. Call {@link RunningDaemon.stop} for graceful shutdown. */
@@ -179,7 +196,13 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Run
   const bus = createEventBus();
   const controller = new AbortController();
   const invoker: InvokerDeps = { cache, configs, plugins, signal: controller.signal };
-  const scheduler = new Scheduler(invoker, bus);
+
+  // Notification subsystem (on by default). The scheduler runs reads' `notify`
+  // hooks and emits into the service; the RPC sink (wired after the server is
+  // built) fans surviving notifications out to subscribed clients.
+  const notificationsEnabled = options.notifications ?? true;
+  const notifications = notificationsEnabled ? new NotificationService() : undefined;
+  const scheduler = new Scheduler(invoker, bus, notifications);
 
   // The config path the `config.*` RPC methods read/mutate and the watcher
   // watches — one path, so an RPC write flows back through the normal reload.
@@ -196,6 +219,17 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Run
   });
 
   await server.listen();
+
+  // Wire the RPC sink now that the server exists, then arm persistent pollers
+  // for every registered notify-read so notifications fire with no client
+  // attached. (Persistent pollers are re-armed after each reload below.)
+  if (notifications) {
+    const rpcSink: NotificationSink = {
+      deliver: (n) => server.broadcastNotification(n),
+    };
+    notifications.addSink(rpcSink);
+    scheduler.armNotifyReads(registry.all());
+  }
 
   // Write a pidfile so `perch daemon status/stop` can find and signal us.
   // Defaults on for the real daemon, off in test mode (injected pluginDefs).
@@ -250,6 +284,9 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Run
       diff,
       parsed.configs,
     );
+    // Newly-added plugins may carry notify-reads; arm persistent pollers for
+    // them. (Removed/updated plugins had their pollers stopped by applyReload.)
+    if (notifications) scheduler.armNotifyReads(registry.all());
     server.broadcastRegistryChanged(applied);
     console.error(
       `perchd: reloaded config — added [${applied.added.join(", ")}] ` +
@@ -279,6 +316,7 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Run
     watcher?.stop();
     controller.abort();
     scheduler.stop();
+    notifications?.stop();
     await server.close();
     bus.clear();
     if (wantPidFile) {

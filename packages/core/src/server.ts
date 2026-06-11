@@ -20,6 +20,7 @@ import { getConfig, updateConfig, validateRepoPath } from "./config-store.js";
 import type { EventBus } from "./event-bus.js";
 import { invokeCapability, type InvokerDeps } from "./invoker.js";
 import { Registry, type RegisteredCapability } from "./registry.js";
+import type { DeliveredNotification } from "./notifications.js";
 import {
   Methods,
   Notifications,
@@ -111,6 +112,18 @@ export class RpcServer {
     }
   }
 
+  /**
+   * Push a `notification` to every connection that opted in via
+   * `notifications.subscribe`. Mirrors {@link broadcastRegistryChanged};
+   * best-effort per connection. This is what the {@link NotificationSink}
+   * registered in `startDaemon` calls.
+   */
+  broadcastNotification(payload: DeliveredNotification): void {
+    for (const conn of this.#connections) {
+      conn.notifyNotification(payload);
+    }
+  }
+
   #onConnection(socket: Socket): void {
     const conn = new ClientConnection(socket, this.#deps);
     this.#connections.add(conn);
@@ -140,6 +153,8 @@ class ClientConnection {
   readonly #deps: ServerDeps;
   /** Map of subscription composite key → { id, inputKey } for fan-out + cleanup. */
   readonly #subs = new Map<string, { id: string; inputKey: string }>();
+  /** Whether this connection opted into the `notification` stream. */
+  #notificationsSubscribed = false;
   #closeCb: (() => void) | undefined;
 
   constructor(socket: Socket, deps: ServerDeps) {
@@ -191,6 +206,14 @@ class ClientConnection {
       this.#subs.delete(subKey(entry.id, inputKey));
     });
 
+    this.#conn.onRequest(Methods.notificationsSubscribe, (): void => {
+      this.#notificationsSubscribed = true;
+    });
+
+    this.#conn.onRequest(Methods.notificationsUnsubscribe, (): void => {
+      this.#notificationsSubscribed = false;
+    });
+
     this.#conn.onRequest(Methods.configGet, (): Promise<ConfigGetResult> => {
       return getConfig(this.#deps.configPath);
     });
@@ -235,6 +258,13 @@ class ClientConnection {
   /** Send a `registry.changed` notification (unconditional fan-out). */
   notifyRegistryChanged(payload: RegistryChangedNotification): void {
     void this.#conn.sendNotification(Notifications.registryChanged, payload);
+  }
+
+  /** Send a `notification` if this connection opted into the stream. */
+  notifyNotification(payload: DeliveredNotification): void {
+    if (this.#notificationsSubscribed) {
+      void this.#conn.sendNotification(Notifications.notification, payload);
+    }
   }
 
   listen(): void {
