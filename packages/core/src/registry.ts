@@ -5,7 +5,7 @@
  * canonical id `` `${pluginId}.${capName}` ``. Owns expose-resolution (the
  * projection-defaults logic lives here in core, not the SDK).
  */
-import type { Capability, Expose, PluginDef, ViewHint } from "@perch/sdk";
+import type { Capability, Expose, PluginDef, SettingsDescriptor, ViewHint } from "@perch/sdk";
 
 /**
  * A capability indexed under its canonical id, paired with the plugin that
@@ -50,6 +50,20 @@ export interface CapabilityMeta {
 }
 
 /**
+ * A plugin's settings descriptor paired with its identity, for `settings.describe`.
+ * Carries only what a client needs to render a form; the current config values are
+ * merged in by the server (from the config store) rather than stored here.
+ */
+export interface PluginSettings {
+  /** The plugin id; per-plugin config lives at `plugins[pluginId]`. */
+  pluginId: string;
+  /** Display name (falls back to {@link pluginId} when the plugin declares none). */
+  name: string;
+  /** The ordered fields the plugin exposes for editing. */
+  fields: SettingsDescriptor;
+}
+
+/**
  * Resolve the surfaces a capability projects onto, applying core's defaults.
  *
  * Defaults:
@@ -90,6 +104,8 @@ function toMeta(entry: RegisteredCapability): CapabilityMeta {
 /** In-memory index of all capabilities across loaded plugins. */
 export class Registry {
   readonly #byId = new Map<string, RegisteredCapability>();
+  /** Settings descriptors keyed by plugin id, for plugins that declare them. */
+  readonly #settings = new Map<string, PluginSettings>();
 
   /** Ingest a plugin's capabilities, indexing each under its canonical id. */
   register(plugin: PluginDef): void {
@@ -104,6 +120,13 @@ export class Registry {
         name,
         cap,
         expose: resolveExpose(cap),
+      });
+    }
+    if (plugin.settings && plugin.settings.length > 0) {
+      this.#settings.set(plugin.id, {
+        pluginId: plugin.id,
+        name: plugin.name ?? plugin.id,
+        fields: plugin.settings,
       });
     }
   }
@@ -121,6 +144,7 @@ export class Registry {
         removed.push(id);
       }
     }
+    this.#settings.delete(pluginId);
     return removed;
   }
 
@@ -151,5 +175,14 @@ export class Registry {
   /** Serializable metadata for every capability, for `registry.list`. */
   list(): CapabilityMeta[] {
     return this.all().map(toMeta);
+  }
+
+  /**
+   * The settings descriptors of every loaded plugin that declares one, for
+   * `settings.describe`. Current config values are not included here — the server
+   * merges them from the config store.
+   */
+  settingsDescriptors(): PluginSettings[] {
+    return [...this.#settings.values()];
   }
 }

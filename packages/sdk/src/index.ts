@@ -133,15 +133,90 @@ export function action<I = void, Cfg = unknown, R = void>(
   return { ...def, kind: "action" };
 }
 
+/**
+ * The kinds of user-facing setting a plugin can declare. Starts small; widen as
+ * surfaces learn to render more controls. Each maps to a primitive the GUI knows
+ * how to edit (a select, a checkbox, a text input, a number input).
+ */
+export type SettingsFieldType = "enum" | "boolean" | "string" | "number";
+
+/** One selectable choice for an `"enum"` field: the stored `value` + its `label`. */
+export interface SettingsFieldOption {
+  /** The value written to config when this option is chosen. */
+  value: string;
+  /** Human-readable label shown in the UI. */
+  label: string;
+}
+
+/**
+ * A single user-facing setting a plugin exposes. This is **metadata describing
+ * the plugin's existing config** — it does not replace the plugin's `config` zod
+ * schema; it tells a generic UI how to render and edit one slice of it.
+ */
+export interface SettingsField {
+  /**
+   * The config path within `plugins[id]` this field reads/writes, e.g.
+   * `"stackDirection"`. Dotted paths address nested keys (`"a.b"`).
+   */
+  key: string;
+  /** Which control to render. */
+  type: SettingsFieldType;
+  /** Short label shown next to the control. */
+  label: string;
+  /** Optional longer help text. */
+  description?: string;
+  /** Value used when the config has nothing set at `key`. */
+  default?: unknown;
+  /** Choices for an `"enum"` field; required when `type` is `"enum"`. */
+  options?: SettingsFieldOption[];
+}
+
+/** An ordered list of {@link SettingsField}s a plugin exposes for editing. */
+export type SettingsDescriptor = SettingsField[];
+
 export type PluginDef<Cfg = unknown> = {
   id: string;
+  /** Optional human-readable display name; surfaces fall back to {@link id}. */
+  name?: string;
   config?: z.ZodType<Cfg>;
   capabilities: Record<string, Capability>;
+  /**
+   * Optional user-facing settings descriptor: an ordered list of fields a
+   * generic UI can render to edit this plugin's config (see {@link SettingsField}).
+   * Purely additive metadata — the authoritative validation stays in {@link config}.
+   */
+  settings?: SettingsDescriptor;
 };
 
 /** Define a Perch plugin. */
 export function definePlugin<Cfg = unknown>(def: PluginDef<Cfg>): PluginDef<Cfg> {
   return def;
+}
+
+/**
+ * Validate a {@link SettingsDescriptor}'s structural invariants, throwing on the
+ * first problem. Checks: unique non-empty `key`s, and that every `"enum"` field
+ * carries a non-empty `options` array. Returns the descriptor unchanged so it can
+ * be used inline. Mirrors the `parse*` helpers: a thin, throwing guard surfaces
+ * declaration mistakes early rather than at render time.
+ */
+export function validateSettingsDescriptor(descriptor: SettingsDescriptor): SettingsDescriptor {
+  const seen = new Set<string>();
+  for (const field of descriptor) {
+    if (!field.key) {
+      throw new Error("perch: settings field is missing a `key`");
+    }
+    if (seen.has(field.key)) {
+      throw new Error(`perch: duplicate settings field key ${JSON.stringify(field.key)}`);
+    }
+    seen.add(field.key);
+    if (field.type === "enum" && (!field.options || field.options.length === 0)) {
+      throw new Error(
+        `perch: enum settings field ${JSON.stringify(field.key)} requires non-empty \`options\``,
+      );
+    }
+  }
+  return descriptor;
 }
 
 /** The canonical registry id for a capability: `${pluginId}.${capName}`. */

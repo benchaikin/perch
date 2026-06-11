@@ -10,7 +10,9 @@ import {
   parseOutput,
   parseRefreshInterval,
   read,
+  validateSettingsDescriptor,
   z,
+  type SettingsDescriptor,
 } from "./index.js";
 
 test("capabilityId joins plugin and capability names", () => {
@@ -81,6 +83,80 @@ test("parseRefreshInterval converts each supported unit", () => {
   assert.equal(parseRefreshInterval("5m"), 300_000);
   assert.equal(parseRefreshInterval("2h"), 7_200_000);
   assert.equal(parseRefreshInterval("0s"), 0);
+});
+
+test("definePlugin: a plugin can declare a settings descriptor", () => {
+  const plugin = definePlugin({
+    id: "stack",
+    name: "Stack",
+    settings: [
+      {
+        key: "stackDirection",
+        type: "enum",
+        label: "Stack direction",
+        description: "Order PRs are stacked in",
+        default: "down",
+        options: [
+          { value: "down", label: "Down" },
+          { value: "up", label: "Up" },
+        ],
+      },
+      { key: "showDrafts", type: "boolean", label: "Show drafts", default: false },
+    ],
+    capabilities: {},
+  });
+  assert.equal(plugin.name, "Stack");
+  assert.equal(plugin.settings?.length, 2);
+  const first = plugin.settings?.[0];
+  assert.ok(first);
+  assert.equal(first.key, "stackDirection");
+  assert.equal(first.type, "enum");
+  assert.deepEqual(first.options, [
+    { value: "down", label: "Down" },
+    { value: "up", label: "Up" },
+  ]);
+});
+
+test("validateSettingsDescriptor: returns a valid descriptor unchanged", () => {
+  const descriptor: SettingsDescriptor = [
+    { key: "name", type: "string", label: "Name" },
+    {
+      key: "mode",
+      type: "enum",
+      label: "Mode",
+      options: [{ value: "a", label: "A" }],
+    },
+  ];
+  assert.equal(validateSettingsDescriptor(descriptor), descriptor);
+});
+
+test("validateSettingsDescriptor: rejects duplicate keys", () => {
+  assert.throws(
+    () =>
+      validateSettingsDescriptor([
+        { key: "x", type: "string", label: "X" },
+        { key: "x", type: "number", label: "X again" },
+      ]),
+    /duplicate settings field key/,
+  );
+});
+
+test("validateSettingsDescriptor: rejects an enum field without options", () => {
+  assert.throws(
+    () => validateSettingsDescriptor([{ key: "mode", type: "enum", label: "Mode" }]),
+    /requires non-empty `options`/,
+  );
+  assert.throws(
+    () => validateSettingsDescriptor([{ key: "mode", type: "enum", label: "Mode", options: [] }]),
+    /requires non-empty `options`/,
+  );
+});
+
+test("validateSettingsDescriptor: rejects a field without a key", () => {
+  assert.throws(
+    () => validateSettingsDescriptor([{ key: "", type: "string", label: "Empty" }]),
+    /missing a `key`/,
+  );
 });
 
 test("parseRefreshInterval throws on malformed input", () => {
