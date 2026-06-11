@@ -46,7 +46,7 @@ function prRowEl(row: PrRow, pos?: number): HTMLElement {
   el.title = `${row.title} — #${row.number}`;
   el.addEventListener("click", () => window.perch.openPr(row.url));
 
-  // Stacked PRs get a position number (1 = top/tip); standalone PRs a dot.
+  // Stacked PRs get a position number (1 = trunk-adjacent base); standalone a dot.
   const marker = document.createElement("span");
   if (pos !== undefined) {
     marker.className = "num";
@@ -105,8 +105,8 @@ function stackGroupEl(group: Extract<GroupRow, { kind: "stack" }>): HTMLElement 
 
   const layers = document.createElement("div");
   layers.className = "stack-layers";
-  // Rows are tip-first; number them 1..N top-down (the tip reads as 1).
-  group.rows.forEach((row, i) => layers.append(prRowEl(row, i + 1)));
+  // Rows are tip-first; number so the trunk-adjacent base is 1, up to the tip.
+  group.rows.forEach((row, i) => layers.append(prRowEl(row, group.rows.length - i)));
   el.append(layers);
 
   return el;
