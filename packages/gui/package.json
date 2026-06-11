@@ -7,16 +7,34 @@
   "scripts": {
     "build": "tsc -b && node esbuild.mjs",
     "start": "electron .",
+    "dist": "pnpm build && electron-builder build --mac",
     "test": "node --import tsx --test src/**/*.test.ts"
   },
-  "dependencies": {
+  "devDependencies": {
     "@fortawesome/fontawesome-free": "^7.2.0",
     "@perch/cli": "workspace:*",
     "@perch/core": "workspace:*",
-    "@perch/sdk": "workspace:*"
-  },
-  "devDependencies": {
+    "@perch/sdk": "workspace:*",
     "electron": "^33.0.0",
+    "electron-builder": "^26.15.2",
     "esbuild": "^0.24.0"
+  },
+  "build": {
+    "appId": "com.perch.app",
+    "productName": "Perch",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": "dir",
+      "identity": null,
+      "icon": "build/icon.png",
+      "category": "public.app-category.developer-tools"
+    }
   }
 }

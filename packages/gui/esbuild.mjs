@@ -30,6 +30,21 @@ const faDir = dirname(
 await mkdir(join(dist, "renderer"), { recursive: true });
 await mkdir(join(dist, "settings"), { recursive: true });
 
+// Bundle the Electron main process into one self-contained file (inlining
+// @perch/core, @perch/cli, etc.). This makes the packaged .app independent of
+// node_modules — sidestepping pnpm symlink issues with electron-builder — and
+// removes the sibling-import (`./notify.js`) that a stale tsc cache could drop.
+// tsc -b still type-checks + emits; this overwrites its dist/main.js.
+await build({
+  entryPoints: [join(src, "main.ts")],
+  outfile: join(dist, "main.js"),
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  target: "node22",
+  external: ["electron"],
+});
+
 await build({
   entryPoints: [join(src, "preload.ts")],
   // MUST be .cjs: the preload is CommonJS, but this package is `"type":
