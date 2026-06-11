@@ -608,6 +608,14 @@ function registerIpc(): void {
   );
 }
 
+// Single instance: if a Perch GUI is already running, quit immediately so a
+// second launch (e.g. `perch app`) just focuses the existing one rather than
+// adding a duplicate menu-bar icon.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+}
+app.on("second-instance", () => showPanel());
+
 app.whenReady().then(() => {
   // macOS: keep the app out of the Dock — it's a menu-bar utility.
   app.dock?.hide();

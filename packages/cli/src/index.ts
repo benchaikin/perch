@@ -16,6 +16,7 @@
  * M3 implements the client + command generation.
  */
 import { socketPath as defaultSocketPath, type CapabilityMeta } from "@perch/core";
+import { runApp } from "./app.js";
 import { parseArgs } from "./args.js";
 import { DaemonUnavailableError, PerchClient } from "./client.js";
 import { isConfigCommand, runConfigCommand } from "./config.js";
@@ -43,6 +44,13 @@ export async function run(argv: string[]): Promise<void> {
   // RPC. Handled before the registry dispatch; it connects to the daemon itself.
   if (isConfigCommand(positionals)) {
     const code = await runConfigCommand(positionals, { socket, json: cli.json });
+    if (code !== 0) process.exitCode = code;
+    return;
+  }
+
+  // Built-in `app` command — launch the desktop GUI (and ensure the daemon).
+  if (positionals[0] === "app") {
+    const code = await runApp({ socket: cli.socket });
     if (code !== 0) process.exitCode = code;
     return;
   }
