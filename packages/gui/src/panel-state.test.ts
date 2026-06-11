@@ -91,7 +91,7 @@ test("buildPanelState surfaces a daemon-down state without crashing", () => {
 
 test("buildPanelState shows a loading state before data arrives", () => {
   const state = buildPanelState({ daemonUp: true, syncAvailable: true });
-  assert.equal(state.status, "empty");
+  assert.equal(state.status, "loading");
   assert.match(state.message ?? "", /Loading/);
 });
 

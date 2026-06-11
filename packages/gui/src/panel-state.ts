@@ -121,7 +121,7 @@ export interface Notice {
 /** The complete state the renderer needs to draw the panel. */
 export interface PanelState {
   /** Overall connection/data status. */
-  status: "ok" | "empty" | "daemon-down" | "error";
+  status: "ok" | "loading" | "empty" | "daemon-down" | "error";
   /** Human-readable message for non-`ok` states (e.g. "perchd not running"). */
   message?: string;
   /** Repo sections, in overview order. */
@@ -258,7 +258,7 @@ export function buildPanelState(input: BuildInput): PanelState {
   }
 
   if (!overview) {
-    return { status: "empty", message: "Loading…", repos: [], syncAvailable, ...live };
+    return { status: "loading", message: "Loading…", repos: [], syncAvailable, ...live };
   }
 
   const repos: RepoSection[] = overview.repos.map((repo) => ({

@@ -9,7 +9,13 @@ import type { GroupRow, PanelState, PrRow, RepoSection } from "../panel-state.js
 
 const rowsEl = byId("rows");
 const refreshBtn = byId("refresh") as HTMLButtonElement;
+const refreshIcon = refreshBtn.querySelector("i");
 const noticeEl = byId("notice");
+
+/** Spin (or stop spinning) the refresh icon while a refresh is in flight. */
+function setRefreshSpinning(on: boolean): void {
+  refreshIcon?.classList.toggle("fa-spin", on);
+}
 
 let syncAvailable = false;
 /** Repos with a sync in flight — their Sync button shows progress. */
@@ -163,11 +169,21 @@ function repoSectionEl(repo: RepoSection): HTMLElement {
   return el;
 }
 
-/** Render a centered message (loading / empty / daemon-down / error). */
+/** Render a centered message (empty / daemon-down / error). */
 function messageEl(text: string, isError: boolean): HTMLElement {
   const el = document.createElement("div");
   el.className = isError ? "message error" : "message";
   el.textContent = text;
+  return el;
+}
+
+/** Render the initial loading state: a spinner alongside the message. */
+function loadingEl(text: string): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "message";
+  const spinner = document.createElement("i");
+  spinner.className = "fa-solid fa-circle-notch fa-spin";
+  el.append(spinner, ` ${text}`);
   return el;
 }
 
@@ -179,10 +195,15 @@ function render(state: PanelState): void {
 
   if (state.status === "ok") {
     for (const repo of state.repos) rowsEl.append(repoSectionEl(repo));
+  } else if (state.status === "loading") {
+    rowsEl.append(loadingEl(state.message ?? "Loading…"));
   } else {
     const isError = state.status === "daemon-down" || state.status === "error";
     rowsEl.append(messageEl(state.message ?? "", isError));
   }
+
+  // A refresh started by the button stops spinning once the new state lands.
+  setRefreshSpinning(false);
 
   // Transient status toast (e.g. Sync outcome).
   if (state.notice) {
@@ -196,6 +217,9 @@ function render(state: PanelState): void {
   refreshBtn.disabled = false;
 }
 
-refreshBtn.addEventListener("click", () => window.perch.refresh());
+refreshBtn.addEventListener("click", () => {
+  setRefreshSpinning(true);
+  window.perch.refresh();
+});
 
 window.perch.onState(render);
