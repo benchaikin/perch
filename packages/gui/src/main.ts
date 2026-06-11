@@ -21,6 +21,7 @@ import {
   STACK_PRS_ID,
   STACK_SYNC_ID,
   type BuildInput,
+  type Notice,
   type PanelState,
   type PrOverview,
 } from "./panel-state.js";
@@ -145,14 +146,56 @@ async function reloadFromRegistry(): Promise<void> {
   pushState();
 }
 
-/** Invoke `stack.sync` for a repo (Sync button); no-op if unavailable. */
+/** Pending auto-dismiss timer for the transient notice toast. */
+let noticeTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Add/remove a repo from the in-flight set so its Sync button shows progress. */
+function setSyncing(repo: string, on: boolean): void {
+  const set = new Set(buildInput.syncing ?? []);
+  if (on) set.add(repo);
+  else set.delete(repo);
+  buildInput.syncing = [...set];
+}
+
+/** Show a transient status toast; auto-dismiss after a few seconds. */
+function showNotice(notice: Notice): void {
+  buildInput.notice = notice;
+  if (noticeTimer) clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => {
+    buildInput.notice = undefined;
+    pushState();
+  }, 6000);
+}
+
+/**
+ * Invoke `stack.sync` for a repo (Sync button). Shows progress on the button
+ * while it runs, then a toast with the outcome (synced / conflict / failure) —
+ * a cascading rebase can take a few seconds and may stop on a conflict, so the
+ * feedback matters. No-op if Sync is unavailable or already running for the repo.
+ */
 async function sync(repo: string): Promise<void> {
   if (!client || !buildInput.syncAvailable) return;
+  if (buildInput.syncing?.includes(repo)) return;
+
+  setSyncing(repo, true);
+  buildInput.notice = undefined;
+  pushState();
+
   try {
-    await client.invoke({ id: STACK_SYNC_ID, input: { repo } });
+    const result = (await client.invoke({ id: STACK_SYNC_ID, input: { repo } })) as {
+      conflict?: boolean;
+      message?: string;
+    } | null;
     await refresh();
+    if (result?.conflict) {
+      showNotice({ tone: "warn", text: result.message ?? "Sync stopped on a conflict." });
+    } else {
+      showNotice({ tone: "ok", text: result?.message ?? "Stack synced." });
+    }
   } catch (err) {
-    buildInput.error = `stack.sync: ${errorMessage(err)}`;
+    showNotice({ tone: "bad", text: `Sync failed: ${errorMessage(err)}` });
+  } finally {
+    setSyncing(repo, false);
     pushState();
   }
 }

@@ -108,6 +108,12 @@ export interface RepoSection {
   groups: GroupRow[];
 }
 
+/** A transient status toast (e.g. the outcome of a Sync). */
+export interface Notice {
+  tone: "ok" | "warn" | "bad";
+  text: string;
+}
+
 /** The complete state the renderer needs to draw the panel. */
 export interface PanelState {
   /** Overall connection/data status. */
@@ -118,6 +124,10 @@ export interface PanelState {
   repos: RepoSection[];
   /** Whether the Sync action exists in the registry (gates the Sync buttons). */
   syncAvailable: boolean;
+  /** Repos with a sync currently in flight — their Sync button shows progress. */
+  syncing: string[];
+  /** A transient status toast, when one is active. */
+  notice?: Notice;
 }
 
 /** Inputs to {@link buildPanelState}. */
@@ -130,6 +140,10 @@ export interface BuildInput {
   syncAvailable: boolean;
   /** A transient error message (e.g. an invoke failed). */
   error?: string;
+  /** Repos with an in-flight sync. */
+  syncing?: string[];
+  /** A transient status toast. */
+  notice?: Notice;
 }
 
 /** Map a normalized CI status to a status chip. */
@@ -222,6 +236,8 @@ function repoPrCount(repo: PrRepo): number {
  */
 export function buildPanelState(input: BuildInput): PanelState {
   const { overview, daemonUp, syncAvailable, error } = input;
+  // Sync progress + the transient toast ride along on every state.
+  const live = { syncing: input.syncing ?? [], notice: input.notice };
 
   if (!daemonUp) {
     return {
@@ -229,15 +245,16 @@ export function buildPanelState(input: BuildInput): PanelState {
       message: "perchd not running — start it with `perchd`",
       repos: [],
       syncAvailable: false,
+      ...live,
     };
   }
 
   if (error) {
-    return { status: "error", message: error, repos: [], syncAvailable };
+    return { status: "error", message: error, repos: [], syncAvailable, ...live };
   }
 
   if (!overview) {
-    return { status: "empty", message: "Loading…", repos: [], syncAvailable };
+    return { status: "empty", message: "Loading…", repos: [], syncAvailable, ...live };
   }
 
   const repos: RepoSection[] = overview.repos.map((repo) => ({
@@ -249,8 +266,8 @@ export function buildPanelState(input: BuildInput): PanelState {
   // "Empty" when every repo has neither PRs nor an error to surface.
   const anyContent = overview.repos.some((r) => repoPrCount(r) > 0 || r.error);
   if (!anyContent) {
-    return { status: "empty", message: "No open PRs", repos, syncAvailable };
+    return { status: "empty", message: "No open PRs", repos, syncAvailable, ...live };
   }
 
-  return { status: "ok", repos, syncAvailable };
+  return { status: "ok", repos, syncAvailable, ...live };
 }

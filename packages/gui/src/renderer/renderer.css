@@ -213,6 +213,29 @@ body {
   color: var(--bad);
 }
 
+/* Transient status toast (e.g. Sync outcome). */
+.notice {
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  text-align: center;
+}
+.notice[hidden] {
+  display: none;
+}
+.notice.ok {
+  color: var(--ok);
+  background: rgba(78, 201, 176, 0.12);
+}
+.notice.warn {
+  color: var(--warn);
+  background: rgba(215, 186, 125, 0.12);
+}
+.notice.bad {
+  color: var(--bad);
+  background: rgba(240, 113, 120, 0.12);
+}
+
 .message {
   color: var(--muted);
   text-align: center;

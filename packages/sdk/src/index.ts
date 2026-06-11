@@ -54,13 +54,14 @@ export type ReadDef<I, O, Cfg> = {
   run: (args: { input: I; ctx: CapabilityContext<Cfg> }) => Promise<O> | O;
 };
 
-export type ActionDef<I, Cfg> = {
+export type ActionDef<I, Cfg, R = void> = {
   kind: "action";
   summary: string;
   input?: z.ZodType<I>;
   view?: ViewHint;
   expose?: Expose;
-  run: (args: { input: I; ctx: CapabilityContext<Cfg> }) => Promise<void> | void;
+  /** May return a small result (e.g. an outcome) for clients to surface. */
+  run: (args: { input: I; ctx: CapabilityContext<Cfg> }) => Promise<R> | R;
 };
 
 /**
@@ -75,7 +76,7 @@ export type ActionDef<I, Cfg> = {
  * stay fully precise, so authoring keeps complete type-safety.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type Capability = ReadDef<any, any, any> | ActionDef<any, any>;
+export type Capability = ReadDef<any, any, any> | ActionDef<any, any, any>;
 
 /** Declare a read (query) capability. */
 export function read<I = void, O = unknown, Cfg = unknown>(
@@ -85,9 +86,9 @@ export function read<I = void, O = unknown, Cfg = unknown>(
 }
 
 /** Declare an action (mutation) capability. */
-export function action<I = void, Cfg = unknown>(
-  def: Omit<ActionDef<I, Cfg>, "kind">,
-): ActionDef<I, Cfg> {
+export function action<I = void, Cfg = unknown, R = void>(
+  def: Omit<ActionDef<I, Cfg, R>, "kind">,
+): ActionDef<I, Cfg, R> {
   return { ...def, kind: "action" };
 }
 

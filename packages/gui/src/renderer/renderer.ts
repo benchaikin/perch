@@ -9,8 +9,11 @@ import type { GroupRow, PanelState, PrRow, RepoSection } from "../panel-state.js
 
 const rowsEl = byId("rows");
 const refreshBtn = byId("refresh") as HTMLButtonElement;
+const noticeEl = byId("notice");
 
 let syncAvailable = false;
+/** Repos with a sync in flight — their Sync button shows progress. */
+let syncingRepos: string[] = [];
 
 function byId(id: string): HTMLElement {
   const el = document.getElementById(id);
@@ -96,9 +99,11 @@ function stackGroupEl(group: Extract<GroupRow, { kind: "stack" }>): HTMLElement 
   if (group.tracked && syncAvailable) {
     const sync = document.createElement("button");
     sync.className = "btn btn-primary btn-sm";
-    sync.textContent = "Sync";
+    const inFlight = syncingRepos.includes(group.repo);
+    sync.textContent = inFlight ? "Syncing…" : "Sync";
+    sync.disabled = inFlight;
     sync.title = `Rebase this stack onto trunk (${group.repo})`;
-    sync.addEventListener("click", () => window.perch.sync(group.repo));
+    if (!inFlight) sync.addEventListener("click", () => window.perch.sync(group.repo));
     head.append(sync);
   }
   el.append(head);
@@ -150,6 +155,7 @@ function messageEl(text: string, isError: boolean): HTMLElement {
 /** Apply a {@link PanelState} to the DOM. */
 function render(state: PanelState): void {
   syncAvailable = state.syncAvailable;
+  syncingRepos = state.syncing;
   rowsEl.replaceChildren();
 
   if (state.status === "ok") {
@@ -157,6 +163,15 @@ function render(state: PanelState): void {
   } else {
     const isError = state.status === "daemon-down" || state.status === "error";
     rowsEl.append(messageEl(state.message ?? "", isError));
+  }
+
+  // Transient status toast (e.g. Sync outcome).
+  if (state.notice) {
+    noticeEl.textContent = state.notice.text;
+    noticeEl.className = `notice ${state.notice.tone}`;
+    noticeEl.hidden = false;
+  } else {
+    noticeEl.hidden = true;
   }
 
   refreshBtn.disabled = false;

@@ -138,10 +138,13 @@ export default definePlugin({
           const where = result.needsResolution?.length
             ? ` (${result.needsResolution.join(", ")})`
             : "";
-          ctx.log(`Sync stopped on a conflict — resolve manually, then re-run sync${where}.`);
-        } else {
-          ctx.log("Stack synced onto trunk.");
+          const message = `Sync stopped on a conflict — resolve manually, then re-run sync${where}.`;
+          ctx.log(message);
+          return { ok: false, conflict: true, message };
         }
+        const message = "Stack synced onto trunk.";
+        ctx.log(message);
+        return { ok: true, conflict: false, message };
       },
     }),
 
