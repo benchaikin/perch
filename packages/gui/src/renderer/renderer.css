@@ -202,6 +202,8 @@ body {
   padding: 1px 5px;
   border-radius: 3px;
   border: 1px solid currentColor;
+  /* Render the literal label ("rb") — don't inherit the stack header's uppercase. */
+  text-transform: none;
 }
 
 .badge.rebase {
