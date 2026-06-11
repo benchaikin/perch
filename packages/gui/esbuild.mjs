@@ -52,6 +52,21 @@ await build({
   },
 });
 
+// The bundled daemon the main process self-starts when the socket is down
+// (dev and packaged). Inline EVERYTHING (@perch/core, @perch/plugin-stack, zod,
+// vscode-jsonrpc) so the packaged .app needs no node_modules and no workspace
+// `plugins/` dir. CJS so it runs cleanly as a child process under
+// ELECTRON_RUN_AS_NODE (no ESM loader quirks), unpacked from the asar via the
+// `asarUnpack` build config (see package.json) so it's a real on-disk script.
+await build({
+  entryPoints: [join(src, "perchd-entry.ts")],
+  outfile: join(dist, "perchd.cjs"),
+  bundle: true,
+  platform: "node",
+  format: "cjs",
+  target: "node22",
+});
+
 await build({
   entryPoints: [join(src, "preload.ts")],
   // MUST be .cjs: the preload is CommonJS, but this package is `"type":
