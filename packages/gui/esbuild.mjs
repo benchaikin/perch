@@ -21,6 +21,7 @@ const src = join(root, "src");
 const dist = join(root, "dist");
 
 await mkdir(join(dist, "renderer"), { recursive: true });
+await mkdir(join(dist, "settings"), { recursive: true });
 
 await build({
   entryPoints: [join(src, "preload.ts")],
@@ -45,8 +46,33 @@ await build({
   target: "es2022",
 });
 
+// The Settings window's preload — same .cjs requirement as the panel preload
+// (this package is `"type": "module"`, so a `.js` preload fails ERR_REQUIRE_ESM
+// and `window.perchSettings` is never exposed).
+await build({
+  entryPoints: [join(src, "settings-preload.ts")],
+  outfile: join(dist, "settings-preload.cjs"),
+  bundle: true,
+  platform: "node",
+  format: "cjs",
+  target: "node22",
+  external: ["electron"],
+});
+
+// The Settings window's renderer (sandboxed browser context).
+await build({
+  entryPoints: [join(src, "settings", "settings.ts")],
+  outfile: join(dist, "settings", "settings.js"),
+  bundle: true,
+  platform: "browser",
+  format: "iife",
+  target: "es2022",
+});
+
 await cp(join(src, "renderer", "index.html"), join(dist, "renderer", "index.html"));
 await cp(join(src, "renderer", "renderer.css"), join(dist, "renderer", "renderer.css"));
+await cp(join(src, "settings", "index.html"), join(dist, "settings", "index.html"));
+await cp(join(src, "settings", "settings.css"), join(dist, "settings", "settings.css"));
 
 // Tray icons, loaded by the main process relative to dist/main.js. The
 // monochrome template (+ @2x) is the default menu-bar icon; the color PNG is
