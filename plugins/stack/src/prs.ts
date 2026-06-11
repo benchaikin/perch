@@ -77,9 +77,22 @@ export const PrRepo = z.object({
 });
 export type PrRepo = z.infer<typeof PrRepo>;
 
+/**
+ * The configured stack-display order. `bottom-to-top` (default) reads the
+ * trunk-adjacent base #1 at the top; `top-to-bottom` reverses the rendered
+ * rows. Always presentation-only — `layers` stay bottom → top in the data.
+ */
+export const StackDirection = z.enum(["bottom-to-top", "top-to-bottom"]);
+export type StackDirection = z.infer<typeof StackDirection>;
+
 /** Output of the `stack.prs` read: every configured repo's PRs, grouped. */
 export const PrOverview = z.object({
   repos: z.array(PrRepo),
+  /**
+   * The resolved {@link StackDirection} from config — the GUI applies it for
+   * display only. `layers` are ALWAYS bottom → top in the data regardless.
+   */
+  stackDirection: StackDirection.default("bottom-to-top"),
 });
 export type PrOverview = z.infer<typeof PrOverview>;
 
@@ -142,6 +155,9 @@ function errorMessage(err: unknown): string {
 export interface PrOverviewOptions {
   /** Configured repo paths; empty/undefined → a single repo at `cwd`. */
   repos?: string[];
+  /** Resolved display order, surfaced verbatim on the overview (default
+   *  `"bottom-to-top"`). Presentation-only — never reorders `layers`. */
+  stackDirection?: StackDirection;
   /** Working directory used as the single repo when no `repos` are configured. */
   cwd?: string;
   /** Injected command runner (tests inject a fixture). */
@@ -311,5 +327,5 @@ export async function buildPrOverview(options: PrOverviewOptions = {}): Promise<
   const repos = await Promise.all(
     targets.map((target) => overviewForRepo(target, exec, hasGhStack, options.log)),
   );
-  return PrOverview.parse({ repos });
+  return PrOverview.parse({ repos, stackDirection: options.stackDirection });
 }

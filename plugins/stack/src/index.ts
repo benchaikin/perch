@@ -5,12 +5,12 @@
  * the action wrappers (sync, submit, push, add, merge, checkout, link,
  * unstack); M7 adds the cross-machine + base-ref fallback provider.
  */
-import { action, definePlugin, read, z } from "@perch/sdk";
+import { action, definePlugin, read, validateSettingsDescriptor, z } from "@perch/sdk";
 
 import { ghStackProvider } from "./gh-provider.js";
 import { StackGraph } from "./graph.js";
 import { prNotifications } from "./notify.js";
-import { buildPrOverview, PrOverview } from "./prs.js";
+import { buildPrOverview, PrOverview, type StackDirection } from "./prs.js";
 import { reposResult, ReposResult, resolveRepoCwd } from "./repos.js";
 import { resolveStackView } from "./resolve-view.js";
 
@@ -21,7 +21,7 @@ export { resolveStackView } from "./resolve-view.js";
 export { CiStatus, StackGraph, StackLayer } from "./graph.js";
 export { allChains, chainContaining } from "./chains.js";
 export { prNotifications } from "./notify.js";
-export { buildPrOverview, PrGroup, PrInfo, PrOverview, PrRepo } from "./prs.js";
+export { buildPrOverview, PrGroup, PrInfo, PrOverview, PrRepo, StackDirection } from "./prs.js";
 export { RepoEntry, ReposResult, reposResult, resolveRepoCwd, toRepoEntries } from "./repos.js";
 
 /**
@@ -29,9 +29,16 @@ export { RepoEntry, ReposResult, reposResult, resolveRepoCwd, toRepoEntries } fr
  * paths** to target. A repo's display name is the basename of its path, and the
  * default repo is the first entry. When `repos` is absent/empty, the stack
  * plugin operates on `process.cwd()` (the daemon's launch dir) as before.
+ *
+ * `stackDirection` controls how the GUI orders a stack's layers for display.
+ * The underlying data is always sourced bottom → top (trunk-adjacent base
+ * first); this is purely a presentation choice. `bottom-to-top` (the default,
+ * = today's behavior) reads the base #1 at the top; `top-to-bottom` reverses
+ * the rendered rows so the tip reads at the top.
  */
 const StackConfig = z.object({
   repos: z.array(z.string()).optional(),
+  stackDirection: z.enum(["bottom-to-top", "top-to-bottom"]).default("bottom-to-top"),
 });
 type StackConfig = z.infer<typeof StackConfig>;
 
@@ -48,9 +55,42 @@ function configRepos(config: unknown): string[] | undefined {
   return undefined;
 }
 
+/**
+ * Read the resolved {@link StackDirection} from a capability's `ctx.config`,
+ * defaulting to `"bottom-to-top"` (today's behavior) when unset or malformed.
+ * Narrowed locally for the same reason as {@link configRepos}.
+ */
+function configStackDirection(config: unknown): StackDirection {
+  if (config && typeof config === "object") {
+    const value = (config as StackConfig).stackDirection;
+    if (value === "bottom-to-top" || value === "top-to-bottom") {
+      return value;
+    }
+  }
+  return "bottom-to-top";
+}
+
 export default definePlugin({
   id: "stack",
+  name: "Stack",
   config: StackConfig,
+  // User-facing settings rendered by the generic settings panel (M2). Validated
+  // at module load so a malformed descriptor surfaces immediately. The keys map
+  // onto `plugins.stack.*` config; `stackDirection` mirrors the config enum.
+  settings: validateSettingsDescriptor([
+    {
+      key: "stackDirection",
+      type: "enum",
+      label: "Stack order",
+      description:
+        "How stacks are ordered in the My PRs panel. The trunk-adjacent base is always #1; this only flips the visual row order.",
+      default: "bottom-to-top",
+      options: [
+        { value: "bottom-to-top", label: "Base at top" },
+        { value: "top-to-bottom", label: "Tip at top" },
+      ],
+    },
+  ]),
   capabilities: {
     view: read({
       summary: "The current PR stack with per-layer CI & review status",
@@ -108,7 +148,12 @@ export default definePlugin({
       refresh: { every: "60s", on: ["focus"] },
       view: { kind: "list", title: "My PRs" },
       expose: { mcp: true },
-      run: ({ ctx }) => buildPrOverview({ repos: configRepos(ctx.config), log: ctx.log }),
+      run: ({ ctx }) =>
+        buildPrOverview({
+          repos: configRepos(ctx.config),
+          stackDirection: configStackDirection(ctx.config),
+          log: ctx.log,
+        }),
       // Diff each poll's overview against the previous one and surface notable PR
       // transitions (CI/review/conflict/rebase/opened/closed) as notifications.
       // The hook's `prev`/`next` carry the schema's *input* type (defaulted

@@ -214,3 +214,32 @@ test("enrichment is resilient: gh stack view failure leaves base-ref grouping", 
     ["feat-a", "feat-b"],
   );
 });
+
+test("stackDirection defaults to bottom-to-top when not configured", async () => {
+  const { exec } = fakeExec({ "/work/a": { prs: REPO_A_PRS } });
+  const overview = await buildPrOverview({ repos: ["/work/a"], exec, hasGhStack: () => false });
+  assert.equal(overview.stackDirection, "bottom-to-top");
+  // The data ordering is never affected by direction — layers stay bottom → top.
+  const stack = stackGroups(overview.repos[0]!.groups)[0]!;
+  assert.deepEqual(
+    stack.layers.map((l) => l.headRefName),
+    ["feat-a", "feat-b"],
+  );
+});
+
+test("stackDirection is surfaced verbatim, leaving layer order bottom → top", async () => {
+  const { exec } = fakeExec({ "/work/a": { prs: REPO_A_PRS } });
+  const overview = await buildPrOverview({
+    repos: ["/work/a"],
+    exec,
+    hasGhStack: () => false,
+    stackDirection: "top-to-bottom",
+  });
+  assert.equal(overview.stackDirection, "top-to-bottom");
+  // Presentation-only: the data still arrives bottom → top regardless.
+  const stack = stackGroups(overview.repos[0]!.groups)[0]!;
+  assert.deepEqual(
+    stack.layers.map((l) => l.headRefName),
+    ["feat-a", "feat-b"],
+  );
+});
