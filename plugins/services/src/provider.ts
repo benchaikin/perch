@@ -37,7 +37,7 @@ export interface ServerTarget {
  */
 export type FetchJson = (args: {
   target: ServerTarget;
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "PATCH";
   path: string;
 }) => Promise<{ status: number; body: unknown }>;
 
@@ -71,7 +71,7 @@ export const defaultFetchJson: FetchJson = ({ target, method, path }) =>
 /** Build `http.request` options for either a UDS or a TCP address target. */
 function requestOptions(
   target: ServerTarget,
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "PATCH",
   path: string,
 ): RequestOptions {
   const headers = { accept: "application/json" };
@@ -145,16 +145,18 @@ export class ServicesProvider {
   }
 
   /**
-   * `POST /process/{kind}/{name}` (start | stop | restart) → true on a 2xx.
-   * Never throws: a transport-level failure (server down, missing socket) or a
-   * non-2xx response both resolve `false`, so the GUI/agent can surface "the
-   * action didn't take" without crashing the action capability.
+   * Drive a process lifecycle action → true on a 2xx. process-compose uses
+   * `POST /process/start/{name}` and `POST /process/restart/{name}`, but **stop
+   * is `PATCH /process/stop/{name}`** (a `POST` there is a 404). Never throws: a
+   * transport-level failure (server down, missing socket) or a non-2xx response
+   * both resolve `false`, so the GUI/agent can surface "the action didn't take"
+   * without crashing the action capability.
    */
   async action(name: string, kind: "start" | "stop" | "restart"): Promise<boolean> {
     try {
       const res = await this.fetchJson({
         target: this.target,
-        method: "POST",
+        method: kind === "stop" ? "PATCH" : "POST",
         path: `/process/${kind}/${encodeURIComponent(name)}`,
       });
       return res.status >= 200 && res.status < 300;

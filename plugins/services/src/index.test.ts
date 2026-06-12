@@ -56,12 +56,12 @@ function ctx(address: string): CapabilityContext {
   return { config: { address }, log: () => {} };
 }
 
-for (const [id, kind] of [
-  ["restart", "restart"],
-  ["start", "start"],
-  ["stop", "stop"],
+for (const [id, kind, method] of [
+  ["restart", "restart", "POST"],
+  ["start", "start", "POST"],
+  ["stop", "stop", "PATCH"], // process-compose stop is PATCH, not POST
 ] as const) {
-  test(`services.${id} is an MCP-exposed action hitting POST /process/${kind}/{name}`, async () => {
+  test(`services.${id} is an MCP-exposed action hitting ${method} /process/${kind}/{name}`, async () => {
     const cap = plugin.capabilities[id]!;
     assert.equal(cap.kind, "action");
     assert.equal(cap.expose?.mcp, true);
@@ -73,7 +73,7 @@ for (const [id, kind] of [
         message: string;
       };
       assert.equal(result.ok, true);
-      assert.deepEqual(server.seen, [{ method: "POST", url: `/process/${kind}/api` }]);
+      assert.deepEqual(server.seen, [{ method, url: `/process/${kind}/api` }]);
     } finally {
       await server.close();
     }

@@ -59,14 +59,16 @@ test("prefers the unix socket target when `socket` is set", async () => {
   assert.equal(calls[0]!.socket, "/tmp/pc.sock");
 });
 
-test("action(): POSTs /process/{kind}/{name} and is true on 2xx", async () => {
+test("action(): hits /process/{kind}/{name} (POST start/restart, PATCH stop) and is true on 2xx", async () => {
+  // process-compose stop is PATCH, not POST (a POST there is a 404).
+  const methodFor = { start: "POST", stop: "PATCH", restart: "POST" } as const;
   for (const kind of ["start", "stop", "restart"] as const) {
     const { fetchJson, calls } = stubFetch({
       [`/process/${kind}/api`]: { status: 200, body: undefined },
     });
     const provider = new ServicesProvider({ socket: "/tmp/pc.sock", fetchJson });
     assert.equal(await provider.action("api", kind), true);
-    assert.equal(calls[0]!.method, "POST");
+    assert.equal(calls[0]!.method, methodFor[kind]);
     assert.equal(calls[0]!.path, `/process/${kind}/api`);
     assert.equal(calls[0]!.socket, "/tmp/pc.sock");
   }
