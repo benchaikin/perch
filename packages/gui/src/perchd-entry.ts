@@ -31,6 +31,10 @@ import {
   startDaemon,
 } from "@perch/core";
 import stackPlugin from "@perch/plugin-stack";
+// TODO: bundle services plugin for packaged daemon (Dev services M1 ships the
+// @perch/plugin-services package + the GUI Services section; the packaged
+// perchd.cjs still only statically imports the stack plugin, so process-compose
+// status won't surface in a packaged build until this entry also bundles it).
 
 /** Boot the bundled daemon, then keep the process alive for the RPC server. */
 async function main(): Promise<void> {

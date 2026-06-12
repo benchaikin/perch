@@ -51,6 +51,7 @@ import {
   type PanelState,
   type PrOverview,
 } from "./panel-state.js";
+import { SERVICES_LIST_ID, type ServiceList } from "./services-state.js";
 import {
   centeredPosition,
   MIN_WINDOW_SIZE,
@@ -80,8 +81,10 @@ let saveSizeTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** Latest inputs to the view-model; updated piecemeal then rebuilt + pushed. */
 const buildInput: BuildInput = { daemonUp: false, syncAvailable: false };
-/** Subscription key echoed on `capability.update` notifications. */
+/** Subscription key echoed on `stack.prs` `capability.update` notifications. */
 let subscriptionKey: string | undefined;
+/** Subscription key echoed on `services.list` `capability.update` notifications. */
+let servicesKey: string | undefined;
 
 /** Recompute the panel state from current inputs and push it to the renderer. */
 function pushState(): void {
@@ -100,6 +103,19 @@ async function subscribePrs(): Promise<void> {
   subscriptionKey = sub.inputKey;
   if (sub.current !== undefined) buildInput.overview = sub.current as PrOverview;
   buildInput.error = undefined;
+}
+
+/**
+ * (Re)subscribe to `services.list` and seed the section from the subscription's
+ * current value. Mirrors {@link subscribePrs}. Best-effort and gated by the
+ * registry — the services plugin may be disabled, in which case this isn't
+ * called and the Services section stays hidden.
+ */
+async function subscribeServices(): Promise<void> {
+  if (!client) return;
+  const sub = await client.subscribe({ id: SERVICES_LIST_ID });
+  servicesKey = sub.inputKey;
+  if (sub.current !== undefined) buildInput.servicesList = sub.current as ServiceList;
 }
 
 /**
@@ -195,6 +211,9 @@ async function connect(): Promise<void> {
       buildInput.overview = note.data as PrOverview;
       buildInput.error = undefined;
       pushState();
+    } else if (note.id === SERVICES_LIST_ID && note.inputKey === servicesKey) {
+      buildInput.servicesList = note.data as ServiceList;
+      pushState();
     }
   });
 
@@ -209,11 +228,14 @@ async function connect(): Promise<void> {
     console.error(`[notifications] subscribe failed: ${errorMessage(err)}`);
   }
 
-  // Sync may be absent (stack plugin disabled) — gate the buttons on the
-  // registry rather than assuming it exists.
+  // Sync may be absent (stack plugin disabled); services.list may be absent
+  // (services plugin disabled) — gate both on the registry rather than assuming
+  // they exist.
+  let servicesPresent = false;
   try {
     const caps = await client.registryList();
     buildInput.syncAvailable = caps.some((c) => c.id === STACK_SYNC_ID);
+    servicesPresent = caps.some((c) => c.id === SERVICES_LIST_ID);
   } catch {
     buildInput.syncAvailable = false;
   }
@@ -222,6 +244,16 @@ async function connect(): Promise<void> {
     await subscribePrs();
   } catch (err) {
     buildInput.error = `stack.prs: ${errorMessage(err)}`;
+  }
+
+  // Subscribe to services only when the plugin is installed. A failure here is
+  // non-fatal — the Services section just stays hidden.
+  if (servicesPresent) {
+    try {
+      await subscribeServices();
+    } catch (err) {
+      console.error(`[services] subscribe failed: ${errorMessage(err)}`);
+    }
   }
   pushState();
 }
@@ -256,6 +288,14 @@ async function reloadFromRegistry(): Promise<void> {
     } else {
       // The stack plugin was disabled in config — clear its data.
       buildInput.overview = { repos: [] };
+    }
+    // Same for the services plugin: re-subscribe if present, else clear so the
+    // Services section hides.
+    if (caps.some((c) => c.id === SERVICES_LIST_ID)) {
+      await subscribeServices();
+    } else {
+      buildInput.servicesList = undefined;
+      servicesKey = undefined;
     }
   } catch (err) {
     buildInput.error = `registry: ${errorMessage(err)}`;

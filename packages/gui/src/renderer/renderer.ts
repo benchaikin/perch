@@ -6,6 +6,7 @@
  * plain browser JS by esbuild.
  */
 import type { GroupRow, PanelState, PrRow, RepoSection } from "../panel-state.js";
+import type { ServiceRow, ServicesSection } from "../services-state.js";
 
 const rowsEl = byId("rows");
 const refreshBtn = byId("refresh") as HTMLButtonElement;
@@ -189,6 +190,49 @@ function repoSectionEl(repo: RepoSection): HTMLElement {
   return el;
 }
 
+/** Build one service row: a health-colored dot, the name, and an optional detail. */
+function serviceRowEl(svc: ServiceRow): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "row service-row";
+  el.title = `${svc.name} — ${svc.statusLabel}${svc.detail ? ` (${svc.detail})` : ""}`;
+
+  const dot = document.createElement("span");
+  dot.className = `dot ${svc.health}`;
+  dot.textContent = "●";
+  el.append(dot);
+
+  const name = document.createElement("span");
+  name.className = "branch";
+  name.textContent = svc.name;
+  el.append(name);
+
+  const status = document.createElement("span");
+  status.className = "service-status";
+  status.textContent = svc.detail ? `${svc.statusLabel} · ${svc.detail}` : svc.statusLabel;
+  el.append(status);
+
+  return el;
+}
+
+/**
+ * Build the "Services" section: a header + one row per process. Returns null
+ * when the section is hidden (process-compose unreachable / no services), so the
+ * panel is unchanged for users without process-compose.
+ */
+function servicesSectionEl(section: ServicesSection): HTMLElement | null {
+  if (!section.visible) return null;
+  const el = document.createElement("section");
+  el.className = "repo-section services-section";
+
+  const header = document.createElement("div");
+  header.className = "repo-header";
+  header.textContent = "Services";
+  el.append(header);
+
+  for (const svc of section.rows) el.append(serviceRowEl(svc));
+  return el;
+}
+
 /** Render a centered message (empty / daemon-down / error). */
 function messageEl(text: string, isError: boolean): HTMLElement {
   const el = document.createElement("div");
@@ -217,10 +261,19 @@ function render(state: PanelState): void {
     for (const repo of state.repos) rowsEl.append(repoSectionEl(repo));
   } else if (state.status === "loading") {
     rowsEl.append(loadingEl(state.message ?? "Loading…"));
+  } else if (state.status === "empty" && state.services.visible) {
+    // No PRs but process-compose is live: skip the "No open PRs" message so the
+    // Services section (appended below) stands on its own.
   } else {
     const isError = state.status === "daemon-down" || state.status === "error";
     rowsEl.append(messageEl(state.message ?? "", isError));
   }
+
+  // The Services section is self-hiding (omitted when process-compose is absent
+  // or reports nothing) — so the My-PRs-only panel is unchanged for users
+  // without process-compose. Appended after PRs regardless of PR status.
+  const services = servicesSectionEl(state.services);
+  if (services) rowsEl.append(services);
 
   // A refresh started by the button stops spinning once the new state lands.
   setRefreshSpinning(false);

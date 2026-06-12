@@ -177,6 +177,20 @@ body {
 .dot.bad {
   color: var(--bad);
 }
+/* Service-row dot variants: starting = amber, stopped = muted grey. */
+.dot.warn {
+  color: var(--warn);
+}
+.dot.muted {
+  color: var(--muted);
+}
+
+/* The per-service status text (e.g. "running · pid 42", "crashed · exit 1"). */
+.service-status {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11px;
+}
 
 /* Position number on a stacked PR (1 = trunk-adjacent base, up to the tip),
    colored by that layer's health (.ok green / .bad error red). */

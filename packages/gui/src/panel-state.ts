@@ -13,6 +13,8 @@
  * shape of `stack.prs`'s output, not the plugin's internals.
  */
 
+import { buildServicesSection, type ServiceList, type ServicesSection } from "./services-state.js";
+
 /** Canonical capability id of the cross-repo "My PRs" read the panel renders. */
 export const STACK_PRS_ID = "stack.prs";
 /** Canonical capability id of the hero Sync action. */
@@ -163,6 +165,12 @@ export interface PanelState {
   syncing: string[];
   /** A transient status toast, when one is active. */
   notice?: Notice;
+  /**
+   * The process-compose "Services" section. `visible` is false (the renderer
+   * omits the section) when process-compose is unreachable or reports no
+   * services, so the panel is unchanged for users without it.
+   */
+  services: ServicesSection;
 }
 
 /** Inputs to {@link buildPanelState}. */
@@ -179,6 +187,8 @@ export interface BuildInput {
   syncing?: string[];
   /** A transient status toast. */
   notice?: Notice;
+  /** The latest `services.list` data, or `undefined` if none has arrived yet. */
+  servicesList?: ServiceList;
 }
 
 /** Map a normalized CI status to a status chip. */
@@ -296,8 +306,13 @@ function repoPrCount(repo: PrRepo): number {
  */
 export function buildPanelState(input: BuildInput): PanelState {
   const { overview, daemonUp, syncAvailable, error } = input;
-  // Sync progress + the transient toast ride along on every state.
-  const live = { syncing: input.syncing ?? [], notice: input.notice };
+  // Sync progress, the transient toast, and the Services section ride along on
+  // every state (the section is self-hiding when process-compose is absent).
+  const live = {
+    syncing: input.syncing ?? [],
+    notice: input.notice,
+    services: buildServicesSection(daemonUp ? input.servicesList : undefined),
+  };
 
   if (!daemonUp) {
     return {
