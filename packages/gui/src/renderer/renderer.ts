@@ -5,8 +5,24 @@
  * `buildPanelState`) and renders the grouped "My PRs" panel DOM. Bundled to
  * plain browser JS by esbuild.
  */
-import type { GroupRow, PanelState, PrRow, RepoSection } from "../panel-state.js";
+import type { GroupRow, Health, PanelState, PrRow, RepoSection } from "../panel-state.js";
 import type { ServiceRow, ServicesSection } from "../services-state.js";
+
+/**
+ * The health marker is a distinct Font Awesome *shape* per state (not just a
+ * color), so it's legible without relying on the red/green hue a colorblind
+ * viewer can't separate: a check, a warning triangle, and an x.
+ */
+const HEALTH_ICON: Record<Health, string> = {
+  ok: "circle-check",
+  warn: "triangle-exclamation",
+  bad: "circle-xmark",
+};
+const HEALTH_LABEL: Record<Health, string> = {
+  ok: "Clean",
+  warn: "Review comments to address",
+  bad: "Needs attention",
+};
 
 const rowsEl = byId("rows");
 const refreshBtn = byId("refresh") as HTMLButtonElement;
@@ -83,18 +99,20 @@ function prRowEl(row: PrRow, pos?: number): HTMLElement {
   el.title = `${row.title} — #${row.number}`;
   el.addEventListener("click", () => window.perch.openPr(row.url));
 
-  // Stacked PRs get a position number (1 = trunk-adjacent base); standalone a dot.
-  // The marker is colored by the PR's health (green = clean, amber = comments to
-  // address, red = blocking attention).
-  const marker = document.createElement("span");
+  // Stacked PRs get a position number (1 = trunk-adjacent base); standalone PRs
+  // get a health-shaped icon (check / triangle / x) — a non-color cue so health
+  // never depends on the red/green hue alone. Both are tinted by health too.
   if (pos !== undefined) {
+    const marker = document.createElement("span");
     marker.className = `num ${row.health}`;
     marker.textContent = String(pos);
+    el.append(marker);
   } else {
-    marker.className = `dot ${row.health}`;
-    marker.textContent = "●";
+    const marker = document.createElement("i");
+    marker.className = `dot ${row.health} fa-solid fa-${HEALTH_ICON[row.health]}`;
+    marker.title = HEALTH_LABEL[row.health];
+    el.append(marker);
   }
-  el.append(marker);
 
   const title = document.createElement("span");
   title.className = "branch";

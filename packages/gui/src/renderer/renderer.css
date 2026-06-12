@@ -203,9 +203,13 @@ body {
   font-size: 10px;
 }
 
-/* Standalone-PR marker; colored by health (.ok green / .bad error red). */
+/* Standalone-PR / service marker; a health-shaped glyph (PRs) or ● (services),
+   colored by health (.ok green / .warn amber / .bad red). Fixed 16px box (like
+   .num) so the differing glyph widths keep the following text aligned. */
 .dot {
   flex: 0 0 auto;
+  width: 16px;
+  text-align: center;
 }
 .dot.ok {
   color: var(--ok);
