@@ -83,7 +83,7 @@ export default definePlugin({
       type: "enum",
       label: "Stack order",
       description:
-        "How stacks are ordered in the My PRs panel. The trunk-adjacent base is always #1; this only flips the visual row order.",
+        "How stacks are ordered in the My PRs panel: the trunk-adjacent base PR at the top, or the tip at the top. The topmost layer is always #1.",
       default: "bottom-to-top",
       options: [
         { value: "bottom-to-top", label: "Base at top" },
