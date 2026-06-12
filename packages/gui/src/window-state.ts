@@ -72,3 +72,24 @@ export function writeWindowSize(file: string, size: WindowSize): void {
   const clamped = clampToMinimum(size);
   writeFileSync(file, `${JSON.stringify(clamped, null, 2)}\n`, "utf8");
 }
+
+/** A display work area (logical pixels), matching Electron's `Display.workArea`. */
+export interface WorkArea {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Center a `size` window within a display's `workArea`. Used to open the
+ * Settings window on the same display as the tray/panel (multi-monitor): Electron
+ * defaults a window with no x/y to the primary display, which is often the wrong
+ * one. Pure so it's unit-testable without a display.
+ */
+export function centeredPosition(workArea: WorkArea, size: WindowSize): { x: number; y: number } {
+  return {
+    x: Math.round(workArea.x + (workArea.width - size.width) / 2),
+    y: Math.round(workArea.y + (workArea.height - size.height) / 2),
+  };
+}

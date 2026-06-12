@@ -51,7 +51,12 @@ import {
   type PanelState,
   type PrOverview,
 } from "./panel-state.js";
-import { MIN_WINDOW_SIZE, readWindowSize, writeWindowSize } from "./window-state.js";
+import {
+  centeredPosition,
+  MIN_WINDOW_SIZE,
+  readWindowSize,
+  writeWindowSize,
+} from "./window-state.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -671,9 +676,20 @@ function showSettingsWindow(): void {
     return;
   }
 
+  // Open on the display the tray/panel is on (not always the primary): a window
+  // created without x/y defaults to the primary display, wrong on multi-monitor.
+  const settingsSize = { width: 480, height: 420 };
+  const anchor = tray?.getBounds() ?? panel?.getBounds();
+  const display = anchor
+    ? screen.getDisplayNearestPoint({ x: anchor.x, y: anchor.y })
+    : screen.getPrimaryDisplay();
+  const { x, y } = centeredPosition(display.workArea, settingsSize);
+
   const win = new BrowserWindow({
-    width: 480,
-    height: 420,
+    x,
+    y,
+    width: settingsSize.width,
+    height: settingsSize.height,
     title: "Perch Settings",
     show: false,
     resizable: true,

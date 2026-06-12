@@ -10,11 +10,28 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
+  centeredPosition,
   DEFAULT_WINDOW_SIZE,
   MIN_WINDOW_SIZE,
   readWindowSize,
   writeWindowSize,
 } from "./window-state.js";
+
+test("centeredPosition centers a window within a display work area", () => {
+  // Primary display at origin.
+  assert.deepEqual(
+    centeredPosition({ x: 0, y: 0, width: 1440, height: 900 }, { width: 480, height: 420 }),
+    {
+      x: 480,
+      y: 240,
+    },
+  );
+  // A second display offset to the right uses its own origin → window lands there.
+  assert.deepEqual(
+    centeredPosition({ x: 1440, y: 0, width: 1920, height: 1080 }, { width: 480, height: 420 }),
+    { x: 2160, y: 330 },
+  );
+});
 
 /** Run `fn` against a fresh temp dir, cleaned up afterward. */
 function withTempDir(fn: (dir: string) => void): void {
