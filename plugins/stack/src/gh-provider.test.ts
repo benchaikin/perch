@@ -258,10 +258,7 @@ test("rollupToCiStatus maps check arrays to normalized status", () => {
   // read as pass, not pending (regression: green commit-status stuck spinning).
   assert.equal(rollupToCiStatus([{ state: "SUCCESS" }]), "pass");
   assert.equal(
-    rollupToCiStatus([
-      { status: "COMPLETED", conclusion: "SUCCESS" },
-      { state: "SUCCESS" },
-    ]),
+    rollupToCiStatus([{ status: "COMPLETED", conclusion: "SUCCESS" }, { state: "SUCCESS" }]),
     "pass",
   );
   // A completed CheckRun with a non-failing, non-success conclusion still passes.
