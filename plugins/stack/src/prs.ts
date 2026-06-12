@@ -18,7 +18,7 @@ import { basename, join } from "node:path";
 import { z } from "@perch/sdk";
 
 import { allChains } from "./chains.js";
-import { rollupToCiStatus, parseStackView } from "./gh-provider.js";
+import { fetchHumanReviewCommentCount, rollupToCiStatus, parseStackView } from "./gh-provider.js";
 import { CiStatus } from "./graph.js";
 import type { Exec, ExecOptions } from "./provider.js";
 
@@ -44,6 +44,13 @@ export const PrInfo = z.object({
   needsRebase: z.boolean().default(false),
   /** This PR currently has a merge conflict against its base. */
   conflict: z.boolean().default(false),
+  /**
+   * Count of inline review-thread comments authored by humans (bots + the
+   * configured ignore-list filtered out). A "things to address" signal —
+   * surfaced as a panel badge and a notification when it increases. Best-effort:
+   * defaults to 0 when the per-PR comment fetch fails.
+   */
+  humanReviewCommentCount: z.number().int().default(0),
 });
 export type PrInfo = z.infer<typeof PrInfo>;
 
@@ -155,6 +162,14 @@ function errorMessage(err: unknown): string {
 export interface PrOverviewOptions {
   /** Configured repo paths; empty/undefined → a single repo at `cwd`. */
   repos?: string[];
+  /**
+   * Logins to treat as non-human when counting inline review comments — the
+   * escape hatch for AI reviewers (CodeRabbit/Copilot/Sonar) that post as
+   * ordinary accounts rather than as a GitHub App. From `plugins.stack
+   * .reviewBotIgnore`. Bots (`type === "Bot"` / `[bot]` logins) are always
+   * filtered regardless of this list.
+   */
+  reviewBotIgnore?: string[];
   /** Resolved display order, surfaced verbatim on the overview (default
    *  `"bottom-to-top"`). Presentation-only — never reorders `layers`. */
   stackDirection?: StackDirection;
@@ -275,6 +290,7 @@ async function overviewForRepo(
   target: RepoTarget,
   exec: Exec,
   hasGhStack: (cwd: string | undefined) => boolean,
+  reviewBotIgnore: readonly string[],
   log: ((m: string) => void) | undefined,
 ): Promise<PrRepo> {
   const execOpts: ExecOptions | undefined = target.cwd ? { cwd: target.cwd } : undefined;
@@ -308,6 +324,21 @@ async function overviewForRepo(
     }
   }
 
+  // Per-PR enrichment: count human inline review comments. Best-effort and
+  // isolated — one PR's failed comment fetch defaults to 0 (it can't fail the
+  // overview). This adds one `gh api` call per open PR; the PR set is already
+  // scoped to `--author @me` so the fan-out stays small in practice.
+  await Promise.all(
+    prs.map(async (pr) => {
+      pr.humanReviewCommentCount = await fetchHumanReviewCommentCount(
+        exec,
+        pr.number,
+        reviewBotIgnore,
+        execOpts,
+      );
+    }),
+  );
+
   let groups = groupPrs(prs);
 
   // gh-stack enrichment: only when this repo locally tracks a stack.
@@ -322,10 +353,13 @@ async function overviewForRepo(
 export async function buildPrOverview(options: PrOverviewOptions = {}): Promise<PrOverview> {
   const exec = options.exec ?? defaultExec;
   const hasGhStack = options.hasGhStack ?? defaultHasGhStack;
+  const reviewBotIgnore = options.reviewBotIgnore ?? [];
   const targets = resolveTargets(options.repos, options.cwd);
 
   const repos = await Promise.all(
-    targets.map((target) => overviewForRepo(target, exec, hasGhStack, options.log)),
+    targets.map((target) =>
+      overviewForRepo(target, exec, hasGhStack, reviewBotIgnore, options.log),
+    ),
   );
   return PrOverview.parse({ repos, stackDirection: options.stackDirection });
 }

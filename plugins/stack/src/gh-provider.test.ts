@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { ghStackProvider, parseStackView, rollupToCiStatus } from "./gh-provider.js";
+import {
+  countHumanReviewComments,
+  fetchHumanReviewCommentCount,
+  ghStackProvider,
+  isHumanReviewComment,
+  parseStackView,
+  rollupToCiStatus,
+} from "./gh-provider.js";
 import type { Exec } from "./provider.js";
 
 /**
@@ -338,4 +345,69 @@ test("sync re-throws a genuine (non-conflict) command failure", async () => {
   const exec: Exec = () =>
     Promise.reject(new Error("gh: command not found / not a gh stack repository"));
   await assert.rejects(() => ghStackProvider({ exec }).sync(), /not a gh stack repository/);
+});
+
+test("isHumanReviewComment excludes Bot type, [bot] logins, and the ignore-list", () => {
+  // Humans count.
+  assert.equal(isHumanReviewComment({ login: "alice", type: "User" }), true);
+  assert.equal(isHumanReviewComment({ login: "alice" }), true);
+  // GitHub Apps: type Bot OR a [bot] login.
+  assert.equal(isHumanReviewComment({ login: "copilot", type: "Bot" }), false);
+  assert.equal(isHumanReviewComment({ login: "github-actions[bot]", type: "User" }), false);
+  assert.equal(isHumanReviewComment({ login: "dependabot[bot]" }), false);
+  // Case-insensitive on the [bot] suffix.
+  assert.equal(isHumanReviewComment({ login: "Weird[BOT]" }), false);
+  // Ignore-list (escape hatch for AI reviewers posting as normal accounts).
+  assert.equal(
+    isHumanReviewComment({ login: "coderabbitai", type: "User" }, ["coderabbitai"]),
+    false,
+  );
+  assert.equal(isHumanReviewComment({ login: "CodeRabbitAI" }, ["coderabbitai"]), false);
+  assert.equal(isHumanReviewComment({ login: "alice" }, ["coderabbitai"]), true);
+  // No resolvable login → not a human.
+  assert.equal(isHumanReviewComment(null), false);
+  assert.equal(isHumanReviewComment({ login: null }), false);
+  assert.equal(isHumanReviewComment({ login: "" }), false);
+});
+
+test("countHumanReviewComments tallies humans after the filter", () => {
+  const comments = [
+    { user: { login: "alice", type: "User" } },
+    { user: { login: "github-actions[bot]", type: "Bot" } },
+    { user: { login: "bob", type: "User" } },
+    { user: { login: "alice", type: "User" } }, // a second comment from alice still counts.
+    { user: { login: "coderabbitai", type: "User" } },
+  ];
+  assert.equal(countHumanReviewComments(comments), 4);
+  assert.equal(countHumanReviewComments(comments, ["coderabbitai"]), 3);
+  // Tolerant of non-array / empty input.
+  assert.equal(countHumanReviewComments(undefined), 0);
+  assert.equal(countHumanReviewComments([]), 0);
+});
+
+test("fetchHumanReviewCommentCount shells gh api and counts humans across pages", async () => {
+  let calledArgs: string[] = [];
+  const exec: Exec = (cmd, args) => {
+    calledArgs = args;
+    assert.equal(cmd, "gh");
+    // Two `--paginate` pages, each its own JSON array on its own line.
+    return Promise.resolve(
+      [
+        JSON.stringify([
+          { login: "alice", type: "User" },
+          { login: "github-actions[bot]", type: "Bot" },
+        ]),
+        JSON.stringify([{ login: "bob", type: "User" }]),
+      ].join("\n"),
+    );
+  };
+  const count = await fetchHumanReviewCommentCount(exec, 142, [], undefined);
+  assert.equal(count, 2);
+  assert.ok(calledArgs.includes("api"));
+  assert.ok(calledArgs.some((a) => a.includes("/pulls/142/comments")));
+});
+
+test("fetchHumanReviewCommentCount defaults to 0 when the gh call fails", async () => {
+  const exec: Exec = () => Promise.reject(new Error("gh: 404 Not Found"));
+  assert.equal(await fetchHumanReviewCommentCount(exec, 7, [], undefined), 0);
 });

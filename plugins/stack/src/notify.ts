@@ -178,4 +178,19 @@ function diffPr(number: number, prev: FlatPr, next: FlatPr, notes: Notification[
       openUrl: b.url,
     });
   }
+
+  // Human review-comment count INCREASED (a reviewer left more inline comments
+  // to address). Fires only on an increase — never on unchanged or a decrease
+  // (e.g. comments resolved/deleted). The dedupeKey carries the new count so a
+  // later increase re-announces while a steady count stays quiet.
+  if (b.humanReviewCommentCount > a.humanReviewCommentCount) {
+    const count = b.humanReviewCommentCount;
+    notes.push({
+      title: "Review comments",
+      body: `${count} review comment${count === 1 ? "" : "s"} to address on #${number}`,
+      level: "warning",
+      dedupeKey: `${number}:reviewcomments:${count}`,
+      openUrl: b.url,
+    });
+  }
 }

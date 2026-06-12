@@ -255,6 +255,16 @@ body {
   color: var(--bad);
 }
 
+/* "Review comments to address" badge — muted for a lone comment, emphasized
+   (stronger color + weight) once there's more than one to work through. */
+.badge.reviewcomments {
+  color: var(--muted);
+}
+.badge.reviewcomments.many {
+  color: var(--accent);
+  font-weight: 600;
+}
+
 /* Transient status toast (e.g. Sync outcome). */
 .notice {
   font-size: 11px;

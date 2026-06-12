@@ -62,8 +62,17 @@ const REPO_A_STACK_VIEW = JSON.stringify({
 
 type Call = { cmd: string; args: string[]; cwd?: string };
 
-/** Build a fake exec keyed by cwd, routing pr-list / stack-view per repo. */
-function fakeExec(byCwd: Record<string, { prs?: string; stackView?: string; prError?: Error }>): {
+/** Per-repo fixture: pr-list / stack-view payloads and a per-PR comments map. */
+interface RepoFixture {
+  prs?: string;
+  stackView?: string;
+  prError?: Error;
+  /** PR number → `gh api …/comments` stdout (a JSON array of `{login,type}`). */
+  comments?: Record<number, string>;
+}
+
+/** Build a fake exec keyed by cwd, routing pr-list / stack-view / comments. */
+function fakeExec(byCwd: Record<string, RepoFixture>): {
   exec: Exec;
   calls: Call[];
 } {
@@ -80,10 +89,19 @@ function fakeExec(byCwd: Record<string, { prs?: string; stackView?: string; prEr
       if (repo.stackView) return Promise.resolve(repo.stackView);
       return Promise.reject(new Error("no stack"));
     }
+    if (cmd === "gh" && args[0] === "api") {
+      const path = args.find((a) => a.includes("/comments")) ?? "";
+      const num = Number(path.match(/\/pulls\/(\d+)\/comments/)?.[1]);
+      return Promise.resolve(repo.comments?.[num] ?? "[]");
+    }
     return Promise.reject(new Error(`unexpected exec: ${cmd} ${args.join(" ")}`));
   };
   return { exec, calls };
 }
+
+/** Inline-comment authors for a PR, as a `gh api … --jq` stdout array. */
+const comments = (...authors: { login: string; type?: string }[]): string =>
+  JSON.stringify(authors);
 
 const stackGroups = (groups: PrGroup[]): Extract<PrGroup, { kind: "stack" }>[] =>
   groups.filter((g): g is Extract<PrGroup, { kind: "stack" }> => g.kind === "stack");
@@ -213,6 +231,54 @@ test("enrichment is resilient: gh stack view failure leaves base-ref grouping", 
     stack.layers.map((l) => l.headRefName),
     ["feat-a", "feat-b"],
   );
+});
+
+test("counts human inline review comments per PR, filtering bots + ignore-list", async () => {
+  const { exec } = fakeExec({
+    "/work/a": {
+      prs: REPO_A_PRS,
+      comments: {
+        // #10: two humans + a bot (by type) + a [bot] login + an ignored AI account → 2.
+        10: comments(
+          { login: "alice", type: "User" },
+          { login: "bob", type: "User" },
+          { login: "copilot", type: "Bot" },
+          { login: "github-actions[bot]", type: "User" },
+          { login: "coderabbitai", type: "User" },
+        ),
+        // #11: one human → 1.
+        11: comments({ login: "carol", type: "User" }),
+        // #12: none reported → 0 (default).
+      },
+    },
+  });
+  const overview = await buildPrOverview({
+    repos: ["/work/a"],
+    exec,
+    hasGhStack: () => false,
+    reviewBotIgnore: ["coderabbitai"],
+  });
+  const repo = overview.repos[0]!;
+  const solo = prGroups(repo.groups)[0]!;
+  assert.equal(solo.pr.number, 10);
+  assert.equal(solo.pr.humanReviewCommentCount, 2);
+  const stack = stackGroups(repo.groups)[0]!;
+  assert.equal(stack.layers.find((l) => l.number === 11)!.humanReviewCommentCount, 1);
+  assert.equal(stack.layers.find((l) => l.number === 12)!.humanReviewCommentCount, 0);
+});
+
+test("a failed comment fetch defaults the count to 0 without failing the overview", async () => {
+  const exec: Exec = (cmd, args, opts) => {
+    if (cmd === "gh" && args.includes("pr") && args.includes("list")) {
+      return Promise.resolve(REPO_B_PRS);
+    }
+    if (cmd === "gh" && args[0] === "api") return Promise.reject(new Error("gh: 404"));
+    return Promise.reject(new Error(`unexpected: ${cmd} ${args.join(" ")} (${opts?.cwd})`));
+  };
+  const overview = await buildPrOverview({ repos: ["/work/b"], exec, hasGhStack: () => false });
+  const pr = prGroups(overview.repos[0]!.groups)[0]!.pr;
+  assert.equal(pr.number, 5);
+  assert.equal(pr.humanReviewCommentCount, 0);
 });
 
 test("stackDirection defaults to bottom-to-top when not configured", async () => {

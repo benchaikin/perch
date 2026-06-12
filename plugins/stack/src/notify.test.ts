@@ -17,6 +17,7 @@ function pr(over: Partial<PrInfo> & { number: number }): PrInfo {
     mergeable: over.mergeable,
     needsRebase: over.needsRebase ?? false,
     conflict: over.conflict ?? false,
+    humanReviewCommentCount: over.humanReviewCommentCount ?? 0,
   };
 }
 
@@ -127,6 +128,36 @@ test("needsRebase onset (false → true) → warning", () => {
   const n = byKey(prNotifications(prev, next), "6:rebase");
   assert.equal(n.title, "Needs rebase");
   assert.equal(n.level, "warning");
+});
+
+test("human review-comment count increase → warning with count-based dedupeKey + body", () => {
+  const prev = overview([pr({ number: 142, humanReviewCommentCount: 1 })]);
+  const next = overview([pr({ number: 142, humanReviewCommentCount: 3 })]);
+  const n = byKey(prNotifications(prev, next), "142:reviewcomments:3");
+  assert.equal(n.title, "Review comments");
+  assert.equal(n.body, "3 review comments to address on #142");
+  assert.equal(n.level, "warning");
+  assert.equal(n.openUrl, "https://github.com/o/r/pull/142");
+});
+
+test("first review comment (0 → 1) → singular body", () => {
+  const prev = overview([pr({ number: 9, humanReviewCommentCount: 0 })]);
+  const next = overview([pr({ number: 9, humanReviewCommentCount: 1 })]);
+  const n = byKey(prNotifications(prev, next), "9:reviewcomments:1");
+  assert.equal(n.body, "1 review comment to address on #9");
+});
+
+test("review-comment count unchanged / decreased → no notification", () => {
+  const unchanged = prNotifications(
+    overview([pr({ number: 1, humanReviewCommentCount: 2 })]),
+    overview([pr({ number: 1, humanReviewCommentCount: 2 })]),
+  );
+  assert.deepEqual(unchanged, []);
+  const decreased = prNotifications(
+    overview([pr({ number: 1, humanReviewCommentCount: 3 })]),
+    overview([pr({ number: 1, humanReviewCommentCount: 1 })]),
+  );
+  assert.deepEqual(decreased, []);
 });
 
 test("opened: present in next but not prev → info New PR", () => {

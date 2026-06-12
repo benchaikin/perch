@@ -58,6 +58,21 @@ function badgeEl(kind: "rebase" | "conflict", label: string, hint: string): HTML
 }
 
 /**
+ * Build the "review comments to address" badge: a Font Awesome comment icon +
+ * the count. Caller only appends it when `count > 0`; it's emphasized (the
+ * `many` modifier) when `count > 1`, where there's usually real work to do.
+ */
+function reviewCommentBadgeEl(count: number): HTMLElement {
+  const el = document.createElement("span");
+  el.className = `badge reviewcomments${count > 1 ? " many" : ""}`;
+  el.title = `${count} review comment${count === 1 ? "" : "s"} to address`;
+  const icon = document.createElement("i");
+  icon.className = "fa-regular fa-comment";
+  el.append(icon, ` ${count}`);
+  return el;
+}
+
+/**
  * Build one PR row; clicking opens the PR in the browser. When `pos` is given
  * (a stacked PR), it shows the layer's position number instead of a dot.
  */
@@ -92,6 +107,9 @@ function prRowEl(row: PrRow, pos?: number): HTMLElement {
   const chips = document.createElement("span");
   chips.className = "chips";
   for (const c of row.chips) chips.append(chipEl(c));
+  if (row.humanReviewCommentCount > 0) {
+    chips.append(reviewCommentBadgeEl(row.humanReviewCommentCount));
+  }
   if (row.needsRebase) chips.append(badgeEl("rebase", "rb", "Needs rebase"));
   // A merge conflict is already shown by the `⚠ merge` mergeable chip
   // (mergeable === "CONFLICTING"); don't double-indicate it with a `cf` badge.

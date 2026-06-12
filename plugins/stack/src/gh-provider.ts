@@ -199,6 +199,93 @@ export function rollupToCiStatus(rollup: RollupCheck[] | null | undefined): CiSt
 const nullToUndefined = <T>(value: T | null | undefined): T | undefined =>
   value == null ? undefined : value;
 
+/** One inline review comment's author, as returned by the GitHub comments API. */
+export interface ReviewCommentAuthor {
+  /** GitHub login, e.g. `"alice"` or `"github-actions[bot]"`. */
+  login?: string | null;
+  /** GitHub account type — `"Bot"` for GitHub Apps, `"User"` otherwise. */
+  type?: string | null;
+}
+
+/**
+ * Is this inline-review-comment author a human (i.e. should it count)?
+ *
+ * Excludes GitHub Apps / bots — author `type === "Bot"` or a login ending in
+ * `[bot]` (github-actions[bot], dependabot[bot], copilot-pull-request-reviewer
+ * [bot], …) — and any login on the configured `ignore` list (the escape hatch
+ * for AI reviewers posting as ordinary accounts). An author with no resolvable
+ * login is treated as non-human (we can't vouch for it). Comparison is
+ * case-insensitive on the login.
+ */
+export function isHumanReviewComment(
+  author: ReviewCommentAuthor | null | undefined,
+  ignore: readonly string[] = [],
+): boolean {
+  const login = author?.login;
+  if (typeof login !== "string" || login.length === 0) return false;
+  if (author?.type === "Bot") return false;
+  const lower = login.toLowerCase();
+  if (lower.endsWith("[bot]")) return false;
+  return !ignore.some((name) => name.toLowerCase() === lower);
+}
+
+/**
+ * Count the inline review-thread comments authored by humans, applying the
+ * bot/`[bot]`/ignore-list filter via {@link isHumanReviewComment}. Tolerant of
+ * a non-array input (→ 0) so a malformed/empty `gh` payload degrades cleanly.
+ */
+export function countHumanReviewComments(
+  comments: readonly { user?: ReviewCommentAuthor | null }[] | null | undefined,
+  ignore: readonly string[] = [],
+): number {
+  if (!Array.isArray(comments)) return 0;
+  let n = 0;
+  for (const comment of comments) {
+    if (isHumanReviewComment(comment?.user, ignore)) n += 1;
+  }
+  return n;
+}
+
+/**
+ * Fetch the count of human-authored inline review comments for one PR,
+ * best-effort. Shells `gh api repos/{owner}/{repo}/pulls/{number}/comments`
+ * (the "pull request review comments" endpoint — comments on specific lines,
+ * NOT top-level conversation comments), paginated, and counts humans after the
+ * bot/ignore-list filter. ANY failure (no remote, 404, auth, bad JSON) yields 0
+ * so a single PR/repo can never break the overview. Runs in the PR's repo cwd
+ * (`execOpts`) so `gh` resolves `{owner}/{repo}` from that repo's remote.
+ */
+export async function fetchHumanReviewCommentCount(
+  exec: Exec,
+  prNumber: number,
+  ignore: readonly string[],
+  execOpts: ExecOptions | undefined,
+  repo?: string,
+): Promise<number> {
+  try {
+    const path = `repos/${repo ?? "{owner}/{repo}"}/pulls/${prNumber}/comments`;
+    const out = await exec(
+      "gh",
+      ["api", "--paginate", path, "--jq", "[.[] | {login: .user.login, type: .user.type}]"],
+      execOpts,
+    );
+    // `--jq` over `--paginate` emits one JSON array per page; concatenate them.
+    const authors: { login?: string | null; type?: string | null }[] = [];
+    for (const line of out.split("\n")) {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) continue;
+      const page: unknown = JSON.parse(trimmed);
+      if (Array.isArray(page)) authors.push(...(page as ReviewCommentAuthor[]));
+    }
+    return countHumanReviewComments(
+      authors.map((user) => ({ user })),
+      ignore,
+    );
+  } catch {
+    return 0;
+  }
+}
+
 /** First defined string property among `keys` on `obj`. */
 function firstString(obj: Record<string, unknown>, keys: string[]): string | undefined {
   for (const key of keys) {

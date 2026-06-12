@@ -39,6 +39,18 @@ export { RepoEntry, ReposResult, reposResult, resolveRepoCwd, toRepoEntries } fr
 const StackConfig = z.object({
   repos: z.array(z.string()).optional(),
   stackDirection: z.enum(["bottom-to-top", "top-to-bottom"]).default("bottom-to-top"),
+  /**
+   * Logins to treat as non-human when counting inline review comments — the
+   * escape hatch for AI reviewers (CodeRabbit/Copilot/Sonar) that post as
+   * ordinary accounts rather than as a GitHub App (GitHub Apps / `[bot]` logins
+   * are always excluded regardless). Feeds the "review comments to address"
+   * badge + notification.
+   *
+   * TODO: could become a user-facing settings *field* once the settings
+   * descriptor types support arrays/lists — today they're only enum/boolean/
+   * string/number, so this stays config-only (`plugins.stack.reviewBotIgnore`).
+   */
+  reviewBotIgnore: z.array(z.string()).optional(),
 });
 type StackConfig = z.infer<typeof StackConfig>;
 
@@ -51,6 +63,23 @@ type StackConfig = z.infer<typeof StackConfig>;
 function configRepos(config: unknown): string[] | undefined {
   if (config && typeof config === "object" && Array.isArray((config as StackConfig).repos)) {
     return (config as StackConfig).repos;
+  }
+  return undefined;
+}
+
+/**
+ * Read the configured review-bot ignore-list from a capability's `ctx.config`
+ * (logins to treat as non-human when counting inline review comments). Narrowed
+ * locally for the same reason as {@link configRepos}; `undefined`/malformed → no
+ * extra logins ignored (bots are still filtered).
+ */
+function configReviewBotIgnore(config: unknown): string[] | undefined {
+  if (
+    config &&
+    typeof config === "object" &&
+    Array.isArray((config as StackConfig).reviewBotIgnore)
+  ) {
+    return (config as StackConfig).reviewBotIgnore;
   }
   return undefined;
 }
@@ -152,6 +181,7 @@ export default definePlugin({
         buildPrOverview({
           repos: configRepos(ctx.config),
           stackDirection: configStackDirection(ctx.config),
+          reviewBotIgnore: configReviewBotIgnore(ctx.config),
           log: ctx.log,
         }),
       // Diff each poll's overview against the previous one and surface notable PR

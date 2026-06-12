@@ -39,6 +39,8 @@ export interface PrInfo {
   mergeable?: Mergeable;
   needsRebase?: boolean;
   conflict?: boolean;
+  /** Count of human-authored inline review comments to address (bots filtered). */
+  humanReviewCommentCount?: number;
 }
 
 /** A group is either a standalone PR or a stack of ≥2 chained PRs. */
@@ -96,6 +98,11 @@ export interface PrRow {
   needsRebase: boolean;
   /** True when this PR has a merge conflict — render a "conflict" badge. */
   conflict: boolean;
+  /**
+   * Count of human-authored inline review comments to address. The renderer
+   * shows a comment-icon badge when > 0, emphasized when > 1.
+   */
+  humanReviewCommentCount: number;
   /** Health for the row's marker color: `"ok"` (green) or `"bad"` (error red). */
   health: Health;
 }
@@ -244,6 +251,7 @@ export function toPrRow(pr: PrInfo): PrRow {
     chips,
     needsRebase: pr.needsRebase ?? false,
     conflict: pr.conflict ?? false,
+    humanReviewCommentCount: pr.humanReviewCommentCount ?? 0,
     health: prHealth(pr),
   };
 }

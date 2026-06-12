@@ -63,6 +63,11 @@ test("toPrRow always includes a CI chip and applies defaults", () => {
   assert.equal(row.chips[0]?.label, "· CI");
 });
 
+test("toPrRow carries the human review-comment count, defaulting to 0", () => {
+  assert.equal(toPrRow({ ...basePr }).humanReviewCommentCount, 0);
+  assert.equal(toPrRow({ ...basePr, humanReviewCommentCount: 3 }).humanReviewCommentCount, 3);
+});
+
 test("toPrRow accumulates review + mergeable chips and badges", () => {
   const row = toPrRow({
     ...basePr,
