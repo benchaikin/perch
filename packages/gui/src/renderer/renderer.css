@@ -1,13 +1,43 @@
+/* The palette follows the OS appearance via prefers-color-scheme (no JS needed;
+   Electron renderers honor it and switch live when the system theme toggles).
+   --ok stays teal-green and --warn amber; --bad is a vivid, high-saturation red
+   (not the old salmon) so it's unambiguously distinct from teal for a red-green
+   color-deficient viewer. --bad-rgb mirrors --bad for the rgba tint fills below.
+   Dark is the default; the light palette overrides it under prefers-color-scheme. */
 :root {
   --bg: #1e1e1e;
   --fg: #e6e6e6;
   --muted: #8a8a8a;
   --rule: #333;
   --chip-bg: #2a2a2a;
+  --hover-bg: #2a2a2a;
+  --hover-bg-strong: #333;
   --ok: #4ec9b0;
+  --ok-rgb: 78, 201, 176;
   --warn: #d7ba7d;
-  --bad: #f07178;
+  --warn-rgb: 215, 186, 125;
+  --bad: #e01e37;
+  --bad-rgb: 224, 30, 55;
   --accent: #4a9eff;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f5f5f5;
+    --fg: #1d1d1f;
+    --muted: #6b6b70;
+    --rule: #d2d2d7;
+    --chip-bg: #e8e8ec;
+    --hover-bg: #e8e8ec;
+    --hover-bg-strong: #dcdce1;
+    --ok: #1a8f78;
+    --ok-rgb: 26, 143, 120;
+    --warn: #9a6b00;
+    --warn-rgb: 154, 107, 0;
+    --bad: #d70015;
+    --bad-rgb: 215, 0, 21;
+    --accent: #0a66d6;
+  }
 }
 
 * {
@@ -66,7 +96,7 @@ body {
 }
 .icon-btn:hover {
   color: var(--fg);
-  background: #2a2a2a;
+  background: var(--hover-bg);
 }
 .icon-btn:active {
   color: var(--accent);
@@ -118,7 +148,7 @@ body {
 }
 
 .row:hover {
-  background: #2a2a2a;
+  background: var(--hover-bg);
 }
 
 .stack-group {
@@ -192,11 +222,11 @@ body {
   font-weight: 600;
 }
 .num.ok {
-  background: rgba(78, 201, 176, 0.15);
+  background: rgba(var(--ok-rgb), 0.15);
   color: var(--ok);
 }
 .num.bad {
-  background: rgba(240, 113, 120, 0.15);
+  background: rgba(var(--bad-rgb), 0.15);
   color: var(--bad);
 }
 
@@ -277,15 +307,15 @@ body {
 }
 .notice.ok {
   color: var(--ok);
-  background: rgba(78, 201, 176, 0.12);
+  background: rgba(var(--ok-rgb), 0.12);
 }
 .notice.warn {
   color: var(--warn);
-  background: rgba(215, 186, 125, 0.12);
+  background: rgba(var(--warn-rgb), 0.12);
 }
 .notice.bad {
   color: var(--bad);
-  background: rgba(240, 113, 120, 0.12);
+  background: rgba(var(--bad-rgb), 0.12);
 }
 
 .message {
@@ -308,14 +338,14 @@ body {
   padding: 5px 8px;
   border: 1px solid var(--rule);
   border-radius: 5px;
-  background: #2a2a2a;
+  background: var(--hover-bg);
   color: var(--fg);
   cursor: pointer;
   -webkit-app-region: no-drag;
 }
 
 .btn:hover {
-  background: #333;
+  background: var(--hover-bg-strong);
 }
 
 .btn-primary {
