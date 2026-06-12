@@ -22,7 +22,10 @@ function pr(over: Partial<PrInfo> & { number: number }): PrInfo {
 
 /** Wrap standalone PRs into a single-repo overview. */
 function overview(prs: PrInfo[], repoName = "r"): PrOverview {
-  return { repos: [{ name: repoName, groups: prs.map((p) => ({ kind: "pr", pr: p })) }] };
+  return {
+    stackDirection: "bottom-to-top",
+    repos: [{ name: repoName, groups: prs.map((p) => ({ kind: "pr", pr: p })) }],
+  };
 }
 
 /** Find a notification by dedupeKey (asserting exactly one match). */
@@ -164,6 +167,7 @@ test("PRs are matched by number across repos and stack groups", () => {
   // PR 20 is a stack layer in repo A in prev; in next it stands alone in repo B,
   // and its CI flips to pass — matching by number alone must still fire once.
   const prev: PrOverview = {
+    stackDirection: "bottom-to-top",
     repos: [
       {
         name: "a",
@@ -182,6 +186,7 @@ test("PRs are matched by number across repos and stack groups", () => {
     ],
   };
   const next: PrOverview = {
+    stackDirection: "bottom-to-top",
     repos: [
       { name: "a", groups: [{ kind: "pr", pr: pr({ number: 19, ciStatus: "pass" }) }] },
       { name: "b", groups: [{ kind: "pr", pr: pr({ number: 20, ciStatus: "pass" }) }] },

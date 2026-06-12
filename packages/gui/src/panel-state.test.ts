@@ -199,6 +199,82 @@ test("buildPanelState renders standalone PRs flat and stacks nested base-first",
   );
 });
 
+test("default (and omitted) stackDirection renders stack rows base-first", () => {
+  const stackOverview = (stackDirection?: "bottom-to-top" | "top-to-bottom"): PrOverview => ({
+    stackDirection,
+    repos: [
+      {
+        name: "main",
+        groups: [
+          {
+            kind: "stack",
+            tracked: true,
+            layers: [
+              { ...basePr, number: 11, headRefName: "feat-a", baseRefName: "main" },
+              { ...basePr, number: 12, headRefName: "feat-b", baseRefName: "feat-a" },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+  for (const overview of [stackOverview(), stackOverview("bottom-to-top")]) {
+    const grp = buildPanelState({ overview, daemonUp: true, syncAvailable: true }).repos[0]!
+      .groups[0]!;
+    if (grp.kind !== "stack") throw new Error("expected stack");
+    // Base-first: feat-a reads at the top (#1), feat-b below (#2).
+    assert.deepEqual(
+      grp.rows.map((r) => r.branch),
+      ["feat-a", "feat-b"],
+    );
+  }
+});
+
+test("top-to-bottom stackDirection reverses stack rows tip-first", () => {
+  const overview: PrOverview = {
+    stackDirection: "top-to-bottom",
+    repos: [
+      {
+        name: "main",
+        groups: [
+          {
+            kind: "stack",
+            tracked: true,
+            layers: [
+              { ...basePr, number: 11, headRefName: "feat-a", baseRefName: "main" },
+              { ...basePr, number: 12, headRefName: "feat-b", baseRefName: "feat-a" },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  const grp = buildPanelState({ overview, daemonUp: true, syncAvailable: true }).repos[0]!
+    .groups[0]!;
+  if (grp.kind !== "stack") throw new Error("expected stack");
+  // Tip-first: feat-b reads at the top, feat-a below. The renderer numbers rows
+  // 1..N in array order, so the reversal flips both row order and numbering.
+  assert.deepEqual(
+    grp.rows.map((r) => r.branch),
+    ["feat-b", "feat-a"],
+  );
+  // The PR numbers travel with their rows (the data is not mutated).
+  assert.deepEqual(
+    grp.rows.map((r) => r.number),
+    [12, 11],
+  );
+});
+
+test("stackDirection does not affect standalone PR rows", () => {
+  const overview: PrOverview = {
+    stackDirection: "top-to-bottom",
+    repos: [{ name: "main", groups: [{ kind: "pr", pr: { ...basePr, number: 9 } }] }],
+  };
+  const grp = buildPanelState({ overview, daemonUp: true, syncAvailable: true }).repos[0]!
+    .groups[0]!;
+  assert.equal(grp.kind, "pr");
+});
+
 test("buildPanelState marks an untracked stack so the renderer hides Sync", () => {
   const overview: PrOverview = {
     repos: [

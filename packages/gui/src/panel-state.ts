@@ -54,9 +54,19 @@ export interface PrRepo {
   error?: string;
 }
 
+/** The configured stack-display order (mirrors the stack plugin's enum). */
+export type StackDirection = "bottom-to-top" | "top-to-bottom";
+
 /** `stack.prs`'s output: every configured repo's PRs, grouped. */
 export interface PrOverview {
   repos: PrRepo[];
+  /**
+   * How to order a stack's layers for display. `layers` always arrive bottom →
+   * top; `"top-to-bottom"` reverses the rendered rows so the tip reads at the
+   * top. Optional on the wire (older daemons omit it) — defaults to
+   * `"bottom-to-top"` (today's behavior).
+   */
+  stackDirection?: StackDirection;
 }
 
 /** A status chip rendered next to a PR. `tone` drives its color. */
@@ -99,7 +109,13 @@ export type GroupRow =
   | { kind: "pr"; pr: PrRow }
   | {
       kind: "stack";
-      /** Layers base-first (the trunk-adjacent base #1 reads at the top). */
+      /**
+       * The rendered layer rows, already ordered for display per the configured
+       * {@link StackDirection}: `"bottom-to-top"` keeps them base-first (the
+       * trunk-adjacent base #1 reads at the top), `"top-to-bottom"` reverses
+       * them so the tip reads at the top. The renderer numbers them 1..N in
+       * array order, so the reversal flips both the visual order and numbering.
+       */
       rows: PrRow[];
       /** Whether the Sync action should show for this stack (gh-stack tracked). */
       tracked: boolean;
@@ -232,14 +248,20 @@ export function toPrRow(pr: PrInfo): PrRow {
   };
 }
 
-/** Derive a rendered group row from a raw {@link PrGroup} in repo `repoName`. */
-function toGroupRow(group: PrGroup, repoName: string): GroupRow {
+/**
+ * Derive a rendered group row from a raw {@link PrGroup} in repo `repoName`,
+ * applying the configured {@link StackDirection} to the layer order.
+ */
+function toGroupRow(group: PrGroup, repoName: string, direction: StackDirection): GroupRow {
   if (group.kind === "pr") {
     return { kind: "pr", pr: toPrRow(group.pr) };
   }
-  // Stack layers arrive bottom → top; keep that order so the base (#1) reads at
-  // the top of the group, ascending to the tip.
-  const rows = group.layers.map(toPrRow);
+  // Stack layers always arrive bottom → top. For "bottom-to-top" (default) keep
+  // that order so the base (#1) reads at the top, ascending to the tip; for
+  // "top-to-bottom" reverse so the tip reads at the top. The renderer numbers
+  // rows 1..N in array order, so reversing flips both row order and numbering.
+  const ordered = direction === "top-to-bottom" ? [...group.layers].reverse() : group.layers;
+  const rows = ordered.map(toPrRow);
   const needsRebase = group.needsRebase ?? false;
   // The stack is healthy only when every layer is clean and nothing needs rebase.
   const health: Health = needsRebase || rows.some((r) => r.health === "bad") ? "bad" : "ok";
@@ -287,10 +309,13 @@ export function buildPanelState(input: BuildInput): PanelState {
     return { status: "loading", message: "Loading…", repos: [], syncAvailable, ...live };
   }
 
+  // Presentation-only stack ordering; default to today's base-first behavior
+  // when the daemon omits it (older daemons / no config).
+  const direction: StackDirection = overview.stackDirection ?? "bottom-to-top";
   const repos: RepoSection[] = overview.repos.map((repo) => ({
     name: repo.name,
     error: repo.error,
-    groups: repo.groups.map((g) => toGroupRow(g, repo.name)),
+    groups: repo.groups.map((g) => toGroupRow(g, repo.name, direction)),
   }));
 
   // "Empty" when every repo has neither PRs nor an error to surface.
