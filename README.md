@@ -235,4 +235,4 @@ pnpm format          # prettier
 
 ## License
 
-TBD.
+[MIT](LICENSE) © Ben Chaikin
