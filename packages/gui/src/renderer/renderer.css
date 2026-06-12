@@ -1,8 +1,11 @@
 /* The palette follows the OS appearance via prefers-color-scheme (no JS needed;
    Electron renderers honor it and switch live when the system theme toggles).
-   --ok stays teal-green and --warn amber; --bad is a vivid, high-saturation red
-   (not the old salmon) so it's unambiguously distinct from teal for a red-green
-   color-deficient viewer. --bad-rgb mirrors --bad for the rgba tint fills below.
+   --ok is a vivid, saturated teal and --warn amber; --bad is a vivid,
+   high-saturation red (not the old salmon). The ok/bad pair is tuned together
+   for a red-green color-deficient viewer: teal biases toward cyan/blue while red
+   stays a warm true red, so the two differ strongly in both luminance and the
+   blue/yellow axis (not just the red/green hue that deuteranopia confuses).
+   --ok-rgb / --bad-rgb mirror their hex for the rgba tint fills below.
    Dark is the default; the light palette overrides it under prefers-color-scheme. */
 :root {
   --bg: #1e1e1e;
@@ -12,8 +15,8 @@
   --chip-bg: #2a2a2a;
   --hover-bg: #2a2a2a;
   --hover-bg-strong: #333;
-  --ok: #4ec9b0;
-  --ok-rgb: 78, 201, 176;
+  --ok: #2dd4bf;
+  --ok-rgb: 45, 212, 191;
   --warn: #d7ba7d;
   --warn-rgb: 215, 186, 125;
   --bad: #e01e37;
@@ -30,8 +33,8 @@
     --chip-bg: #e8e8ec;
     --hover-bg: #e8e8ec;
     --hover-bg-strong: #dcdce1;
-    --ok: #1a8f78;
-    --ok-rgb: 26, 143, 120;
+    --ok: #0d9488;
+    --ok-rgb: 13, 148, 136;
     --warn: #9a6b00;
     --warn-rgb: 154, 107, 0;
     --bad: #d70015;
