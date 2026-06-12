@@ -29,6 +29,11 @@ export const Channels = {
    * {@link ServiceActionRequest}). Main runs `services.<action>`.
    */
   serviceAction: "perch:service-action",
+  /**
+   * Renderer → main: open a terminal tailing a service's logs (payload: the
+   * process name). Main runs `services.logs` (fire-and-forget; M3).
+   */
+  serviceLogs: "perch:service-logs",
 } as const;
 
 /**
@@ -46,6 +51,8 @@ export interface PerchBridge {
   openPr(url: string): void;
   /** Ask the main process to start/stop/restart a service (by name). */
   serviceAction(request: ServiceActionRequest): void;
+  /** Ask the main process to open a terminal tailing a service's logs (by name). */
+  serviceLogs(name: string): void;
 }
 
 declare global {

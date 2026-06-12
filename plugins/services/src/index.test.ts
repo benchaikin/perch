@@ -15,7 +15,7 @@ import { test } from "node:test";
 
 import { type CapabilityContext } from "@perch/sdk";
 
-import plugin from "./index.js";
+import plugin, { __setLogsSpawn } from "./index.js";
 
 /** One request the fake process-compose server saw. */
 interface SeenRequest {
@@ -134,4 +134,33 @@ test("services.restartAll reports unreachable when the server is down", async ()
   })) as { ok: boolean; message: string };
   assert.equal(result.ok, false);
   assert.match(result.message, /unreachable/);
+});
+
+test("services.logs is a CLI-only action that spawns the templated logs command", () => {
+  const cap = plugin.capabilities.logs!;
+  assert.equal(cap.kind, "action");
+  // CLI-on by default, MCP-off (interactive, fire-and-forget terminal launch).
+  assert.notEqual(cap.expose?.mcp, true);
+
+  const calls: Array<{ command: string; args: readonly string[] }> = [];
+  __setLogsSpawn(((command: string, args: readonly string[]) => {
+    calls.push({ command, args });
+    return { on: () => {}, unref: () => {} };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }) as any);
+  try {
+    const result = cap.run({
+      input: { name: "api" },
+      ctx: { config: { socket: "/tmp/pc.sock", logTerminal: "OPEN {cmd}" }, log: () => {} },
+    }) as { ok: boolean; message: string };
+    assert.equal(result.ok, true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]!.command, "sh");
+    assert.deepEqual(calls[0]!.args, [
+      "-c",
+      "OPEN process-compose process logs 'api' -f --use-uds --unix-socket '/tmp/pc.sock'",
+    ]);
+  } finally {
+    __setLogsSpawn(undefined);
+  }
 });

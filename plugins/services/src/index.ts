@@ -7,8 +7,11 @@
  * `restartAll` actions (Dev services M2). M1 was read-only + crash
  * notifications; log streaming lands in M3.
  */
-import { action, definePlugin, read, z } from "@perch/sdk";
+import type { spawn as nodeSpawn } from "node:child_process";
 
+import { action, definePlugin, read, validateSettingsDescriptor, z } from "@perch/sdk";
+
+import { DEFAULT_LOG_TERMINAL, spawnLogsTerminal, type SpawnLogsOptions } from "./logs.js";
 import { crashNotifications } from "./notify.js";
 import { buildServiceList, ServiceList } from "./services.js";
 import { ServicesProvider } from "./provider.js";
@@ -17,6 +20,25 @@ export type { FetchJson, ProcessState, ServerTarget } from "./provider.js";
 export { defaultFetchJson, DEFAULT_ADDRESS, ServicesProvider } from "./provider.js";
 export { buildServiceList, mapStatus, Service, ServiceList, ServiceStatus } from "./services.js";
 export { crashNotifications } from "./notify.js";
+export {
+  applyLogTerminalTemplate,
+  buildLogsCommand,
+  DEFAULT_LOG_TERMINAL,
+  spawnLogsTerminal,
+} from "./logs.js";
+
+/**
+ * Test seam for the `services.logs` action's spawn. `ctx` carries no spawn, so
+ * tests override this module-level injection point to assert the final spawned
+ * command/args without launching a real terminal. Defaults to the real
+ * `child_process.spawn` (used by {@link spawnLogsTerminal}).
+ */
+let logsSpawn: typeof nodeSpawn | undefined;
+
+/** Inject a `spawn` stub for `services.logs` (tests only); pass `undefined` to reset. */
+export function __setLogsSpawn(spawnFn: typeof nodeSpawn | undefined): void {
+  logsSpawn = spawnFn;
+}
 
 /**
  * Per-plugin config (`plugins.services`). Connection target: prefer `socket`
@@ -33,6 +55,13 @@ const ServicesConfig = z.object({
   address: z.string().optional(),
   /** Spawn `process-compose up -D` when the server is unreachable. */
   autostart: z.boolean().optional(),
+  /**
+   * Terminal launcher template for the `services.logs` jump-to-logs action: a
+   * shell command with a `{cmd}` placeholder Perch substitutes with the
+   * `process-compose process logs <name> -f` command. Defaults to
+   * {@link DEFAULT_LOG_TERMINAL} (open Terminal.app via AppleScript on macOS).
+   */
+  logTerminal: z.string().optional(),
 });
 type ServicesConfig = z.infer<typeof ServicesConfig>;
 
@@ -69,6 +98,21 @@ export default definePlugin({
   id: "services",
   name: "Services",
   config: ServicesConfig,
+  // User-facing settings rendered by the generic settings panel. Maps onto
+  // `plugins.services.logTerminal`; surfaces the M3 jump-to-logs launcher
+  // template so users on a non-Terminal.app setup can point it at their terminal.
+  settings: validateSettingsDescriptor([
+    {
+      key: "logTerminal",
+      type: "string",
+      label: "Logs terminal command",
+      description:
+        "Command template used by the Logs button to open a terminal tailing a " +
+        "process. Use `{cmd}` where the `process-compose process logs` command " +
+        "should go. Defaults to opening Terminal.app via AppleScript on macOS.",
+      default: DEFAULT_LOG_TERMINAL,
+    },
+  ]),
   capabilities: {
     /**
      * The live process list from process-compose. Subscribable + polled (5s) and
@@ -164,6 +208,36 @@ export default definePlugin({
             names.length === 1 ? "" : "s"
           }.`,
         };
+      },
+    }),
+
+    /**
+     * Jump-to-logs (M3): open the user's terminal running a live single-process
+     * tail (`process-compose process logs <name> -f`) connected to the same
+     * server. The terminal launch runs on the user's machine, so it happens here
+     * in the daemon (which holds the socket/address/logTerminal config). The
+     * inner command + its connection flag (socket vs address) and the `{cmd}`
+     * substitution live in {@link buildLogsCommand}/{@link spawnLogsTerminal};
+     * this action just wires `ctx.config` in and spawns best-effort.
+     *
+     * CLI-on (the default), MCP-off: it's an interactive, fire-and-forget
+     * terminal launch — not a typed read an agent drives. Never throws; an
+     * `ok: false` means the launcher couldn't be spawned.
+     */
+    logs: action<z.infer<typeof ServiceActionInput>, unknown, ActionResult>({
+      summary: "Open a terminal live-tailing a service's logs",
+      input: ServiceActionInput,
+      run: ({ input, ctx }) => {
+        const cfg = configOf(ctx.config);
+        const options: SpawnLogsOptions = {
+          name: input.name,
+          socket: cfg.socket,
+          address: cfg.address,
+          logTerminal: cfg.logTerminal,
+          log: ctx.log,
+          spawn: logsSpawn,
+        };
+        return spawnLogsTerminal(options);
       },
     }),
   },
