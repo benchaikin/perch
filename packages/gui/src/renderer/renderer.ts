@@ -6,7 +6,7 @@
  * plain browser JS by esbuild.
  */
 import type { GroupRow, Health, PanelState, PrRow, RepoSection } from "../panel-state.js";
-import type { ServiceRow, ServicesSection } from "../services-state.js";
+import type { ServiceAction, ServiceRow, ServicesSection } from "../services-state.js";
 
 /**
  * The health marker is a distinct Font Awesome *shape* per state (not just a
@@ -22,6 +22,19 @@ const HEALTH_LABEL: Record<Health, string> = {
   ok: "Clean",
   warn: "Review comments to address",
   bad: "Needs attention",
+};
+
+/**
+ * Each service action renders as a Font Awesome icon button tinted by function.
+ * Like the health marker, the distinct icon *shape* (play / stop / rotate) is
+ * the primary signal so it reads without relying on the red/green hue a
+ * colorblind viewer can't separate; the `tint` CSS class layers color on top.
+ * `start` = green go, `stop` = red halt, `restart` = neutral/amber reload.
+ */
+const SERVICE_ACTION_ICON: Record<ServiceAction, { icon: string; tint: string }> = {
+  start: { icon: "play", tint: "start" },
+  stop: { icon: "stop", tint: "stop" },
+  restart: { icon: "arrows-rotate", tint: "restart" },
 };
 
 const rowsEl = byId("rows");
@@ -248,16 +261,23 @@ function serviceActionsEl(svc: ServiceRow): HTMLElement {
   const actions = document.createElement("span");
   actions.className = "service-actions";
   svc.buttons.forEach((button, i) => {
+    const { icon, tint } = SERVICE_ACTION_ICON[button.action];
     const btn = document.createElement("button");
-    btn.className = "btn btn-sm";
+    // The visible label is gone, so the former text moves to title + aria-label.
+    const label = `${button.label} ${svc.name}`;
+    btn.className = `btn btn-sm service-btn tint-${tint}`;
     btn.disabled = svc.inFlight;
-    btn.title = `${button.label} ${svc.name}`;
+    btn.title = label;
+    btn.setAttribute("aria-label", label);
+    const glyph = document.createElement("i");
     if (svc.inFlight && i === 0) {
-      const spinner = document.createElement("i");
-      spinner.className = "fa-solid fa-circle-notch fa-spin";
-      btn.append(spinner, " …");
+      // The acting button (always first) shows the spinner; no click handler
+      // while in flight (the cluster is disabled anyway).
+      glyph.className = "fa-solid fa-circle-notch fa-spin";
+      btn.append(glyph);
     } else {
-      btn.textContent = button.label;
+      glyph.className = `fa-solid fa-${icon}`;
+      btn.append(glyph);
       btn.addEventListener("click", (e) => {
         // The row itself isn't clickable, but stop propagation defensively.
         e.stopPropagation();
@@ -267,12 +287,17 @@ function serviceActionsEl(svc: ServiceRow): HTMLElement {
     actions.append(btn);
   });
 
-  // Logs button: present on every row, independent of lifecycle state.
+  // Logs button: present on every row, independent of lifecycle state. Rendered
+  // as a muted icon button for consistency with the lifecycle actions.
   if (svc.logs) {
     const logs = document.createElement("button");
-    logs.className = "btn btn-sm service-logs";
-    logs.textContent = "Logs";
-    logs.title = `Open logs for ${svc.name}`;
+    logs.className = "btn btn-sm service-btn service-logs tint-logs";
+    const logsLabel = `Open logs for ${svc.name}`;
+    logs.title = logsLabel;
+    logs.setAttribute("aria-label", logsLabel);
+    const glyph = document.createElement("i");
+    glyph.className = "fa-solid fa-file-lines";
+    logs.append(glyph);
     logs.addEventListener("click", (e) => {
       e.stopPropagation();
       window.perch.serviceLogs(svc.name);

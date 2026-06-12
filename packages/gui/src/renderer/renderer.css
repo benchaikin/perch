@@ -248,6 +248,40 @@ body {
   margin-left: 0;
 }
 
+/* Service action icon buttons (M2/M3): compact square hit targets carrying a
+   single Font Awesome glyph instead of a text label. The icon *shape* is the
+   primary signal (play / stop / rotate / file) so it reads without relying on
+   the red/green hue a colorblind viewer can't separate; the `.tint-*` classes
+   layer the palette color on top. Scoped to `.service-actions` so the generic
+   `.btn` is untouched. */
+.service-actions .btn.service-btn {
+  width: 24px;
+  height: 20px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--muted);
+}
+.service-actions .btn.service-btn:hover:not(:disabled) {
+  border-color: currentColor;
+}
+/* Function tints: start = green go, stop = red halt, restart = amber reload,
+   logs = muted. */
+.service-actions .btn.service-btn.tint-start {
+  color: var(--ok);
+}
+.service-actions .btn.service-btn.tint-stop {
+  color: var(--bad);
+}
+.service-actions .btn.service-btn.tint-restart {
+  color: var(--warn);
+}
+.service-actions .btn.service-btn.tint-logs {
+  color: var(--muted);
+}
+
 /* Position number on a stacked PR (1 = trunk-adjacent base, up to the tip),
    colored by that layer's health (.ok green / .bad error red). */
 .num {
