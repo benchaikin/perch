@@ -109,9 +109,13 @@ export interface PrRow {
   health: Health;
 }
 
-/** A PR/stack marker's health: clean (green) vs. needs-attention (error red,
- *  matching the conflict / CI-fail chips). */
-export type Health = "ok" | "bad";
+/** A PR/stack marker's health, in ascending severity:
+ *  - `"ok"`   (green) — clean, nothing to do.
+ *  - `"warn"` (amber) — has human review comments to address, but nothing
+ *    blocking (CI green, mergeable, not changes-requested).
+ *  - `"bad"`  (error red) — CI failing, merge conflict, needs rebase, or
+ *    changes requested; matching the conflict / CI-fail chips. */
+export type Health = "ok" | "warn" | "bad";
 
 /** A rendered group: either a single PR row or a nested stack of rows. */
 export type GroupRow =
@@ -234,16 +238,19 @@ export function mergeableChip(mergeable: Mergeable | undefined): Chip | undefine
 }
 
 /**
- * A PR needs attention (`"warn"`) when CI is failing, it has a merge conflict,
- * it needs a rebase, or changes were requested; otherwise it's clean (`"ok"`).
+ * A PR is `"bad"` (red) when something blocks the merge: CI failing, a merge
+ * conflict, a needed rebase, or changes requested. Absent any of those, it's
+ * `"warn"` (amber) when there are human review comments to address, else `"ok"`
+ * (green). Blocking problems outrank comments — a PR with both reads red.
  */
 export function prHealth(pr: PrInfo): Health {
-  const problem =
+  const blocked =
     pr.ciStatus === "fail" ||
     (pr.conflict ?? false) ||
     (pr.needsRebase ?? false) ||
     pr.reviewDecision === "CHANGES_REQUESTED";
-  return problem ? "bad" : "ok";
+  if (blocked) return "bad";
+  return (pr.humanReviewCommentCount ?? 0) > 0 ? "warn" : "ok";
 }
 
 /** Derive a single rendered PR row from a raw {@link PrInfo}. */
@@ -281,8 +288,14 @@ function toGroupRow(group: PrGroup, repoName: string, direction: StackDirection)
   const ordered = direction === "top-to-bottom" ? [...group.layers].reverse() : group.layers;
   const rows = ordered.map(toPrRow);
   const needsRebase = group.needsRebase ?? false;
-  // The stack is healthy only when every layer is clean and nothing needs rebase.
-  const health: Health = needsRebase || rows.some((r) => r.health === "bad") ? "bad" : "ok";
+  // Whole-stack health takes the worst layer (bad > warn > ok); a needed rebase
+  // forces bad. Amber surfaces "some layer has comments to address" on the bar.
+  const health: Health =
+    needsRebase || rows.some((r) => r.health === "bad")
+      ? "bad"
+      : rows.some((r) => r.health === "warn")
+        ? "warn"
+        : "ok";
   return {
     kind: "stack",
     rows,

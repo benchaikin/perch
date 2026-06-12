@@ -96,6 +96,21 @@ test("PR health is bad on CI fail / conflict / needs-rebase / changes, else ok",
   assert.equal(toPrRow({ ...basePr, reviewDecision: "CHANGES_REQUESTED" }).health, "bad");
 });
 
+test("PR health is warn when there are review comments but nothing blocking", () => {
+  // Comments to address, CI green + approved → amber, not green.
+  assert.equal(
+    toPrRow({ ...basePr, ciStatus: "pass", reviewDecision: "APPROVED", humanReviewCommentCount: 2 })
+      .health,
+    "warn",
+  );
+  // A blocking problem outranks comments → red, not amber.
+  assert.equal(toPrRow({ ...basePr, ciStatus: "fail", humanReviewCommentCount: 2 }).health, "bad");
+  assert.equal(
+    toPrRow({ ...basePr, reviewDecision: "CHANGES_REQUESTED", humanReviewCommentCount: 2 }).health,
+    "bad",
+  );
+});
+
 test("stack health is warn when any layer (or the stack) needs attention", () => {
   const stackOverview = (tip: Partial<typeof basePr> & Record<string, unknown>): PrOverview => ({
     repos: [
@@ -125,9 +140,17 @@ test("stack health is warn when any layer (or the stack) needs attention", () =>
     daemonUp: true,
     syncAvailable: true,
   }).repos[0]!.groups[0]!;
-  if (clean.kind !== "stack" || dirty.kind !== "stack") throw new Error("expected stacks");
+  const warned = buildPanelState({
+    overview: stackOverview({ humanReviewCommentCount: 2 }),
+    daemonUp: true,
+    syncAvailable: true,
+  }).repos[0]!.groups[0]!;
+  if (clean.kind !== "stack" || dirty.kind !== "stack" || warned.kind !== "stack")
+    throw new Error("expected stacks");
   assert.equal(clean.health, "ok");
   assert.equal(dirty.health, "bad");
+  // A layer with comments (nothing blocking) takes the bar to amber.
+  assert.equal(warned.health, "warn");
 });
 
 test("buildPanelState surfaces a daemon-down state without crashing", () => {
