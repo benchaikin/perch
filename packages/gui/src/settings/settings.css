@@ -1,10 +1,31 @@
+/* Palette follows the OS appearance via prefers-color-scheme (kept in sync with
+   the panel's renderer.css). --bad is a vivid, high-saturation red — clearly
+   distinct from teal for a red-green color-deficient viewer. Dark is the default;
+   the light palette overrides it under prefers-color-scheme. */
 :root {
   --bg: #1e1e1e;
   --fg: #e6e6e6;
   --muted: #8a8a8a;
   --rule: #333;
+  --chip-bg: #2a2a2a;
+  --hover-bg: #2a2a2a;
+  --hover-bg-strong: #333;
   --accent: #4a9eff;
-  --bad: #f07178;
+  --bad: #e01e37;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f5f5f5;
+    --fg: #1d1d1f;
+    --muted: #6b6b70;
+    --rule: #d2d2d7;
+    --chip-bg: #e8e8ec;
+    --hover-bg: #e8e8ec;
+    --hover-bg-strong: #dcdce1;
+    --accent: #0a66d6;
+    --bad: #d70015;
+  }
 }
 
 * {
@@ -108,7 +129,7 @@ body {
 }
 
 .field-control {
-  background: #2a2a2a;
+  background: var(--chip-bg);
   color: var(--fg);
   border: 1px solid var(--rule);
   border-radius: 5px;
@@ -205,14 +226,14 @@ input[type="checkbox"].field-control {
   padding: 5px 12px;
   border: 1px solid var(--rule);
   border-radius: 5px;
-  background: #2a2a2a;
+  background: var(--hover-bg);
   color: var(--fg);
   cursor: pointer;
   font-size: 12px;
 }
 
 .btn:hover {
-  background: #333;
+  background: var(--hover-bg-strong);
 }
 
 .btn-sm {

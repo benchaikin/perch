@@ -21,6 +21,7 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  nativeTheme,
   Notification,
   shell,
   Tray,
@@ -427,7 +428,7 @@ function createPanel(): BrowserWindow {
     alwaysOnTop: true,
     // Non-activating: clicking the panel doesn't steal focus from the editor.
     focusable: true,
-    backgroundColor: "#1e1e1e",
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1e1e1e" : "#f5f5f5",
     webPreferences: {
       preload: join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -734,7 +735,7 @@ function showSettingsWindow(): void {
     show: false,
     resizable: true,
     fullscreenable: false,
-    backgroundColor: "#1e1e1e",
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1e1e1e" : "#f5f5f5",
     webPreferences: {
       preload: join(__dirname, "settings-preload.cjs"),
       contextIsolation: true,
