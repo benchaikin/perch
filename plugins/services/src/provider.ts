@@ -144,6 +144,25 @@ export class ServicesProvider {
     this.target = targetOf(options);
   }
 
+  /**
+   * `POST /process/{kind}/{name}` (start | stop | restart) → true on a 2xx.
+   * Never throws: a transport-level failure (server down, missing socket) or a
+   * non-2xx response both resolve `false`, so the GUI/agent can surface "the
+   * action didn't take" without crashing the action capability.
+   */
+  async action(name: string, kind: "start" | "stop" | "restart"): Promise<boolean> {
+    try {
+      const res = await this.fetchJson({
+        target: this.target,
+        method: "POST",
+        path: `/process/${kind}/${encodeURIComponent(name)}`,
+      });
+      return res.status >= 200 && res.status < 300;
+    } catch {
+      return false;
+    }
+  }
+
   /** `GET /live` → true when the server answers 2xx. Never throws. */
   async health(): Promise<boolean> {
     try {

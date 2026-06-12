@@ -4,6 +4,15 @@
  * is safe to import from any of the three contexts.
  */
 import type { PanelState } from "./panel-state.js";
+import type { ServiceAction } from "./services-state.js";
+
+/** Renderer → main payload for a service lifecycle action (M2). */
+export interface ServiceActionRequest {
+  /** The process name to act on. */
+  name: string;
+  /** Which lifecycle action to invoke. */
+  action: ServiceAction;
+}
 
 /** IPC channel names. `*FromMain` are pushes; the rest are renderer→main calls. */
 export const Channels = {
@@ -15,6 +24,11 @@ export const Channels = {
   sync: "perch:sync",
   /** Renderer → main: open a PR's URL in the browser (payload: the URL). */
   openPr: "perch:open-pr",
+  /**
+   * Renderer → main: invoke a service lifecycle action (payload: a
+   * {@link ServiceActionRequest}). Main runs `services.<action>`.
+   */
+  serviceAction: "perch:service-action",
 } as const;
 
 /**
@@ -30,6 +44,8 @@ export interface PerchBridge {
   sync(repo: string): void;
   /** Ask the main process to open a PR's URL in the browser. */
   openPr(url: string): void;
+  /** Ask the main process to start/stop/restart a service (by name). */
+  serviceAction(request: ServiceActionRequest): void;
 }
 
 declare global {

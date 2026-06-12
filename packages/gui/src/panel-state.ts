@@ -193,6 +193,8 @@ export interface BuildInput {
   notice?: Notice;
   /** The latest `services.list` data, or `undefined` if none has arrived yet. */
   servicesList?: ServiceList;
+  /** Service names with an in-flight start/stop/restart — their buttons spin. */
+  servicesActing?: string[];
 }
 
 /** Map a normalized CI status to a status chip. */
@@ -324,7 +326,7 @@ export function buildPanelState(input: BuildInput): PanelState {
   const live = {
     syncing: input.syncing ?? [],
     notice: input.notice,
-    services: buildServicesSection(daemonUp ? input.servicesList : undefined),
+    services: buildServicesSection(daemonUp ? input.servicesList : undefined, input.servicesActing),
   };
 
   if (!daemonUp) {
