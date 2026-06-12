@@ -218,10 +218,13 @@ function serviceRowEl(svc: ServiceRow): HTMLElement {
 }
 
 /**
- * Build the action-button cluster for a service row (M2). Renders the
- * status-appropriate buttons (Restart always; Stop xor Start). While an action
- * is in flight for the service, all its buttons disable and the first shows a
- * spinner — mirroring the Sync button's `fa-circle-notch fa-spin` pattern.
+ * Build the action-button cluster for a service row. Renders the
+ * status-appropriate lifecycle buttons (Restart always; Stop xor Start, M2),
+ * plus a fire-and-forget **Logs** button (M3) that opens a terminal tailing this
+ * process. While a lifecycle action is in flight for the service, those buttons
+ * disable and the first shows a spinner — mirroring the Sync button's
+ * `fa-circle-notch fa-spin` pattern. Logs stays enabled (it doesn't mutate
+ * lifecycle state).
  */
 function serviceActionsEl(svc: ServiceRow): HTMLElement {
   const actions = document.createElement("span");
@@ -245,6 +248,20 @@ function serviceActionsEl(svc: ServiceRow): HTMLElement {
     }
     actions.append(btn);
   });
+
+  // Logs button: present on every row, independent of lifecycle state.
+  if (svc.logs) {
+    const logs = document.createElement("button");
+    logs.className = "btn btn-sm service-logs";
+    logs.textContent = "Logs";
+    logs.title = `Open logs for ${svc.name}`;
+    logs.addEventListener("click", (e) => {
+      e.stopPropagation();
+      window.perch.serviceLogs(svc.name);
+    });
+    actions.append(logs);
+  }
+
   return actions;
 }
 

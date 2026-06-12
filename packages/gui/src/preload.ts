@@ -26,6 +26,9 @@ const bridge: PerchBridge = {
   serviceAction(request) {
     ipcRenderer.send(Channels.serviceAction, request);
   },
+  serviceLogs(name) {
+    ipcRenderer.send(Channels.serviceLogs, name);
+  },
 };
 
 contextBridge.exposeInMainWorld("perch", bridge);

@@ -65,6 +65,25 @@ test("toServiceRow flags in-flight services and attaches buttons", () => {
   assert.equal(idle.inFlight, false);
 });
 
+test("toServiceRow offers the Logs button on every status (M3)", () => {
+  const empty = new Set<string>();
+  for (const status of ["running", "starting", "stopped", "crashed", "completed"] as const) {
+    assert.equal(toServiceRow({ name: "svc", status }, empty).logs, true);
+  }
+});
+
+test("buildServicesSection gives every row a Logs affordance", () => {
+  const list: ServiceList = {
+    available: true,
+    services: [
+      { name: "api", status: "running" },
+      { name: "db", status: "crashed", exitCode: 1 },
+    ],
+  };
+  const section = buildServicesSection(list);
+  assert.ok(section.rows.every((r) => r.logs === true));
+});
+
 test("buildServicesSection hides when no list / unreachable / empty", () => {
   assert.deepEqual(buildServicesSection(undefined), { visible: false, rows: [] });
   assert.deepEqual(buildServicesSection({ services: [], available: false }), {

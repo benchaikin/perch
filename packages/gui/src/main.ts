@@ -354,6 +354,27 @@ async function serviceAction(request: ServiceActionRequest): Promise<void> {
   }
 }
 
+/**
+ * Open a terminal live-tailing a service's logs (Logs button, M3). Fire-and-
+ * forget: invoke `services.logs` (the daemon spawns the configured terminal) and
+ * surface only a failure toast — there's no in-flight state to track since the
+ * terminal owns the tail. No-op if the daemon is down.
+ */
+async function serviceLogs(name: string): Promise<void> {
+  if (!client) return;
+  try {
+    const result = (await client.invoke({
+      id: "services.logs",
+      input: { name },
+    })) as { ok?: boolean; message?: string } | null;
+    if (result && result.ok === false) {
+      showNotice({ tone: "bad", text: result.message ?? `Failed to open logs for ${name}.` });
+    }
+  } catch (err) {
+    showNotice({ tone: "bad", text: `Open logs for ${name} failed: ${errorMessage(err)}` });
+  }
+}
+
 /** Show a transient status toast; auto-dismiss after a few seconds. */
 function showNotice(notice: Notice): void {
   buildInput.notice = notice;
@@ -823,6 +844,7 @@ function registerIpc(): void {
     Channels.serviceAction,
     (_event, request: ServiceActionRequest) => void serviceAction(request),
   );
+  ipcMain.on(Channels.serviceLogs, (_event, name: string) => void serviceLogs(name));
 
   // Settings window: request/response handlers returning the refreshed repo list.
   ipcMain.handle(SettingsChannels.list, () => loadSettings());

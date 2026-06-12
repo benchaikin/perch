@@ -58,6 +58,12 @@ export interface ServiceRow {
   detail?: string;
   /** Context-appropriate action buttons for this status (M2). */
   buttons: ServiceButton[];
+  /**
+   * Whether to offer the fire-and-forget **Logs** button (M3) — open a terminal
+   * tailing this process. Always true (every row gets it, independent of
+   * lifecycle status); modeled as a flag so the renderer + tests stay declarative.
+   */
+  logs: boolean;
   /** True while an action for this service is in flight — disable + spin. */
   inFlight: boolean;
 }
@@ -132,6 +138,7 @@ export function toServiceRow(svc: Service, inFlight: ReadonlySet<string>): Servi
     health: serviceHealth(svc.status),
     detail: detailOf(svc),
     buttons: serviceButtons(svc.status),
+    logs: true,
     inFlight: inFlight.has(svc.name),
   };
 }
