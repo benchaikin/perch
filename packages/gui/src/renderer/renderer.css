@@ -222,6 +222,22 @@ body {
   font-size: 11px;
 }
 
+/* The start/stop/restart button cluster on a service row (M2). Pushed to the
+   row's trailing edge; its compact `.btn.btn-sm` buttons (sized by the shared
+   rule above) sit side by side. */
+.service-actions {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+/* Override the `.btn.btn-sm { margin-left: auto }` rule (which would push the
+   first button away from its sibling) — the `.service-actions` container owns
+   the leading gap; the buttons just sit together. */
+.service-actions .btn.btn-sm {
+  margin-left: 0;
+}
+
 /* Position number on a stacked PR (1 = trunk-adjacent base, up to the tip),
    colored by that layer's health (.ok green / .bad error red). */
 .num {

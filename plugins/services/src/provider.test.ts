@@ -59,6 +59,40 @@ test("prefers the unix socket target when `socket` is set", async () => {
   assert.equal(calls[0]!.socket, "/tmp/pc.sock");
 });
 
+test("action(): POSTs /process/{kind}/{name} and is true on 2xx", async () => {
+  for (const kind of ["start", "stop", "restart"] as const) {
+    const { fetchJson, calls } = stubFetch({
+      [`/process/${kind}/api`]: { status: 200, body: undefined },
+    });
+    const provider = new ServicesProvider({ socket: "/tmp/pc.sock", fetchJson });
+    assert.equal(await provider.action("api", kind), true);
+    assert.equal(calls[0]!.method, "POST");
+    assert.equal(calls[0]!.path, `/process/${kind}/api`);
+    assert.equal(calls[0]!.socket, "/tmp/pc.sock");
+  }
+});
+
+test("action(): false on a non-2xx response and false on a transport error", async () => {
+  const non2xx = new ServicesProvider({
+    fetchJson: stubFetch({ "/process/restart/api": { status: 500, body: undefined } }).fetchJson,
+  });
+  assert.equal(await non2xx.action("api", "restart"), false);
+
+  const thrown = new ServicesProvider({
+    fetchJson: stubFetch({ "/process/restart/api": "throw" }).fetchJson,
+  });
+  assert.equal(await thrown.action("api", "restart"), false);
+});
+
+test("action(): url-encodes a process name with special characters", async () => {
+  const { fetchJson, calls } = stubFetch({
+    "/process/stop/my%20svc": { status: 200, body: undefined },
+  });
+  const provider = new ServicesProvider({ fetchJson });
+  assert.equal(await provider.action("my svc", "stop"), true);
+  assert.equal(calls[0]!.path, "/process/stop/my%20svc");
+});
+
 test("health(): true on 2xx, false on non-2xx, false on throw", async () => {
   const up = new ServicesProvider({
     fetchJson: stubFetch({ "/live": { status: 200, body: undefined } }).fetchJson,

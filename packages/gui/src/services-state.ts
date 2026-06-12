@@ -37,6 +37,15 @@ export interface ServiceList {
 /** A rendered service row's marker health → CSS dot color. */
 export type ServiceHealth = "ok" | "warn" | "bad" | "muted";
 
+/** A lifecycle action that can be invoked on a service row (M2). */
+export type ServiceAction = "start" | "stop" | "restart";
+
+/** One action button on a service row: which action it triggers + its label. */
+export interface ServiceButton {
+  action: ServiceAction;
+  label: string;
+}
+
 /** One rendered service row. */
 export interface ServiceRow {
   name: string;
@@ -47,6 +56,10 @@ export interface ServiceRow {
   health: ServiceHealth;
   /** A short detail suffix (e.g. "exit 1", "pid 4242"), when relevant. */
   detail?: string;
+  /** Context-appropriate action buttons for this status (M2). */
+  buttons: ServiceButton[];
+  /** True while an action for this service is in flight — disable + spin. */
+  inFlight: boolean;
 }
 
 /**
@@ -84,14 +97,42 @@ function detailOf(svc: Service): string | undefined {
   return undefined;
 }
 
-/** Derive a single rendered row from a raw {@link Service}. */
-export function toServiceRow(svc: Service): ServiceRow {
+/**
+ * The action buttons to render for a service in `status`, in display order.
+ * Pure (no DOM) so it unit-tests directly:
+ * - **Restart** whenever there's a process to bounce — running, starting,
+ *   crashed, completed, or stopped (process-compose can re-launch a stopped one).
+ * - **Stop** only while it's up or coming up (running / starting).
+ * - **Start** only when it's down with nothing running (stopped / crashed /
+ *   completed).
+ *
+ * Restart leads (it's the common recovery action); Stop/Start follows.
+ */
+export function serviceButtons(status: ServiceStatus): ServiceButton[] {
+  const buttons: ServiceButton[] = [{ action: "restart", label: "Restart" }];
+  if (status === "running" || status === "starting") {
+    buttons.push({ action: "stop", label: "Stop" });
+  } else {
+    // stopped / crashed / completed — nothing is running, offer Start.
+    buttons.push({ action: "start", label: "Start" });
+  }
+  return buttons;
+}
+
+/**
+ * Derive a single rendered row from a raw {@link Service}. `inFlight` names the
+ * services with an action currently running — their buttons render disabled +
+ * spinning until the next `services.list` update reflects the new status.
+ */
+export function toServiceRow(svc: Service, inFlight: ReadonlySet<string>): ServiceRow {
   return {
     name: svc.name,
     status: svc.status,
     statusLabel: svc.status,
     health: serviceHealth(svc.status),
     detail: detailOf(svc),
+    buttons: serviceButtons(svc.status),
+    inFlight: inFlight.has(svc.name),
   };
 }
 
@@ -99,11 +140,16 @@ export function toServiceRow(svc: Service): ServiceRow {
  * Build the Services section from the latest `services.list` output. The section
  * is hidden (`visible: false`) when the list is absent, the server is
  * unreachable (`available: false`), or there are no services — so the panel is
- * unchanged for users without process-compose.
+ * unchanged for users without process-compose. `acting` is the set of service
+ * names with an in-flight action (default empty).
  */
-export function buildServicesSection(list: ServiceList | undefined): ServicesSection {
+export function buildServicesSection(
+  list: ServiceList | undefined,
+  acting: readonly string[] = [],
+): ServicesSection {
   if (!list || !list.available || list.services.length === 0) {
     return { visible: false, rows: [] };
   }
-  return { visible: true, rows: list.services.map(toServiceRow) };
+  const inFlight = new Set(acting);
+  return { visible: true, rows: list.services.map((svc) => toServiceRow(svc, inFlight)) };
 }

@@ -34,7 +34,7 @@ import {
 } from "@perch/core";
 import { DaemonUnavailableError, PerchClient } from "@perch/cli";
 import { shouldShowNotification, toNotifyOptions } from "./notify.js";
-import { Channels } from "./ipc.js";
+import { Channels, type ServiceActionRequest } from "./ipc.js";
 import { addRepo, removeRepo, reposFromConfig, setDefault, toEntries } from "./repos.js";
 import { buildConfigPatch } from "./settings-fields.js";
 import {
@@ -313,6 +313,45 @@ function setSyncing(repo: string, on: boolean): void {
   if (on) set.add(repo);
   else set.delete(repo);
   buildInput.syncing = [...set];
+}
+
+/** Add/remove a service from the in-flight set so its row buttons spin. */
+function setServiceActing(name: string, on: boolean): void {
+  const set = new Set(buildInput.servicesActing ?? []);
+  if (on) set.add(name);
+  else set.delete(name);
+  buildInput.servicesActing = [...set];
+}
+
+/**
+ * Invoke a service lifecycle action (`services.start`/`stop`/`restart`) for a
+ * row's button. Mirrors {@link sync}: mark the service in-flight (its buttons
+ * spin + disable), invoke, then let the `services.list` subscription reflect the
+ * new status. No-op if the daemon is down or an action is already running for it.
+ * A failed/rejected action surfaces a toast (the row reverts on the next poll).
+ */
+async function serviceAction(request: ServiceActionRequest): Promise<void> {
+  const { name, action } = request;
+  if (!client) return;
+  if (buildInput.servicesActing?.includes(name)) return;
+
+  setServiceActing(name, true);
+  pushState();
+
+  try {
+    const result = (await client.invoke({
+      id: `services.${action}`,
+      input: { name },
+    })) as { ok?: boolean; message?: string } | null;
+    if (result && result.ok === false) {
+      showNotice({ tone: "bad", text: result.message ?? `Failed to ${action} ${name}.` });
+    }
+  } catch (err) {
+    showNotice({ tone: "bad", text: `${action} ${name} failed: ${errorMessage(err)}` });
+  } finally {
+    setServiceActing(name, false);
+    pushState();
+  }
 }
 
 /** Show a transient status toast; auto-dismiss after a few seconds. */
@@ -780,6 +819,10 @@ function registerIpc(): void {
   ipcMain.on(Channels.refresh, () => void refresh());
   ipcMain.on(Channels.sync, (_event, repo: string) => void sync(repo));
   ipcMain.on(Channels.openPr, (_event, url: string) => openPr(url));
+  ipcMain.on(
+    Channels.serviceAction,
+    (_event, request: ServiceActionRequest) => void serviceAction(request),
+  );
 
   // Settings window: request/response handlers returning the refreshed repo list.
   ipcMain.handle(SettingsChannels.list, () => loadSettings());

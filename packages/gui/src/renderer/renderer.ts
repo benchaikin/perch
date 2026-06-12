@@ -211,7 +211,39 @@ function serviceRowEl(svc: ServiceRow): HTMLElement {
   status.textContent = svc.detail ? `${svc.statusLabel} · ${svc.detail}` : svc.statusLabel;
   el.append(status);
 
+  el.append(serviceActionsEl(svc));
   return el;
+}
+
+/**
+ * Build the action-button cluster for a service row (M2). Renders the
+ * status-appropriate buttons (Restart always; Stop xor Start). While an action
+ * is in flight for the service, all its buttons disable and the first shows a
+ * spinner — mirroring the Sync button's `fa-circle-notch fa-spin` pattern.
+ */
+function serviceActionsEl(svc: ServiceRow): HTMLElement {
+  const actions = document.createElement("span");
+  actions.className = "service-actions";
+  svc.buttons.forEach((button, i) => {
+    const btn = document.createElement("button");
+    btn.className = "btn btn-sm";
+    btn.disabled = svc.inFlight;
+    btn.title = `${button.label} ${svc.name}`;
+    if (svc.inFlight && i === 0) {
+      const spinner = document.createElement("i");
+      spinner.className = "fa-solid fa-circle-notch fa-spin";
+      btn.append(spinner, " …");
+    } else {
+      btn.textContent = button.label;
+      btn.addEventListener("click", (e) => {
+        // The row itself isn't clickable, but stop propagation defensively.
+        e.stopPropagation();
+        window.perch.serviceAction({ name: svc.name, action: button.action });
+      });
+    }
+    actions.append(btn);
+  });
+  return actions;
 }
 
 /**
