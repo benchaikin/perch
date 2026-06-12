@@ -250,8 +250,21 @@ test("rollupToCiStatus maps check arrays to normalized status", () => {
     "fail",
   );
   assert.equal(rollupToCiStatus([{ status: "IN_PROGRESS", conclusion: null }]), "pending");
+  assert.equal(rollupToCiStatus([{ status: "QUEUED", conclusion: null }]), "pending");
   assert.equal(rollupToCiStatus([{ state: "PENDING" }]), "pending");
   assert.equal(rollupToCiStatus([{ state: "ERROR" }]), "fail");
+  // A passing StatusContext has only `state` (empty status+conclusion) — it must
+  // read as pass, not pending (regression: green commit-status stuck spinning).
+  assert.equal(rollupToCiStatus([{ state: "SUCCESS" }]), "pass");
+  assert.equal(
+    rollupToCiStatus([
+      { status: "COMPLETED", conclusion: "SUCCESS" },
+      { state: "SUCCESS" },
+    ]),
+    "pass",
+  );
+  // A completed CheckRun with a non-failing, non-success conclusion still passes.
+  assert.equal(rollupToCiStatus([{ status: "COMPLETED", conclusion: "SKIPPED" }]), "pass");
 });
 
 /** Record every `gh` invocation's argv and resolve a fixed stdout. */

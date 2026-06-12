@@ -182,14 +182,14 @@ export function rollupToCiStatus(rollup: RollupCheck[] | null | undefined): CiSt
     ) {
       return "fail";
     }
-    if (
-      state === "PENDING" ||
-      status === "QUEUED" ||
-      status === "IN_PROGRESS" ||
-      status === "PENDING" ||
-      status === "WAITING" ||
-      (status !== "COMPLETED" && conclusion === "")
-    ) {
+    // Two rollup shapes need different "in progress" tests:
+    //  - CheckRun: has a `status`; it's pending until `status === "COMPLETED"`
+    //    (QUEUED / IN_PROGRESS / WAITING / REQUESTED), regardless of conclusion.
+    //  - StatusContext: has only a `state`; pending only when `state === "PENDING"`.
+    // A passing StatusContext is `{ state: "SUCCESS" }` (empty status+conclusion),
+    // so we must NOT treat an empty status as pending — that would peg a green
+    // commit-status PR to the spinner forever.
+    if (state === "PENDING" || (status !== "" && status !== "COMPLETED")) {
       sawPending = true;
     }
   }
