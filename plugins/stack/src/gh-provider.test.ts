@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   countHumanReviewComments,
+  fetchCurrentUserLogin,
   fetchHumanReviewCommentCount,
   ghStackProvider,
   isHumanReviewComment,
@@ -385,6 +386,40 @@ test("countHumanReviewComments tallies humans after the filter", () => {
   assert.equal(countHumanReviewComments([]), 0);
 });
 
+test("countHumanReviewComments excludes my own comments (case-insensitive)", () => {
+  const comments = [
+    { user: { login: "alice", type: "User" } },
+    { user: { login: "Me", type: "User" } }, // mine, mixed case → excluded.
+    { user: { login: "bob", type: "User" } },
+    { user: { login: "ME", type: "User" } }, // a second reply from me → excluded.
+    { user: { login: "github-actions[bot]", type: "Bot" } }, // still a bot → excluded.
+  ];
+  assert.equal(countHumanReviewComments(comments, [], "me"), 2); // alice + bob.
+  // Self-exclusion stacks with the ignore-list.
+  assert.equal(countHumanReviewComments(comments, ["alice"], "me"), 1); // bob only.
+  // me undefined/empty → no self-exclusion (back-compat).
+  assert.equal(countHumanReviewComments(comments, [], undefined), 4);
+  assert.equal(countHumanReviewComments(comments, [], ""), 4);
+});
+
+test("fetchCurrentUserLogin resolves the authed login via gh api user", async () => {
+  let calledArgs: string[] = [];
+  const exec: Exec = (cmd, args) => {
+    calledArgs = args;
+    assert.equal(cmd, "gh");
+    return Promise.resolve("octocat\n");
+  };
+  assert.equal(await fetchCurrentUserLogin(exec, undefined), "octocat");
+  assert.deepEqual(calledArgs, ["api", "user", "--jq", ".login"]);
+});
+
+test("fetchCurrentUserLogin returns undefined on gh error or empty output", async () => {
+  const failing: Exec = () => Promise.reject(new Error("gh: not authenticated"));
+  assert.equal(await fetchCurrentUserLogin(failing, undefined), undefined);
+  const empty: Exec = () => Promise.resolve("\n");
+  assert.equal(await fetchCurrentUserLogin(empty, undefined), undefined);
+});
+
 test("fetchHumanReviewCommentCount shells gh api and counts humans across pages", async () => {
   let calledArgs: string[] = [];
   const exec: Exec = (cmd, args) => {
@@ -405,6 +440,20 @@ test("fetchHumanReviewCommentCount shells gh api and counts humans across pages"
   assert.equal(count, 2);
   assert.ok(calledArgs.includes("api"));
   assert.ok(calledArgs.some((a) => a.includes("/pulls/142/comments")));
+});
+
+test("fetchHumanReviewCommentCount threads `me` through to exclude my own comments", async () => {
+  const exec: Exec = () =>
+    Promise.resolve(
+      JSON.stringify([
+        { login: "alice", type: "User" },
+        { login: "Me", type: "User" }, // mine (mixed case) → excluded.
+        { login: "bob", type: "User" },
+      ]),
+    );
+  // repo positional comes before `me`.
+  assert.equal(await fetchHumanReviewCommentCount(exec, 9, [], undefined, undefined, "me"), 2);
+  assert.equal(await fetchHumanReviewCommentCount(exec, 9, [], undefined, undefined, undefined), 3);
 });
 
 test("fetchHumanReviewCommentCount defaults to 0 when the gh call fails", async () => {

@@ -18,7 +18,12 @@ import { basename, join } from "node:path";
 import { z } from "@perch/sdk";
 
 import { allChains } from "./chains.js";
-import { fetchHumanReviewCommentCount, rollupToCiStatus, parseStackView } from "./gh-provider.js";
+import {
+  fetchCurrentUserLogin,
+  fetchHumanReviewCommentCount,
+  rollupToCiStatus,
+  parseStackView,
+} from "./gh-provider.js";
 import { CiStatus } from "./graph.js";
 import type { Exec, ExecOptions } from "./provider.js";
 
@@ -291,6 +296,7 @@ async function overviewForRepo(
   exec: Exec,
   hasGhStack: (cwd: string | undefined) => boolean,
   reviewBotIgnore: readonly string[],
+  me: string | undefined,
   log: ((m: string) => void) | undefined,
 ): Promise<PrRepo> {
   const execOpts: ExecOptions | undefined = target.cwd ? { cwd: target.cwd } : undefined;
@@ -327,7 +333,9 @@ async function overviewForRepo(
   // Per-PR enrichment: count human inline review comments. Best-effort and
   // isolated — one PR's failed comment fetch defaults to 0 (it can't fail the
   // overview). This adds one `gh api` call per open PR; the PR set is already
-  // scoped to `--author @me` so the fan-out stays small in practice.
+  // scoped to `--author @me` so the fan-out stays small in practice. `me` (the
+  // authenticated login, resolved once per overview) drops the author's own
+  // comments from the tally.
   await Promise.all(
     prs.map(async (pr) => {
       pr.humanReviewCommentCount = await fetchHumanReviewCommentCount(
@@ -335,6 +343,8 @@ async function overviewForRepo(
         pr.number,
         reviewBotIgnore,
         execOpts,
+        undefined,
+        me,
       );
     }),
   );
@@ -356,9 +366,15 @@ export async function buildPrOverview(options: PrOverviewOptions = {}): Promise<
   const reviewBotIgnore = options.reviewBotIgnore ?? [];
   const targets = resolveTargets(options.repos, options.cwd);
 
+  // Resolve the authenticated GitHub user's login ONCE per overview build (it's
+  // stable per host) so we can exclude the author's own review comments from
+  // the per-PR badge count. Best-effort: `undefined` on any gh failure → no
+  // self-exclusion (current behavior), never breaks the overview.
+  const me = await fetchCurrentUserLogin(exec, options.cwd ? { cwd: options.cwd } : undefined);
+
   const repos = await Promise.all(
     targets.map((target) =>
-      overviewForRepo(target, exec, hasGhStack, reviewBotIgnore, options.log),
+      overviewForRepo(target, exec, hasGhStack, reviewBotIgnore, me, options.log),
     ),
   );
   return PrOverview.parse({ repos, stackDirection: options.stackDirection });
