@@ -233,17 +233,47 @@ export function isHumanReviewComment(
  * Count the inline review-thread comments authored by humans, applying the
  * bot/`[bot]`/ignore-list filter via {@link isHumanReviewComment}. Tolerant of
  * a non-array input (→ 0) so a malformed/empty `gh` payload degrades cleanly.
+ *
+ * `me` is the authenticated GitHub user's login: comments authored by `me` are
+ * excluded (your own replies on a review thread are not "things to fix"). The
+ * compare is case-insensitive. Pass `me` undefined/empty to disable the
+ * self-exclusion (back-compat / when the login can't be resolved). `me` is a
+ * pure injected value — this counter never shells out to resolve it.
  */
 export function countHumanReviewComments(
   comments: readonly { user?: ReviewCommentAuthor | null }[] | null | undefined,
   ignore: readonly string[] = [],
+  me?: string,
 ): number {
   if (!Array.isArray(comments)) return 0;
+  const meLower = typeof me === "string" && me.length > 0 ? me.toLowerCase() : undefined;
   let n = 0;
   for (const comment of comments) {
-    if (isHumanReviewComment(comment?.user, ignore)) n += 1;
+    if (!isHumanReviewComment(comment?.user, ignore)) continue;
+    if (meLower !== undefined && comment?.user?.login?.toLowerCase() === meLower) continue;
+    n += 1;
   }
   return n;
+}
+
+/**
+ * Resolve the authenticated GitHub user's login via `gh api user --jq .login`,
+ * best-effort. Returns the trimmed login, or `undefined` on ANY failure (gh
+ * error, empty output) so the caller falls back to NOT excluding self-authored
+ * comments rather than breaking the overview. Resolve this ONCE per overview
+ * build (the login is stable per host) and thread it down.
+ */
+export async function fetchCurrentUserLogin(
+  exec: Exec,
+  execOpts: ExecOptions | undefined,
+): Promise<string | undefined> {
+  try {
+    const out = await exec("gh", ["api", "user", "--jq", ".login"], execOpts);
+    const login = out.trim();
+    return login.length > 0 ? login : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -254,6 +284,9 @@ export function countHumanReviewComments(
  * bot/ignore-list filter. ANY failure (no remote, 404, auth, bad JSON) yields 0
  * so a single PR/repo can never break the overview. Runs in the PR's repo cwd
  * (`execOpts`) so `gh` resolves `{owner}/{repo}` from that repo's remote.
+ *
+ * `me` (the authenticated user's login, resolved once per overview) is threaded
+ * into {@link countHumanReviewComments} so your own comments are excluded.
  */
 export async function fetchHumanReviewCommentCount(
   exec: Exec,
@@ -261,6 +294,7 @@ export async function fetchHumanReviewCommentCount(
   ignore: readonly string[],
   execOpts: ExecOptions | undefined,
   repo?: string,
+  me?: string,
 ): Promise<number> {
   try {
     const path = `repos/${repo ?? "{owner}/{repo}"}/pulls/${prNumber}/comments`;
@@ -280,6 +314,7 @@ export async function fetchHumanReviewCommentCount(
     return countHumanReviewComments(
       authors.map((user) => ({ user })),
       ignore,
+      me,
     );
   } catch {
     return 0;

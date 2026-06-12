@@ -72,13 +72,22 @@ interface RepoFixture {
 }
 
 /** Build a fake exec keyed by cwd, routing pr-list / stack-view / comments. */
-function fakeExec(byCwd: Record<string, RepoFixture>): {
+function fakeExec(
+  byCwd: Record<string, RepoFixture>,
+  /** Login for `gh api user --jq .login`; an Error rejects it (resolution fails). */
+  me: string | Error = "me",
+): {
   exec: Exec;
   calls: Call[];
 } {
   const calls: Call[] = [];
   const exec: Exec = (cmd, args, opts?: ExecOptions) => {
     calls.push({ cmd, args, cwd: opts?.cwd });
+    // `gh api user` resolves the authenticated login once per overview build —
+    // it is host-global, so it is not keyed by repo cwd.
+    if (cmd === "gh" && args[0] === "api" && args[1] === "user") {
+      return me instanceof Error ? Promise.reject(me) : Promise.resolve(`${me}\n`);
+    }
     const repo = byCwd[opts?.cwd ?? ""];
     if (!repo) return Promise.reject(new Error(`no fixture for cwd ${opts?.cwd}`));
     if (cmd === "gh" && args.includes("pr") && args.includes("list")) {
@@ -265,6 +274,47 @@ test("counts human inline review comments per PR, filtering bots + ignore-list",
   const stack = stackGroups(repo.groups)[0]!;
   assert.equal(stack.layers.find((l) => l.number === 11)!.humanReviewCommentCount, 1);
   assert.equal(stack.layers.find((l) => l.number === 12)!.humanReviewCommentCount, 0);
+});
+
+test("excludes my own review comments from the count (case-insensitive)", async () => {
+  const { exec } = fakeExec(
+    {
+      "/work/a": {
+        prs: REPO_A_PRS,
+        comments: {
+          // #10: me (mixed-case) + a reply from me + one other human → 1 (only bob).
+          10: comments(
+            { login: "Me", type: "User" },
+            { login: "bob", type: "User" },
+            { login: "ME", type: "User" },
+          ),
+          // #11: only my own comments → 0.
+          11: comments({ login: "me", type: "User" }),
+        },
+      },
+    },
+    "me",
+  );
+  const overview = await buildPrOverview({ repos: ["/work/a"], exec, hasGhStack: () => false });
+  const repo = overview.repos[0]!;
+  assert.equal(prGroups(repo.groups)[0]!.pr.humanReviewCommentCount, 1);
+  const stack = stackGroups(repo.groups)[0]!;
+  assert.equal(stack.layers.find((l) => l.number === 11)!.humanReviewCommentCount, 0);
+});
+
+test("when the gh-user lookup fails, my own comments are still counted (back-compat)", async () => {
+  const { exec } = fakeExec(
+    {
+      "/work/a": {
+        prs: REPO_A_PRS,
+        // me + bob, but `gh api user` errors → no self-exclusion → both count → 2.
+        comments: { 10: comments({ login: "me", type: "User" }, { login: "bob", type: "User" }) },
+      },
+    },
+    new Error("gh: not authenticated"),
+  );
+  const overview = await buildPrOverview({ repos: ["/work/a"], exec, hasGhStack: () => false });
+  assert.equal(prGroups(overview.repos[0]!.groups)[0]!.pr.humanReviewCommentCount, 2);
 });
 
 test("a failed comment fetch defaults the count to 0 without failing the overview", async () => {
