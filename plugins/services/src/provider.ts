@@ -206,10 +206,12 @@ export class ServicesProvider {
 
   /**
    * Best-effort `process-compose up -D` (detached, no TUI) against the configured
-   * compose file. Wrapped so a missing binary or any spawn error never throws
-   * into the read — it just logs and the next poll retries the connection.
+   * compose file. Wrapped so a missing binary or any spawn error never throws —
+   * it just logs and the next poll retries the connection. Used both by the
+   * `autostart` poll path and the explicit `services.startAll` action (which
+   * brings the whole stack up on demand when the server is down).
    */
-  private startServer(): void {
+  startServer(): void {
     const spawnFn = this.options.spawn ?? spawn;
     const args = ["up", "-D"];
     if (this.options.composeFile) args.push("-f", this.options.composeFile);

@@ -77,3 +77,29 @@ test("buildServiceList: unreachable server → available:false + empty list", ()
   const result = buildServiceList(undefined);
   assert.deepEqual(result, { services: [], available: false });
 });
+
+test("buildServiceList: unreachable but configured procs → stopped rows, available:false", () => {
+  const result = buildServiceList(undefined, ["api", "db"]);
+  assert.equal(result.available, false);
+  assert.deepEqual(
+    result.services.map((s) => [s.name, s.status]),
+    [
+      ["api", "stopped"],
+      ["db", "stopped"],
+    ],
+  );
+});
+
+test("buildServiceList: reachable list is augmented with configured procs not running", () => {
+  const processes: ProcessState[] = [{ name: "api", status: "Running", pid: 1 }];
+  // `api` is live; `db` is configured but absent → appended as stopped.
+  const result = buildServiceList(processes, ["api", "db"]);
+  assert.equal(result.available, true);
+  assert.deepEqual(
+    result.services.map((s) => [s.name, s.status]),
+    [
+      ["api", "running"],
+      ["db", "stopped"],
+    ],
+  );
+});

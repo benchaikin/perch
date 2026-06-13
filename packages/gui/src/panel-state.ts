@@ -13,7 +13,12 @@
  * shape of `stack.prs`'s output, not the plugin's internals.
  */
 
-import { buildServicesSection, type ServiceList, type ServicesSection } from "./services-state.js";
+import {
+  buildServicesSection,
+  type ServiceList,
+  type ServicesBulkAction,
+  type ServicesSection,
+} from "./services-state.js";
 
 /** Canonical capability id of the cross-repo "My PRs" read the panel renders. */
 export const STACK_PRS_ID = "stack.prs";
@@ -195,6 +200,8 @@ export interface BuildInput {
   servicesList?: ServiceList;
   /** Service names with an in-flight start/stop/restart — their buttons spin. */
   servicesActing?: string[];
+  /** The whole-stack action in flight (Start/Stop/Restart all), if any. */
+  servicesBulkActing?: ServicesBulkAction;
 }
 
 /** Map a normalized CI status to a status chip. */
@@ -326,7 +333,11 @@ export function buildPanelState(input: BuildInput): PanelState {
   const live = {
     syncing: input.syncing ?? [],
     notice: input.notice,
-    services: buildServicesSection(daemonUp ? input.servicesList : undefined, input.servicesActing),
+    services: buildServicesSection(
+      daemonUp ? input.servicesList : undefined,
+      input.servicesActing,
+      input.servicesBulkActing,
+    ),
   };
 
   if (!daemonUp) {

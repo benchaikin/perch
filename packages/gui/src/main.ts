@@ -54,7 +54,7 @@ import {
   type PanelState,
   type PrOverview,
 } from "./panel-state.js";
-import { SERVICES_LIST_ID, type ServiceList } from "./services-state.js";
+import { SERVICES_LIST_ID, type ServiceList, type ServicesBulkAction } from "./services-state.js";
 import {
   centeredPosition,
   MIN_WINDOW_SIZE,
@@ -352,6 +352,47 @@ async function serviceAction(request: ServiceActionRequest): Promise<void> {
     showNotice({ tone: "bad", text: `${action} ${name} failed: ${errorMessage(err)}` });
   } finally {
     setServiceActing(name, false);
+    pushState();
+  }
+}
+
+/** Human label for a whole-stack action, used in failure toasts. */
+const BULK_ACTION_LABEL: Record<ServicesBulkAction, string> = {
+  startAll: "Start all",
+  stopAll: "Stop all",
+  restartAll: "Restart all",
+};
+
+/**
+ * Invoke a whole-stack action (Start/Stop/Restart all) from the Services header.
+ * Marks the bulk action in flight (its header button spins + the cluster
+ * disables), invokes `services.<action>`, then lets the `services.list`
+ * subscription reflect the new statuses. Surfaces the action's own message as a
+ * toast — "Started 3/3 services." or a failure — so the whole-stack outcome is
+ * visible. No-op if the daemon is down or a bulk action is already running.
+ */
+async function servicesBulk(action: ServicesBulkAction): Promise<void> {
+  if (!client) return;
+  if (buildInput.servicesBulkActing) return;
+
+  buildInput.servicesBulkActing = action;
+  pushState();
+
+  try {
+    const result = (await client.invoke({ id: `services.${action}`, input: {} })) as {
+      ok?: boolean;
+      message?: string;
+    } | null;
+    if (result?.message) {
+      showNotice({ tone: result.ok === false ? "bad" : "ok", text: result.message });
+    }
+  } catch (err) {
+    showNotice({
+      tone: "bad",
+      text: `${BULK_ACTION_LABEL[action]} failed: ${errorMessage(err)}`,
+    });
+  } finally {
+    buildInput.servicesBulkActing = undefined;
     pushState();
   }
 }
@@ -887,6 +928,10 @@ function registerIpc(): void {
   ipcMain.on(
     Channels.serviceAction,
     (_event, request: ServiceActionRequest) => void serviceAction(request),
+  );
+  ipcMain.on(
+    Channels.servicesBulk,
+    (_event, action: ServicesBulkAction) => void servicesBulk(action),
   );
   ipcMain.on(Channels.serviceLogs, (_event, name: string) => void serviceLogs(name));
 

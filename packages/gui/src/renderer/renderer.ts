@@ -9,7 +9,9 @@ import type { GroupRow, Health, PanelState, PrRow, RepoSection } from "../panel-
 import type {
   ServiceAction,
   ServiceHealth,
+  ServicesBulkAction,
   ServiceRow,
+  ServicesControl,
   ServicesSection,
 } from "../services-state.js";
 
@@ -52,6 +54,13 @@ const SERVICE_ACTION_ICON: Record<ServiceAction, { icon: string; tint: string }>
   start: { icon: "play", tint: "start" },
   stop: { icon: "stop", tint: "stop" },
   restart: { icon: "arrows-rotate", tint: "restart" },
+};
+
+/** Icon + tint for the top-level (whole-stack) Services header controls. */
+const SERVICE_BULK_ICON: Record<ServicesBulkAction, { icon: string; tint: string }> = {
+  startAll: { icon: "play", tint: "start" },
+  stopAll: { icon: "stop", tint: "stop" },
+  restartAll: { icon: "arrows-rotate", tint: "restart" },
 };
 
 const rowsEl = byId("rows");
@@ -326,9 +335,39 @@ function serviceActionsEl(svc: ServiceRow): HTMLElement {
 }
 
 /**
- * Build the "Services" section: a header + one row per process. Returns null
- * when the section is hidden (process-compose unreachable / no services), so the
- * panel is unchanged for users without process-compose.
+ * Build one top-level (whole-stack) control button for the Services header.
+ * Mirrors the per-row action buttons: an icon-only tinted button that disables
+ * while any bulk action is in flight, with the active one showing a spinner.
+ */
+function servicesControlEl(control: ServicesControl, bulkActing?: ServicesBulkAction): HTMLElement {
+  const { icon, tint } = SERVICE_BULK_ICON[control.action];
+  const btn = document.createElement("button");
+  btn.className = `btn btn-sm service-btn service-bulk-btn tint-${tint}`;
+  btn.title = control.label;
+  btn.setAttribute("aria-label", control.label);
+  btn.disabled = bulkActing !== undefined;
+
+  const glyph = document.createElement("i");
+  if (bulkActing === control.action) {
+    glyph.className = "fa-solid fa-circle-notch fa-spin";
+    btn.append(glyph, ` ${control.label}`);
+  } else {
+    glyph.className = `fa-solid fa-${icon}`;
+    btn.append(glyph, ` ${control.label}`);
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      window.perch.servicesBulk(control.action);
+    });
+  }
+  return btn;
+}
+
+/**
+ * Build the "Services" section: a header (title + whole-stack controls) and one
+ * row per process. Returns null when the section is hidden (no services live and
+ * none configured), so the panel is unchanged for users without process-compose.
+ * When process-compose is down but procs are configured, rows show as stopped
+ * and the header's **Start all** brings the stack up.
  */
 function servicesSectionEl(section: ServicesSection): HTMLElement | null {
   if (!section.visible) return null;
@@ -336,8 +375,19 @@ function servicesSectionEl(section: ServicesSection): HTMLElement | null {
   el.className = "repo-section services-section";
 
   const header = document.createElement("div");
-  header.className = "repo-header";
-  header.textContent = "Services";
+  header.className = "repo-header services-header";
+  const title = document.createElement("span");
+  title.textContent = "Services";
+  header.append(title);
+
+  if (section.controls.length > 0) {
+    const controls = document.createElement("span");
+    controls.className = "services-controls";
+    for (const control of section.controls) {
+      controls.append(servicesControlEl(control, section.bulkActing));
+    }
+    header.append(controls);
+  }
   el.append(header);
 
   for (const svc of section.rows) el.append(serviceRowEl(svc));

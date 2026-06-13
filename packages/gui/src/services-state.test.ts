@@ -85,16 +85,58 @@ test("buildServicesSection gives every row a Logs affordance", () => {
 });
 
 test("buildServicesSection hides when no list / unreachable / empty", () => {
-  assert.deepEqual(buildServicesSection(undefined), { visible: false, rows: [] });
+  assert.deepEqual(buildServicesSection(undefined), { visible: false, rows: [], controls: [] });
   assert.deepEqual(buildServicesSection({ services: [], available: false }), {
     visible: false,
     rows: [],
+    controls: [],
   });
   // Reachable but empty → still hidden (nothing to show).
   assert.deepEqual(buildServicesSection({ services: [], available: true }), {
     visible: false,
     rows: [],
+    controls: [],
   });
+});
+
+test("buildServicesSection shows configured procs (stopped) when the server is down", () => {
+  // process-compose down but procs configured: the daemon surfaces them as
+  // stopped rows with available:false. The section shows, offering Start all.
+  const list: ServiceList = {
+    available: false,
+    services: [
+      { name: "api", status: "stopped" },
+      { name: "db", status: "stopped" },
+    ],
+  };
+  const section = buildServicesSection(list);
+  assert.equal(section.visible, true);
+  assert.equal(section.rows.length, 2);
+  // Only Start all is offered while the server is down.
+  assert.deepEqual(
+    section.controls.map((c) => c.action),
+    ["startAll"],
+  );
+});
+
+test("buildServicesSection offers the full bulk trio when the server is up", () => {
+  const section = buildServicesSection({
+    available: true,
+    services: [{ name: "api", status: "running" }],
+  });
+  assert.deepEqual(
+    section.controls.map((c) => c.action),
+    ["startAll", "stopAll", "restartAll"],
+  );
+});
+
+test("buildServicesSection threads the in-flight bulk action through", () => {
+  const section = buildServicesSection(
+    { available: true, services: [{ name: "api", status: "running" }] },
+    [],
+    "restartAll",
+  );
+  assert.equal(section.bulkActing, "restartAll");
 });
 
 test("buildServicesSection shows rows when available with services", () => {
