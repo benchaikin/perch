@@ -35,11 +35,13 @@ import {
 import { DaemonUnavailableError, PerchClient } from "@perch/cli";
 import { shouldShowNotification, toNotifyOptions } from "./notify.js";
 import { Channels, type ServiceActionRequest } from "./ipc.js";
+import { addProc, procsFromConfig, removeProc, type Proc } from "./procs.js";
 import { addRepo, removeRepo, reposFromConfig, setDefault, toEntries } from "./repos.js";
 import { buildConfigPatch } from "./settings-fields.js";
 import {
   SettingsChannels,
   type PluginSettingsResult,
+  type ServicesResult,
   type SetFieldRequest,
   type SettingsResult,
 } from "./settings-ipc.js";
@@ -769,6 +771,48 @@ async function setFieldFlow(
   return { plugins, daemonUp: true };
 }
 
+/**
+ * Read the configured managed processes (`plugins.services.procs`). Returns an
+ * empty, read-only result when the daemon is down so the Services tab can render
+ * a "daemon not running" state.
+ */
+async function loadProcs(): Promise<ServicesResult> {
+  const c = await ensureClient();
+  if (!c) return { procs: [], daemonUp: false };
+  const config = await c.configGet();
+  return { procs: procsFromConfig(config), daemonUp: true };
+}
+
+/**
+ * Persist a new procs array via `config.update` (the daemon hot-reloads and the
+ * panel's Services section + service list refresh via `registry.changed`) and
+ * return the refreshed list.
+ */
+async function persistProcs(c: PerchClient, procs: Proc[]): Promise<ServicesResult> {
+  const config = await c.configUpdate({ patch: { plugins: { services: { procs } } } });
+  return { procs: procsFromConfig(config), daemonUp: true };
+}
+
+/**
+ * Wrap a managed-process op so daemon/RPC failures — and the expected
+ * {@link ProcValidationError} from {@link addProc} (blank field, duplicate
+ * name) — surface inline (with the last-known procs) rather than throwing
+ * across the IPC boundary.
+ */
+async function servicesOp(
+  fn: (c: PerchClient) => Promise<ServicesResult>,
+): Promise<ServicesResult> {
+  const c = await ensureClient();
+  if (!c) return { procs: [], daemonUp: false };
+  try {
+    return await fn(c);
+  } catch (err) {
+    const config = await c.configGet().catch(() => null);
+    const procs = config ? procsFromConfig(config) : [];
+    return { procs, daemonUp: true, error: errorMessage(err) };
+  }
+}
+
 /** Create (or focus) the separate Settings window. */
 function showSettingsWindow(): void {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
@@ -864,6 +908,17 @@ function registerIpc(): void {
   ipcMain.handle(SettingsChannels.describePlugins, () => loadPluginSettings());
   ipcMain.handle(SettingsChannels.setField, (_event, request: SetFieldRequest) =>
     pluginSettingsOp((c) => setFieldFlow(c, request)),
+  );
+
+  // Settings window: managed processes on the Services tab (list / add / remove).
+  ipcMain.handle(SettingsChannels.listProcs, () => loadProcs());
+  ipcMain.handle(SettingsChannels.addProc, (_event, proc: Proc) =>
+    servicesOp(async (c) => persistProcs(c, addProc(procsFromConfig(await c.configGet()), proc))),
+  );
+  ipcMain.handle(SettingsChannels.removeProc, (_event, name: string) =>
+    servicesOp(async (c) =>
+      persistProcs(c, removeProc(procsFromConfig(await c.configGet()), name)),
+    ),
   );
 }
 

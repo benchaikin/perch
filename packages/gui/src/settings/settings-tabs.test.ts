@@ -45,6 +45,12 @@ test("buildSettingsTabs: only the Pull Requests tab owns the repos list", () => 
   assert.equal(tabs.find((t) => t.id === SERVICES_TAB_ID)!.showRepos, false);
 });
 
+test("buildSettingsTabs: only the Services tab owns the managed-process list", () => {
+  const tabs = buildSettingsTabs([]);
+  assert.equal(tabs.find((t) => t.id === SERVICES_TAB_ID)!.showServices, true);
+  assert.equal(tabs.find((t) => t.id === PRS_TAB_ID)!.showServices, false);
+});
+
 test("buildSettingsTabs: attaches the stack + services descriptors to their tabs", () => {
   const tabs = buildSettingsTabs([
     desc(SERVICES_TAB_ID, "Services", ["logTerminal"]),

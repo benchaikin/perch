@@ -45,6 +45,8 @@ export interface SettingsTab {
   label: string;
   /** Whether this tab renders the Repositories list above any descriptor fields. */
   showRepos: boolean;
+  /** Whether this tab renders the managed-process list above any descriptor fields. */
+  showServices: boolean;
   /** The plugin's descriptor (its fields), or `undefined` if it declares none. */
   plugin?: PluginSettingsDescription;
 }
@@ -55,8 +57,9 @@ export interface SettingsTab {
  * descriptor's friendly `name` when present, else a built-in label — followed by
  * every other plugin that declares a descriptor, in descriptor order.
  *
- * `showRepos` is set only on the Pull Requests tab, so the renderer knows to
- * draw the Repositories list there above the stack plugin's fields.
+ * `showRepos` is set only on the Pull Requests tab and `showServices` only on
+ * the Services tab, so the renderer knows to draw those managed lists there
+ * above the owning plugin's descriptor fields.
  */
 export function buildSettingsTabs(plugins: PluginSettingsDescription[]): SettingsTab[] {
   const byId = new Map(plugins.map((p) => [p.pluginId, p]));
@@ -66,6 +69,7 @@ export function buildSettingsTabs(plugins: PluginSettingsDescription[]): Setting
     id,
     label: byId.get(id)?.name ?? label,
     showRepos: id === PRS_TAB_ID,
+    showServices: id === SERVICES_TAB_ID,
     plugin: byId.get(id),
   }));
 
@@ -75,6 +79,7 @@ export function buildSettingsTabs(plugins: PluginSettingsDescription[]): Setting
       id: plugin.pluginId,
       label: plugin.name,
       showRepos: false,
+      showServices: false,
       plugin,
     });
   }

@@ -18,21 +18,27 @@
  * tab owns the repos list) does. Bundled to plain browser JS by esbuild.
  */
 import type { PluginSettingsDescription, SettingsFieldState } from "@perch/core";
+import type { Proc } from "../procs.js";
 import type { RepoEntry } from "../repos.js";
-import type { PluginSettingsResult, SettingsResult } from "../settings-ipc.js";
+import type { PluginSettingsResult, ServicesResult, SettingsResult } from "../settings-ipc.js";
 import { coerceFieldValue } from "../settings-fields.js";
 import { buildSettingsTabs, resolveActiveTab, type SettingsTab } from "./settings-tabs.js";
 
 const tabsEl = byId("tabs");
 const paneEl = byId("pane");
 
-/** Latest snapshots from the two bridge calls; the active tab re-renders from these. */
+/** Latest snapshots from the bridge calls; the active tab re-renders from these. */
 let reposResult: SettingsResult = { repos: [], daemonUp: false };
 let pluginsResult: PluginSettingsResult = { plugins: [], daemonUp: false };
+let servicesResult: ServicesResult = { procs: [], daemonUp: false };
 /** The selected tab id; preserved across re-renders when it still exists. */
 let activeTabId: string | undefined;
 /** Disables repo actions while a repos bridge call is in flight. */
 let reposBusy = false;
+/** Disables managed-process actions while a services bridge call is in flight. */
+let servicesBusy = false;
+/** The add-service form's draft inputs, preserved across re-renders. */
+const procDraft: Proc = { name: "", command: "", cwd: "" };
 
 function byId(id: string): HTMLElement {
   const el = document.getElementById(id);
@@ -167,6 +173,179 @@ async function runRepos(call: () => Promise<SettingsResult>): Promise<void> {
     };
   } finally {
     reposBusy = false;
+    renderActive();
+  }
+}
+
+// ── Managed processes (Services tab) ─────────────────────────────────────────
+
+/** Build one proc row: name, command (titled), optional cwd, and a Remove button. */
+function procRowEl(proc: Proc): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "repo";
+
+  const info = document.createElement("div");
+  info.className = "repo-info";
+
+  const name = document.createElement("div");
+  name.className = "repo-name";
+  const nameText = document.createElement("span");
+  nameText.textContent = proc.name;
+  name.append(nameText);
+  info.append(name);
+
+  const command = document.createElement("div");
+  command.className = "repo-path";
+  command.textContent = proc.command;
+  command.title = proc.command;
+  info.append(command);
+
+  if (proc.cwd) {
+    const cwd = document.createElement("div");
+    cwd.className = "repo-path";
+    cwd.textContent = proc.cwd;
+    cwd.title = proc.cwd;
+    info.append(cwd);
+  }
+
+  el.append(info);
+
+  const actions = document.createElement("div");
+  actions.className = "repo-actions";
+  const remove = document.createElement("button");
+  remove.className = "btn btn-sm";
+  remove.textContent = "Remove";
+  remove.disabled = servicesBusy;
+  remove.addEventListener("click", () =>
+    runServices(() => window.perchSettings.removeProc(proc.name)),
+  );
+  actions.append(remove);
+  el.append(actions);
+
+  return el;
+}
+
+/** A labeled text input for the add-service form, bound to the `procDraft`. */
+function procInputEl(
+  field: "name" | "command" | "cwd",
+  label: string,
+  placeholder: string,
+): HTMLElement {
+  const wrap = document.createElement("label");
+  wrap.className = "field-stacked";
+
+  const labelText = document.createElement("div");
+  labelText.className = "field-label";
+  labelText.textContent = label;
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "field-control";
+  input.placeholder = placeholder;
+  input.value = procDraft[field] ?? "";
+  input.disabled = servicesBusy;
+  input.addEventListener("input", () => {
+    procDraft[field] = input.value;
+  });
+
+  wrap.append(labelText, input);
+  return wrap;
+}
+
+/** Build the managed-process management block (list + inline error + add form). */
+function servicesSectionEl(): HTMLElement {
+  const section = document.createElement("section");
+  section.className = "section";
+
+  const header = document.createElement("header");
+  header.className = "header";
+  const title = document.createElement("span");
+  title.className = "title";
+  title.textContent = "Services";
+  const subtitle = document.createElement("span");
+  subtitle.className = "subtitle";
+  subtitle.textContent = "Processes Perch runs and supervises.";
+  header.append(title, subtitle);
+  section.append(header);
+
+  const rule = document.createElement("hr");
+  rule.className = "rule";
+  section.append(rule);
+
+  const rows = document.createElement("div");
+  rows.className = "rows";
+  if (!servicesResult.daemonUp) {
+    rows.append(emptyEl("Perch daemon is not running. Start it to manage services."));
+  } else if (servicesResult.procs.length === 0) {
+    rows.append(emptyEl("No services configured — add one to run it."));
+  } else {
+    for (const proc of servicesResult.procs) rows.append(procRowEl(proc));
+  }
+  section.append(rows);
+
+  if (servicesResult.error) {
+    const err = document.createElement("div");
+    err.className = "error";
+    err.textContent = servicesResult.error;
+    section.append(err);
+  }
+
+  // Add form: Name + Command (required) + optional Cwd, then an Add button.
+  const form = document.createElement("div");
+  form.className = "fields";
+  form.append(
+    procInputEl("name", "Name", "web"),
+    procInputEl("command", "Command", "npm run dev"),
+    procInputEl("cwd", "Working directory (optional)", "/path/to/dir"),
+  );
+  section.append(form);
+
+  const footer = document.createElement("footer");
+  footer.className = "actions";
+  const add = document.createElement("button");
+  add.className = "btn btn-primary";
+  add.textContent = "Add service";
+  add.disabled = servicesBusy || !servicesResult.daemonUp;
+  add.addEventListener("click", () => {
+    const proc: Proc = {
+      name: procDraft.name,
+      command: procDraft.command,
+      ...(procDraft.cwd?.trim() ? { cwd: procDraft.cwd } : {}),
+    };
+    void runServices(async () => {
+      const result = await window.perchSettings.addProc(proc);
+      // Clear the draft only on a clean add (no validation/RPC error).
+      if (!result.error) {
+        procDraft.name = "";
+        procDraft.command = "";
+        procDraft.cwd = "";
+      }
+      return result;
+    });
+  });
+  footer.append(add);
+  section.append(footer);
+
+  return section;
+}
+
+/**
+ * Run an async services bridge call with the service controls disabled, then
+ * store the result and re-render the active tab. A rejected call (unexpected)
+ * surfaces as an inline error rather than a silent dead button.
+ */
+async function runServices(call: () => Promise<ServicesResult>): Promise<void> {
+  servicesBusy = true;
+  renderActive();
+  try {
+    servicesResult = await call();
+  } catch (err) {
+    servicesResult = {
+      ...servicesResult,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  } finally {
+    servicesBusy = false;
     renderActive();
   }
 }
@@ -333,13 +512,15 @@ function renderPane(tab: SettingsTab): void {
   paneEl.replaceChildren();
 
   if (tab.showRepos) paneEl.append(reposSectionEl());
+  if (tab.showServices) paneEl.append(servicesSectionEl());
 
   if (tab.plugin) {
     // The descriptor fields render under the plugin's own name. On the PRs tab
     // they read as a follow-on "Stack" block after the Repositories list above.
     paneEl.append(pluginFieldsEl(tab.plugin, tab.plugin.name));
-  } else if (!tab.showRepos) {
+  } else if (!tab.showRepos && !tab.showServices) {
     // A pinned tab whose plugin isn't loaded (daemon down or plugin disabled).
+    // The PRs/Services tabs own a managed list + form, so they're never blank.
     paneEl.append(
       emptyEl(
         pluginsResult.daemonUp
@@ -385,7 +566,22 @@ async function loadRepos(): Promise<void> {
   renderActive();
 }
 
-// Initial render (with the empty defaults), then load both data sources.
+/** Load the managed-process list, store it, and re-render. */
+async function loadProcs(): Promise<void> {
+  try {
+    servicesResult = await window.perchSettings.listProcs();
+  } catch (err) {
+    servicesResult = {
+      procs: [],
+      daemonUp: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+  renderActive();
+}
+
+// Initial render (with the empty defaults), then load every data source.
 renderActive();
 void loadRepos();
+void loadProcs();
 void runPlugins(() => window.perchSettings.describePlugins());
