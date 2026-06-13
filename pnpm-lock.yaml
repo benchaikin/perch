@@ -104,6 +104,9 @@ importers:
 
   plugins/services:
     dependencies:
+      '@perch/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@perch/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk

@@ -15,7 +15,8 @@ import { test } from "node:test";
 
 import { type CapabilityContext } from "@perch/sdk";
 
-import plugin, { __setLogsSpawn } from "./index.js";
+import plugin, { __setLogsSpawn, resolveComposeFile } from "./index.js";
+import { generatedComposePath, type SyncComposeResult } from "./compose.js";
 
 /** One request the fake process-compose server saw. */
 interface SeenRequest {
@@ -134,6 +135,36 @@ test("services.restartAll reports unreachable when the server is down", async ()
   })) as { ok: boolean; message: string };
   assert.equal(result.ok, false);
   assert.match(result.message, /unreachable/);
+});
+
+test("resolveComposeFile: procs (non-empty) take precedence over composeFile", () => {
+  const calls: Array<{ procs: unknown }> = [];
+  const fakeSync = ((procs: unknown): SyncComposeResult => {
+    calls.push({ procs });
+    return { path: generatedComposePath(), content: "", changed: false };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }) as any;
+
+  const file = resolveComposeFile(
+    { composeFile: "/user/process-compose.yaml", procs: [{ name: "api", command: "run" }] },
+    () => {},
+    fakeSync,
+  );
+  // The generated file is targeted, NOT the user's composeFile.
+  assert.equal(file, generatedComposePath());
+  assert.equal(calls.length, 1);
+});
+
+test("resolveComposeFile: falls back to composeFile when procs is unset/empty", () => {
+  const neverSync = (() => assert.fail("must not generate when procs is unset")) as never;
+  assert.equal(
+    resolveComposeFile({ composeFile: "/user/pc.yaml" }, () => {}, neverSync),
+    "/user/pc.yaml",
+  );
+  assert.equal(
+    resolveComposeFile({ composeFile: "/user/pc.yaml", procs: [] }, () => {}, neverSync),
+    "/user/pc.yaml",
+  );
 });
 
 test("services.logs is a CLI-only action that spawns the templated logs command", () => {

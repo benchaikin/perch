@@ -11,10 +11,11 @@ import type { spawn as nodeSpawn } from "node:child_process";
 
 import { action, definePlugin, read, validateSettingsDescriptor, z } from "@perch/sdk";
 
+import { syncCompose, type Proc } from "./compose.js";
 import { DEFAULT_LOG_TERMINAL, spawnLogsTerminal, type SpawnLogsOptions } from "./logs.js";
 import { crashNotifications } from "./notify.js";
 import { buildServiceList, ServiceList } from "./services.js";
-import { ServicesProvider } from "./provider.js";
+import { ServicesProvider, type ServerTarget } from "./provider.js";
 
 export type { FetchJson, ProcessState, ServerTarget } from "./provider.js";
 export { defaultFetchJson, DEFAULT_ADDRESS, ServicesProvider } from "./provider.js";
@@ -26,6 +27,13 @@ export {
   DEFAULT_LOG_TERMINAL,
   spawnLogsTerminal,
 } from "./logs.js";
+export {
+  buildComposeDoc,
+  generatedComposePath,
+  GENERATED_COMPOSE_FILENAME,
+  syncCompose,
+} from "./compose.js";
+export type { Proc, Reloader, SyncComposeDeps, SyncComposeResult } from "./compose.js";
 
 /**
  * Test seam for the `services.logs` action's spawn. `ctx` carries no spawn, so
@@ -41,14 +49,38 @@ export function __setLogsSpawn(spawnFn: typeof nodeSpawn | undefined): void {
 }
 
 /**
+ * One Perch-owned process definition (`plugins.services.procs[]`): a `name` +
+ * `command`, with an optional `cwd`. Perch generates the process-compose file
+ * from these — see {@link syncCompose}. The GUI CRUD over services must mirror
+ * this exact shape under the `procs` config key.
+ */
+const Proc = z.object({
+  /** Process name (the key in the generated compose file). */
+  name: z.string(),
+  /** Shell command process-compose runs for this process. */
+  command: z.string(),
+  /** Optional working directory (`working_dir` in the compose file). */
+  cwd: z.string().optional(),
+});
+
+/**
  * Per-plugin config (`plugins.services`). Connection target: prefer `socket`
  * (process-compose `--use-uds`), else `address` (default `http://localhost:8080`).
- * `composeFile` + `autostart` drive a best-effort `process-compose up -D` when
- * the server is unreachable.
+ *
+ * Service definitions come from either `procs` (Perch owns them — we generate a
+ * process-compose file from them) or an external `composeFile` the user manages.
+ * When `procs` is non-empty it takes precedence: the generated file is targeted
+ * instead of `composeFile`. `autostart` drives a best-effort `process-compose up
+ * -D` against the resolved file when the server is unreachable.
  */
 const ServicesConfig = z.object({
-  /** Path to the process-compose config file (for `autostart`). */
+  /** Path to an externally-managed process-compose config file (for `autostart`). */
   composeFile: z.string().optional(),
+  /**
+   * Perch-owned process definitions. When non-empty, Perch generates a
+   * process-compose file from these and targets it (overriding `composeFile`).
+   */
+  procs: z.array(Proc).optional(),
   /** Unix domain socket path (process-compose `--use-uds`). Preferred when set. */
   socket: z.string().optional(),
   /** HTTP base address (default `http://localhost:8080`). Used when `socket` is unset. */
@@ -63,7 +95,7 @@ const ServicesConfig = z.object({
    */
   logTerminal: z.string().optional(),
 });
-type ServicesConfig = z.infer<typeof ServicesConfig>;
+export type ServicesConfig = z.infer<typeof ServicesConfig>;
 
 /**
  * Narrow a capability's `ctx.config` (typed `unknown` by the SDK) to the parsed
@@ -75,13 +107,42 @@ function configOf(config: unknown): ServicesConfig {
   return parsed.success ? parsed.data : {};
 }
 
+/** The connection {@link ServerTarget} a config resolves to (socket preferred). */
+function targetOf(cfg: ServicesConfig): ServerTarget {
+  return cfg.socket ? { socket: cfg.socket } : { address: cfg.address };
+}
+
+/**
+ * Resolve the compose file `autostart` targets. When `procs` is non-empty, Perch
+ * owns the definitions: (re)generate the managed file — best-effort + idempotent,
+ * only rewriting/live-reloading when its content changed — and target it,
+ * **overriding** any `composeFile`. Otherwise fall back to the user's
+ * `composeFile` (unset → process-compose's own default discovery). Returns
+ * `undefined` when neither source applies.
+ *
+ * Called from the `services.list` read (every poll), so the generated file
+ * tracks `perch.json` edits to `procs`; the change-guard in {@link syncCompose}
+ * keeps repeated polls cheap (no rewrite/reload when nothing changed).
+ */
+export function resolveComposeFile(
+  cfg: ServicesConfig,
+  log: (message: string) => void,
+  sync: typeof syncCompose = syncCompose,
+): string | undefined {
+  if (cfg.procs && cfg.procs.length > 0) {
+    const result = sync(cfg.procs, { target: targetOf(cfg), log });
+    return result.path;
+  }
+  return cfg.composeFile;
+}
+
 /** A {@link ServicesProvider} built from a capability's `ctx` (config + log). */
 function providerOf(ctx: { config: unknown; log: (message: string) => void }): ServicesProvider {
   const cfg = configOf(ctx.config);
   return new ServicesProvider({
     socket: cfg.socket,
     address: cfg.address,
-    composeFile: cfg.composeFile,
+    composeFile: resolveComposeFile(cfg, ctx.log),
     autostart: cfg.autostart,
     log: ctx.log,
   });
