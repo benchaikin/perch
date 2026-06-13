@@ -1,33 +1,46 @@
 /**
  * Settings renderer. Runs in the sandboxed browser context with only the typed
- * `window.perchSettings` bridge (no Node/Electron). Renders a sectioned panel:
+ * `window.perchSettings` bridge (no Node/Electron). Renders a **tabbed** surface:
+ * a vertical list of tabs down the LEFT, one per plugin, with the selected tab's
+ * content in a pane on the RIGHT.
  *
- *   - **Stack Repositories** — the add / remove / make-default repo list (each
- *     action resolves to a refreshed {@link SettingsResult} we re-render from).
- *   - **Per-plugin settings** — one auto-generated section per plugin that
- *     declares a settings descriptor, rendered from `settings.describe` with a
- *     control per field by type (enum→select, boolean→checkbox, string→text,
- *     number→number). Changing a control writes back via `config.update` and
- *     re-reads the descriptors.
+ *   - **Pull Requests** (stack) — the Repositories add / remove / make-default
+ *     list (each action resolves to a refreshed {@link SettingsResult} we
+ *     re-render from) PLUS the stack plugin's descriptor fields.
+ *   - **Services** — the services plugin's descriptor fields (the logs-terminal
+ *     command + process-compose connection config).
+ *   - Any other plugin that declares a descriptor gets its own tab.
  *
- * No plugin-specific UI code lives here — every per-plugin section is driven by
- * the descriptor. Bundled to plain browser JS by esbuild.
+ * Per-plugin content is descriptor-driven: each field renders a control by type
+ * (enum→select, boolean→checkbox, string→text, number→number); changing one
+ * writes back via `config.update` and re-reads the descriptors. No
+ * plugin-specific UI code lives here — only the well-known tab grouping (which
+ * tab owns the repos list) does. Bundled to plain browser JS by esbuild.
  */
 import type { PluginSettingsDescription, SettingsFieldState } from "@perch/core";
 import type { RepoEntry } from "../repos.js";
 import type { PluginSettingsResult, SettingsResult } from "../settings-ipc.js";
 import { coerceFieldValue } from "../settings-fields.js";
+import { buildSettingsTabs, resolveActiveTab, type SettingsTab } from "./settings-tabs.js";
 
-const rowsEl = byId("rows");
-const errorEl = byId("error");
-const pluginsEl = byId("plugins");
-const addBtn = byId("add") as HTMLButtonElement;
+const tabsEl = byId("tabs");
+const paneEl = byId("pane");
+
+/** Latest snapshots from the two bridge calls; the active tab re-renders from these. */
+let reposResult: SettingsResult = { repos: [], daemonUp: false };
+let pluginsResult: PluginSettingsResult = { plugins: [], daemonUp: false };
+/** The selected tab id; preserved across re-renders when it still exists. */
+let activeTabId: string | undefined;
+/** Disables repo actions while a repos bridge call is in flight. */
+let reposBusy = false;
 
 function byId(id: string): HTMLElement {
   const el = document.getElementById(id);
   if (!el) throw new Error(`missing element #${id}`);
   return el;
 }
+
+// ── Repositories section (Pull Requests tab) ────────────────────────────────
 
 /** Build one repo row: name (+ default tag), path, and per-row actions. */
 function repoRowEl(repo: RepoEntry): HTMLElement {
@@ -66,8 +79,9 @@ function repoRowEl(repo: RepoEntry): HTMLElement {
     makeDefault.className = "btn btn-sm";
     makeDefault.textContent = "Make default";
     makeDefault.title = "Move this repo to the front (the stack default)";
+    makeDefault.disabled = reposBusy;
     makeDefault.addEventListener("click", () =>
-      run(() => window.perchSettings.setDefault(repo.path)),
+      runRepos(() => window.perchSettings.setDefault(repo.path)),
     );
     actions.append(makeDefault);
   }
@@ -75,56 +89,89 @@ function repoRowEl(repo: RepoEntry): HTMLElement {
   const remove = document.createElement("button");
   remove.className = "btn btn-sm";
   remove.textContent = "Remove";
-  remove.addEventListener("click", () => run(() => window.perchSettings.removeRepo(repo.path)));
+  remove.disabled = reposBusy;
+  remove.addEventListener("click", () =>
+    runRepos(() => window.perchSettings.removeRepo(repo.path)),
+  );
   actions.append(remove);
 
   el.append(actions);
   return el;
 }
 
-/** Apply a {@link SettingsResult} to the repositories section. */
-function render(result: SettingsResult): void {
-  rowsEl.replaceChildren();
+/** Build the Repositories management block (list + inline error + add button). */
+function reposSectionEl(): HTMLElement {
+  const section = document.createElement("section");
+  section.className = "section";
 
-  if (!result.daemonUp) {
-    const msg = document.createElement("div");
-    msg.className = "empty";
-    msg.textContent = "Perch daemon is not running. Start it to manage repos.";
-    rowsEl.append(msg);
-  } else if (result.repos.length === 0) {
-    const msg = document.createElement("div");
-    msg.className = "empty";
-    msg.textContent = "No repos configured yet. Add one to get started.";
-    rowsEl.append(msg);
+  const header = document.createElement("header");
+  header.className = "header";
+  const title = document.createElement("span");
+  title.className = "title";
+  title.textContent = "Repositories";
+  const subtitle = document.createElement("span");
+  subtitle.className = "subtitle";
+  subtitle.textContent = "The first repo is the default.";
+  header.append(title, subtitle);
+  section.append(header);
+
+  const rule = document.createElement("hr");
+  rule.className = "rule";
+  section.append(rule);
+
+  const rows = document.createElement("div");
+  rows.className = "rows";
+  if (!reposResult.daemonUp) {
+    rows.append(emptyEl("Perch daemon is not running. Start it to manage repos."));
+  } else if (reposResult.repos.length === 0) {
+    rows.append(emptyEl("No repos configured yet. Add one to get started."));
   } else {
-    for (const repo of result.repos) rowsEl.append(repoRowEl(repo));
+    for (const repo of reposResult.repos) rows.append(repoRowEl(repo));
+  }
+  section.append(rows);
+
+  if (reposResult.error) {
+    const err = document.createElement("div");
+    err.className = "error";
+    err.textContent = reposResult.error;
+    section.append(err);
   }
 
-  if (result.error) {
-    errorEl.textContent = result.error;
-    errorEl.hidden = false;
-  } else {
-    errorEl.hidden = true;
-  }
+  const footer = document.createElement("footer");
+  footer.className = "actions";
+  const add = document.createElement("button");
+  add.className = "btn btn-primary";
+  add.textContent = "Add repo…";
+  add.disabled = reposBusy;
+  add.addEventListener("click", () => runRepos(() => window.perchSettings.addRepo()));
+  footer.append(add);
+  section.append(footer);
 
-  addBtn.disabled = false;
+  return section;
 }
 
 /**
- * Run an async bridge call with the buttons disabled, then render its result.
- * A rejected call (unexpected) surfaces as an inline error rather than a silent
- * dead button.
+ * Run an async repos bridge call with the repo controls disabled, then store the
+ * result and re-render the active tab. A rejected call (unexpected) surfaces as
+ * an inline error rather than a silent dead button.
  */
-async function run(call: () => Promise<SettingsResult>): Promise<void> {
-  addBtn.disabled = true;
+async function runRepos(call: () => Promise<SettingsResult>): Promise<void> {
+  reposBusy = true;
+  renderActive();
   try {
-    render(await call());
+    reposResult = await call();
   } catch (err) {
-    errorEl.textContent = err instanceof Error ? err.message : String(err);
-    errorEl.hidden = false;
-    addBtn.disabled = false;
+    reposResult = {
+      ...reposResult,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  } finally {
+    reposBusy = false;
+    renderActive();
   }
 }
+
+// ── Per-plugin descriptor fields ─────────────────────────────────────────────
 
 /** Read a control's raw value, then persist via `config.update` and re-render. */
 function persistField(pluginId: string, field: SettingsFieldState, raw: unknown): void {
@@ -209,8 +256,8 @@ function buildControl(pluginId: string, field: SettingsFieldState): HTMLElement 
   }
 }
 
-/** Build one labeled section for a plugin and its fields. */
-function pluginSectionEl(plugin: PluginSettingsDescription): HTMLElement {
+/** Build the descriptor-driven fields block for a plugin (header + fields). */
+function pluginFieldsEl(plugin: PluginSettingsDescription, heading: string): HTMLElement {
   const section = document.createElement("section");
   section.className = "section";
 
@@ -218,7 +265,7 @@ function pluginSectionEl(plugin: PluginSettingsDescription): HTMLElement {
   header.className = "header";
   const title = document.createElement("span");
   title.className = "title";
-  title.textContent = plugin.name;
+  title.textContent = heading;
   header.append(title);
   section.append(header);
 
@@ -227,10 +274,7 @@ function pluginSectionEl(plugin: PluginSettingsDescription): HTMLElement {
   section.append(rule);
 
   if (plugin.fields.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "empty";
-    empty.textContent = "No settings for this plugin.";
-    section.append(empty);
+    section.append(emptyEl("No settings for this plugin."));
   } else {
     const fields = document.createElement("div");
     fields.className = "fields";
@@ -241,54 +285,107 @@ function pluginSectionEl(plugin: PluginSettingsDescription): HTMLElement {
   return section;
 }
 
-/** Apply a {@link PluginSettingsResult} to the per-plugin sections area. */
-function renderPlugins(result: PluginSettingsResult): void {
-  pluginsEl.replaceChildren();
-
-  // Daemon-down is already surfaced by the repos section; show nothing here.
-  if (!result.daemonUp) return;
-
-  const withFields = result.plugins.filter((p) => p.fields.length > 0);
-  if (withFields.length === 0) {
-    if (result.error) {
-      const msg = document.createElement("div");
-      msg.className = "empty";
-      msg.textContent = result.error;
-      pluginsEl.append(msg);
-    } else {
-      const msg = document.createElement("div");
-      msg.className = "empty muted-note";
-      msg.textContent = "No plugin settings.";
-      pluginsEl.append(msg);
-    }
-    return;
-  }
-
-  for (const plugin of withFields) pluginsEl.append(pluginSectionEl(plugin));
-
-  if (result.error) {
-    const msg = document.createElement("div");
-    msg.className = "error";
-    msg.textContent = result.error;
-    pluginsEl.append(msg);
-  }
-}
-
-/** Run an async per-plugin bridge call, then re-render the plugin sections. */
+/**
+ * Run an async per-plugin bridge call, then store the refreshed descriptors and
+ * re-render the active tab. A failure surfaces inline on the plugin descriptors.
+ */
 async function runPlugins(call: () => Promise<PluginSettingsResult>): Promise<void> {
   try {
-    renderPlugins(await call());
+    pluginsResult = await call();
   } catch (err) {
-    pluginsEl.replaceChildren();
-    const msg = document.createElement("div");
-    msg.className = "error";
-    msg.textContent = err instanceof Error ? err.message : String(err);
-    pluginsEl.append(msg);
+    pluginsResult = {
+      ...pluginsResult,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+  renderActive();
+}
+
+// ── Tabs + active-pane rendering ─────────────────────────────────────────────
+
+/** A centered muted placeholder line. */
+function emptyEl(text: string): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "empty";
+  el.textContent = text;
+  return el;
+}
+
+/** Render the left-nav buttons, marking `tabs`' active one. */
+function renderTabs(tabs: SettingsTab[]): void {
+  tabsEl.replaceChildren();
+  for (const tab of tabs) {
+    const btn = document.createElement("button");
+    btn.className = tab.id === activeTabId ? "tab tab-active" : "tab";
+    btn.textContent = tab.label;
+    btn.setAttribute("aria-current", tab.id === activeTabId ? "page" : "false");
+    btn.addEventListener("click", () => {
+      if (activeTabId === tab.id) return;
+      activeTabId = tab.id;
+      renderActive();
+    });
+    tabsEl.append(btn);
   }
 }
 
-// Load the current repo list + plugin descriptors on open.
-void run(() => window.perchSettings.listRepos());
-void runPlugins(() => window.perchSettings.describePlugins());
+/** Render the right pane for a single tab: its repos block (if any) + fields. */
+function renderPane(tab: SettingsTab): void {
+  paneEl.replaceChildren();
 
-addBtn.addEventListener("click", () => run(() => window.perchSettings.addRepo()));
+  if (tab.showRepos) paneEl.append(reposSectionEl());
+
+  if (tab.plugin) {
+    // The descriptor fields render under the plugin's own name. On the PRs tab
+    // they read as a follow-on "Stack" block after the Repositories list above.
+    paneEl.append(pluginFieldsEl(tab.plugin, tab.plugin.name));
+  } else if (!tab.showRepos) {
+    // A pinned tab whose plugin isn't loaded (daemon down or plugin disabled).
+    paneEl.append(
+      emptyEl(
+        pluginsResult.daemonUp
+          ? "This plugin isn’t available."
+          : "Perch daemon is not running. Start it to configure this plugin.",
+      ),
+    );
+  }
+
+  if (pluginsResult.error) {
+    const err = document.createElement("div");
+    err.className = "error";
+    err.textContent = pluginsResult.error;
+    paneEl.append(err);
+  }
+}
+
+/** Rebuild the tab list from the latest data and re-render nav + active pane. */
+function renderActive(): void {
+  const tabs = buildSettingsTabs(pluginsResult.plugins);
+  activeTabId = resolveActiveTab(tabs, activeTabId);
+  renderTabs(tabs);
+
+  const active = tabs.find((t) => t.id === activeTabId);
+  if (active) {
+    renderPane(active);
+  } else {
+    paneEl.replaceChildren(emptyEl("No settings available."));
+  }
+}
+
+/** Load the repo list, store it, and re-render. */
+async function loadRepos(): Promise<void> {
+  try {
+    reposResult = await window.perchSettings.listRepos();
+  } catch (err) {
+    reposResult = {
+      repos: [],
+      daemonUp: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+  renderActive();
+}
+
+// Initial render (with the empty defaults), then load both data sources.
+renderActive();
+void loadRepos();
+void runPlugins(() => window.perchSettings.describePlugins());

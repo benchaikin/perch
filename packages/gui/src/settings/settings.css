@@ -50,17 +50,53 @@ body {
 
 .settings {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   height: 100vh;
 }
 
-.sections {
-  flex: 1;
+/* Left nav: a fixed-width vertical list of tabs that fills the window height. */
+.tabs {
+  flex: 0 0 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 8px;
+  overflow-y: auto;
+  background: var(--chip-bg);
+  border-right: 1px solid var(--rule);
+}
+
+.tab {
+  appearance: none;
+  text-align: left;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+.tab:hover {
+  background: var(--hover-bg);
+}
+
+.tab-active {
+  background: var(--hover-bg-strong);
+  border-color: var(--rule);
+  font-weight: 600;
+}
+
+/* Right pane: the selected tab's content, scrollable, filling the rest. */
+.pane {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 12px 14px;
+  gap: 18px;
+  padding: 14px 16px;
 }
 
 .section {

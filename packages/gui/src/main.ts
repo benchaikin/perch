@@ -779,7 +779,7 @@ function showSettingsWindow(): void {
 
   // Open on the display the tray/panel is on (not always the primary): a window
   // created without x/y defaults to the primary display, wrong on multi-monitor.
-  const settingsSize = { width: 480, height: 420 };
+  const settingsSize = { width: 620, height: 460 };
   const anchor = tray?.getBounds() ?? panel?.getBounds();
   const display = anchor
     ? screen.getDisplayNearestPoint({ x: anchor.x, y: anchor.y })
