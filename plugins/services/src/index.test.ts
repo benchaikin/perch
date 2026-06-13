@@ -15,7 +15,7 @@ import { test } from "node:test";
 
 import { type CapabilityContext } from "@perch/sdk";
 
-import plugin, { __setLogsSpawn, resolveComposeFile } from "./index.js";
+import plugin, { __setLogsSpawn, __setProviderSpawn, resolveComposeFile } from "./index.js";
 import { generatedComposePath, type SyncComposeResult } from "./compose.js";
 
 /** One request the fake process-compose server saw. */
@@ -24,20 +24,25 @@ interface SeenRequest {
   url: string;
 }
 
+/** A process the fake server reports: a bare name (→ Running) or name + status. */
+type ProcSpec = string | { name: string; status: string };
+
 /**
- * Start a fake process-compose server. `processNames` is the `data` array
- * `GET /processes` returns; every other request 200s. Resolves with its base
- * `address`, the recorded requests, and a `close`.
+ * Start a fake process-compose server. `procs` is the `data` array
+ * `GET /processes` returns (bare strings default to `Running`); every other
+ * request 200s. Resolves with its base `address`, the recorded requests, and a
+ * `close`.
  */
 async function fakeServer(
-  processNames: string[] = [],
+  procs: ProcSpec[] = [],
 ): Promise<{ address: string; seen: SeenRequest[]; close: () => Promise<void> }> {
+  const data = procs.map((p) => (typeof p === "string" ? { name: p, status: "Running" } : p));
   const seen: SeenRequest[] = [];
   const server: Server = createServer((req, res) => {
     seen.push({ method: req.method ?? "", url: req.url ?? "" });
     if (req.url === "/processes") {
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ data: processNames.map((name) => ({ name, status: "Running" })) }));
+      res.end(JSON.stringify({ data }));
       return;
     }
     res.writeHead(200);
@@ -135,6 +140,103 @@ test("services.restartAll reports unreachable when the server is down", async ()
   })) as { ok: boolean; message: string };
   assert.equal(result.ok, false);
   assert.match(result.message, /unreachable/);
+});
+
+test("services.stopAll stops every running service via PATCH /process/stop/{name}", async () => {
+  const cap = plugin.capabilities.stopAll!;
+  assert.equal(cap.kind, "action");
+  assert.equal(cap.expose?.mcp, true);
+
+  const server = await fakeServer(["api", "db"]); // both Running
+  try {
+    const result = (await cap.run({ input: {}, ctx: ctx(server.address) })) as {
+      ok: boolean;
+      message: string;
+    };
+    assert.equal(result.ok, true);
+    assert.match(result.message, /Stopped 2\/2 services/);
+    assert.deepEqual(
+      server.seen
+        .filter((r) => r.method === "PATCH")
+        .map((r) => r.url)
+        .sort(),
+      ["/process/stop/api", "/process/stop/db"],
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("services.startAll starts only the not-running services when the server is up", async () => {
+  const server = await fakeServer([
+    { name: "api", status: "Running" },
+    { name: "db", status: "Stopped" },
+  ]);
+  try {
+    const result = (await plugin.capabilities.startAll!.run({
+      input: {},
+      ctx: ctx(server.address),
+    })) as { ok: boolean; message: string };
+    assert.equal(result.ok, true);
+    assert.match(result.message, /Started 1\/1 service\b/);
+    // Only the stopped `db` is started; the running `api` is left alone.
+    assert.deepEqual(
+      server.seen.filter((r) => r.method === "POST").map((r) => r.url),
+      ["/process/start/db"],
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("services.startAll is a no-op success when everything is already running", async () => {
+  const server = await fakeServer(["api", "db"]); // both Running
+  try {
+    const result = (await plugin.capabilities.startAll!.run({
+      input: {},
+      ctx: ctx(server.address),
+    })) as { ok: boolean; message: string };
+    assert.equal(result.ok, true);
+    assert.match(result.message, /already running/);
+    assert.equal(
+      server.seen.filter((r) => r.method === "POST").length,
+      0,
+      "nothing started when all are running",
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("services.startAll brings process-compose up when the server is down", async () => {
+  const calls: Array<{ command: string; args: readonly string[] }> = [];
+  __setProviderSpawn(((command: string, args: readonly string[]) => {
+    calls.push({ command, args });
+    return { on: () => {}, unref: () => {} };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }) as any);
+  try {
+    const result = (await plugin.capabilities.startAll!.run({
+      input: {},
+      ctx: ctx("http://127.0.0.1:1"), // nothing listening → processes() undefined
+    })) as { ok: boolean; message: string };
+    assert.equal(result.ok, true);
+    assert.match(result.message, /Starting services/);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]!.command, "process-compose");
+    assert.deepEqual([...calls[0]!.args].slice(0, 2), ["up", "-D"]);
+  } finally {
+    __setProviderSpawn(undefined);
+  }
+});
+
+test("services.stopAll is a no-op success when the server is down", async () => {
+  const result = (await plugin.capabilities.stopAll!.run({
+    input: {},
+    ctx: ctx("http://127.0.0.1:1"),
+  })) as { ok: boolean; message: string };
+  assert.equal(result.ok, true);
+  assert.match(result.message, /not running/);
 });
 
 test("resolveComposeFile: procs (non-empty) take precedence over composeFile", () => {

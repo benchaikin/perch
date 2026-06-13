@@ -68,14 +68,29 @@ export interface ServiceRow {
   inFlight: boolean;
 }
 
+/** A top-level (whole-stack) action the Services header offers. */
+export type ServicesBulkAction = "startAll" | "stopAll" | "restartAll";
+
+/** One top-level control button rendered in the Services section header. */
+export interface ServicesControl {
+  action: ServicesBulkAction;
+  label: string;
+}
+
 /**
- * The rendered Services section. `visible` is false when the process-compose
- * server is unreachable or reports no services — the renderer then omits the
- * whole section so users without process-compose see the unchanged My-PRs panel.
+ * The rendered Services section. `visible` is false only when there's nothing to
+ * show — no list yet, or no processes live *and* none configured — so users
+ * without process-compose see the unchanged My-PRs panel. When process-compose
+ * is down but procs are configured, the rows surface as `stopped` and the header
+ * offers **Start all** to bring the stack up. `controls` is the top-level button
+ * set; `bulkActing` names the whole-stack action currently in flight (its button
+ * spins and the cluster disables), if any.
  */
 export interface ServicesSection {
   visible: boolean;
   rows: ServiceRow[];
+  controls: ServicesControl[];
+  bulkActing?: ServicesBulkAction;
 }
 
 /** Map a normalized status to its marker health (color). */
@@ -144,19 +159,41 @@ export function toServiceRow(svc: Service, inFlight: ReadonlySet<string>): Servi
 }
 
 /**
- * Build the Services section from the latest `services.list` output. The section
- * is hidden (`visible: false`) when the list is absent, the server is
- * unreachable (`available: false`), or there are no services — so the panel is
- * unchanged for users without process-compose. `acting` is the set of service
- * names with an in-flight action (default empty).
+ * The top-level controls for a section, given server reachability. When the
+ * server is **up** the full Start/Stop/Restart-all trio applies; when it's
+ * **down** (rows are configured-but-stopped procs) only **Start all** makes
+ * sense — it brings process-compose up on demand.
+ */
+function servicesControls(available: boolean): ServicesControl[] {
+  if (!available) return [{ action: "startAll", label: "Start all" }];
+  return [
+    { action: "startAll", label: "Start all" },
+    { action: "stopAll", label: "Stop all" },
+    { action: "restartAll", label: "Restart all" },
+  ];
+}
+
+/**
+ * Build the Services section from the latest `services.list` output. Hidden
+ * (`visible: false`) only when the list is absent or has no rows — note an
+ * unreachable server can still carry configured procs as `stopped` rows, so the
+ * section shows (with **Start all**) even when process-compose is down. `acting`
+ * is the set of service names with an in-flight per-row action; `bulkActing` is
+ * the whole-stack action currently running, if any.
  */
 export function buildServicesSection(
   list: ServiceList | undefined,
   acting: readonly string[] = [],
+  bulkActing?: ServicesBulkAction,
 ): ServicesSection {
-  if (!list || !list.available || list.services.length === 0) {
-    return { visible: false, rows: [] };
+  if (!list || list.services.length === 0) {
+    return { visible: false, rows: [], controls: [] };
   }
   const inFlight = new Set(acting);
-  return { visible: true, rows: list.services.map((svc) => toServiceRow(svc, inFlight)) };
+  return {
+    visible: true,
+    rows: list.services.map((svc) => toServiceRow(svc, inFlight)),
+    controls: servicesControls(list.available),
+    bulkActing,
+  };
 }

@@ -92,14 +92,30 @@ export function toService(state: ProcessState): Service {
   });
 }
 
+/** Synthesize a `stopped` {@link Service} for a configured-but-absent proc. */
+function stoppedService(name: string): Service {
+  return Service.parse({ name, status: "stopped" });
+}
+
 /**
- * Build the `services.list` output from a raw process list. `processes` is
- * `undefined` when the server is unreachable → `available: false` + empty list
- * (the read never throws). An empty-but-reachable server is `available: true`.
+ * Build the `services.list` output from a raw process list and the names of the
+ * user's **configured** procs (`plugins.services.procs[]`).
+ *
+ * `processes` is `undefined` when the server is unreachable → `available: false`,
+ * but any configured procs still surface as `stopped` rows so the panel shows
+ * what's defined (and offers Start-all) even with process-compose down. When the
+ * server is reachable, live processes are mapped and any configured proc not in
+ * the live set is appended as `stopped`. The read never throws.
  */
-export function buildServiceList(processes: ProcessState[] | undefined): ServiceList {
+export function buildServiceList(
+  processes: ProcessState[] | undefined,
+  procNames: readonly string[] = [],
+): ServiceList {
   if (processes === undefined) {
-    return { services: [], available: false };
+    return { services: procNames.map(stoppedService), available: false };
   }
-  return { services: processes.map(toService), available: true };
+  const services = processes.map(toService);
+  const live = new Set(services.map((s) => s.name));
+  const missing = procNames.filter((name) => !live.has(name)).map(stoppedService);
+  return { services: [...services, ...missing], available: true };
 }

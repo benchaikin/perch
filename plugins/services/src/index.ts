@@ -3,9 +3,10 @@
  *
  * Connects Perch to a running `process-compose` server over its REST API
  * (preferring a Unix socket) and surfaces live per-process status as the
- * subscribable `services.list` read plus the `services.start`/`stop`/`restart`/
- * `restartAll` actions (Dev services M2). M1 was read-only + crash
- * notifications; log streaming lands in M3.
+ * subscribable `services.list` read plus the `services.start`/`stop`/`restart`
+ * actions and the whole-stack `services.startAll`/`stopAll`/`restartAll` (Dev
+ * services M2). M1 was read-only + crash notifications; log streaming lands in
+ * M3. `startAll` also brings process-compose up on demand when it's down.
  */
 import type { spawn as nodeSpawn } from "node:child_process";
 
@@ -14,7 +15,7 @@ import { action, definePlugin, read, validateSettingsDescriptor, z } from "@perc
 import { syncCompose, type Proc } from "./compose.js";
 import { DEFAULT_LOG_TERMINAL, spawnLogsTerminal, type SpawnLogsOptions } from "./logs.js";
 import { crashNotifications } from "./notify.js";
-import { buildServiceList, ServiceList } from "./services.js";
+import { buildServiceList, mapStatus, ServiceList, type ServiceStatus } from "./services.js";
 import { ServicesProvider, type ServerTarget } from "./provider.js";
 
 export type { FetchJson, ProcessState, ServerTarget } from "./provider.js";
@@ -46,6 +47,19 @@ let logsSpawn: typeof nodeSpawn | undefined;
 /** Inject a `spawn` stub for `services.logs` (tests only); pass `undefined` to reset. */
 export function __setLogsSpawn(spawnFn: typeof nodeSpawn | undefined): void {
   logsSpawn = spawnFn;
+}
+
+/**
+ * Test seam for the spawn the provider uses to bring process-compose **up**
+ * (autostart / `services.startAll` when the server is down). `ctx` carries no
+ * spawn, so tests override this to assert (or no-op) the `process-compose up -D`
+ * launch instead of spawning the real binary. Defaults to the real spawn.
+ */
+let providerSpawn: typeof nodeSpawn | undefined;
+
+/** Inject a `spawn` stub for the provider's server-up launch (tests only). */
+export function __setProviderSpawn(spawnFn: typeof nodeSpawn | undefined): void {
+  providerSpawn = spawnFn;
 }
 
 /**
@@ -153,6 +167,7 @@ function providerOf(ctx: { config: unknown; log: (message: string) => void }): S
     composeFile: resolveComposeFile(cfg, ctx.log),
     autostart: cfg.autostart,
     log: ctx.log,
+    spawn: providerSpawn,
   });
 }
 
@@ -162,6 +177,19 @@ type ActionResult = z.infer<typeof ActionResult>;
 
 /** Input shared by the single-service actions: the process name to target. */
 const ServiceActionInput = z.object({ name: z.string() });
+
+/** Input for the bulk (whole-stack) actions: no arguments. */
+const BulkActionInput = z.object({}).default({});
+
+/** A process that's up or coming up — Stop applies to it; Start doesn't. */
+function isRunningStatus(status: ServiceStatus): boolean {
+  return status === "running" || status === "starting";
+}
+
+/** Pluralized "Verbed n/total services." summary for the bulk actions. */
+function bulkMessage(verb: string, done: number, total: number): string {
+  return `${verb} ${done}/${total} service${total === 1 ? "" : "s"}.`;
+}
 
 export default definePlugin({
   id: "services",
@@ -214,7 +242,13 @@ export default definePlugin({
       refresh: { every: "5s", on: ["focus"] },
       view: { kind: "list", title: "Services" },
       expose: { mcp: true },
-      run: async ({ ctx }) => buildServiceList(await providerOf(ctx).processes()),
+      // Pass the configured proc names so they surface as `stopped` rows even
+      // when process-compose is down — the panel stays visible to launch from.
+      run: async ({ ctx }) => {
+        const cfg = configOf(ctx.config);
+        const procNames = (cfg.procs ?? []).map((p) => p.name);
+        return buildServiceList(await providerOf(ctx).processes(), procNames);
+      },
       // Diff each poll against the previous list and fire one notification per
       // process that newly entered `crashed`. `prev`/`next` carry the schema's
       // input type (defaulted fields optional); normalize via `ServiceList.parse`
@@ -270,6 +304,12 @@ export default definePlugin({
       },
     }),
 
+    // ── Bulk (whole-stack) actions ──
+    // start / stop / restart every process at once, for the panel's top-level
+    // "Start all / Stop all / Restart all" controls (and as single agent tools).
+    // `startAll` additionally brings process-compose **up on demand** when the
+    // server is down — the path for procs that are defined but not auto-started.
+
     /**
      * Best-effort restart of every supervised process: enumerate the current
      * list (`processes()`) and `restart` each. Reports how many of N succeeded;
@@ -278,7 +318,7 @@ export default definePlugin({
      */
     restartAll: action<Record<string, never> | undefined, unknown, ActionResult>({
       summary: "Restart every process-compose service (best-effort)",
-      input: z.object({}).default({}),
+      input: BulkActionInput,
       expose: { mcp: true },
       run: async ({ ctx }) => {
         const provider = providerOf(ctx);
@@ -291,9 +331,66 @@ export default definePlugin({
         const restarted = results.filter(Boolean).length;
         return {
           ok: restarted === names.length,
-          message: `Restarted ${restarted}/${names.length} service${
-            names.length === 1 ? "" : "s"
-          }.`,
+          message: bulkMessage("Restarted", restarted, names.length),
+        };
+      },
+    }),
+
+    /**
+     * Start the whole stack. When process-compose is **down**, bring it up on
+     * demand (`process-compose up -D`, which launches the server *and* every
+     * configured proc) and report success optimistically — a subsequent poll
+     * reflects the live statuses. When it's already **up**, start each process
+     * that isn't running/starting and report how many of N took.
+     */
+    startAll: action<Record<string, never> | undefined, unknown, ActionResult>({
+      summary: "Start every service, bringing process-compose up if it's down",
+      input: BulkActionInput,
+      expose: { mcp: true },
+      run: async ({ ctx }) => {
+        const provider = providerOf(ctx);
+        const processes = await provider.processes();
+        if (processes === undefined) {
+          provider.startServer();
+          return { ok: true, message: "Starting services…" };
+        }
+        const targets = processes
+          .filter((p) => !isRunningStatus(mapStatus(p.status, p.exit_code)))
+          .map((p) => p.name);
+        if (targets.length === 0) return { ok: true, message: "All services already running." };
+        const results = await Promise.all(targets.map((name) => provider.action(name, "start")));
+        const started = results.filter(Boolean).length;
+        return {
+          ok: started === targets.length,
+          message: bulkMessage("Started", started, targets.length),
+        };
+      },
+    }),
+
+    /**
+     * Stop the whole stack: stop every running/starting process. An unreachable
+     * server (nothing running) is a no-op success; with the server up, reports
+     * how many of the running N stopped.
+     */
+    stopAll: action<Record<string, never> | undefined, unknown, ActionResult>({
+      summary: "Stop every running process-compose service",
+      input: BulkActionInput,
+      expose: { mcp: true },
+      run: async ({ ctx }) => {
+        const provider = providerOf(ctx);
+        const processes = await provider.processes();
+        if (processes === undefined) {
+          return { ok: true, message: "process-compose is not running." };
+        }
+        const targets = processes
+          .filter((p) => isRunningStatus(mapStatus(p.status, p.exit_code)))
+          .map((p) => p.name);
+        if (targets.length === 0) return { ok: true, message: "No running services to stop." };
+        const results = await Promise.all(targets.map((name) => provider.action(name, "stop")));
+        const stopped = results.filter(Boolean).length;
+        return {
+          ok: stopped === targets.length,
+          message: bulkMessage("Stopped", stopped, targets.length),
         };
       },
     }),

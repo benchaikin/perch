@@ -283,6 +283,46 @@ body {
   color: var(--muted);
 }
 
+/* Services section header: the "SERVICES" title on the left, the whole-stack
+   Start/Stop/Restart-all controls on the right. */
+.services-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.services-controls {
+  display: inline-flex;
+  gap: 4px;
+}
+/* Top-level bulk buttons: icon + text label (wider than the icon-only row
+   buttons), tinted like the matching row action. Shape (play/stop/rotate) is
+   the non-color cue; `.tint-*` layers the palette color. */
+.services-controls .btn.service-bulk-btn {
+  height: 20px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--muted);
+}
+.services-controls .btn.service-bulk-btn:hover:not(:disabled) {
+  border-color: currentColor;
+}
+.services-controls .btn.service-bulk-btn.tint-start {
+  color: var(--ok);
+}
+.services-controls .btn.service-bulk-btn.tint-stop {
+  color: var(--bad);
+}
+.services-controls .btn.service-bulk-btn.tint-restart {
+  color: var(--warn);
+}
+
 /* Position number on a stacked PR (1 = trunk-adjacent base, up to the tip),
    colored by that layer's health (.ok green / .bad error red). */
 .num {

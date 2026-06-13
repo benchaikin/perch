@@ -4,7 +4,7 @@
  * is safe to import from any of the three contexts.
  */
 import type { PanelState } from "./panel-state.js";
-import type { ServiceAction } from "./services-state.js";
+import type { ServiceAction, ServicesBulkAction } from "./services-state.js";
 
 /** Renderer → main payload for a service lifecycle action (M2). */
 export interface ServiceActionRequest {
@@ -30,6 +30,11 @@ export const Channels = {
    */
   serviceAction: "perch:service-action",
   /**
+   * Renderer → main: invoke a whole-stack action (payload: a
+   * {@link ServicesBulkAction}). Main runs `services.<startAll|stopAll|restartAll>`.
+   */
+  servicesBulk: "perch:services-bulk",
+  /**
    * Renderer → main: open a terminal tailing a service's logs (payload: the
    * process name). Main runs `services.logs` (fire-and-forget; M3).
    */
@@ -51,6 +56,8 @@ export interface PerchBridge {
   openPr(url: string): void;
   /** Ask the main process to start/stop/restart a service (by name). */
   serviceAction(request: ServiceActionRequest): void;
+  /** Ask the main process to run a whole-stack action (start/stop/restart all). */
+  servicesBulk(action: ServicesBulkAction): void;
   /** Ask the main process to open a terminal tailing a service's logs (by name). */
   serviceLogs(name: string): void;
 }
