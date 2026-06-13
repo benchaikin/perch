@@ -9,7 +9,7 @@
     "build": "tsc -b && node esbuild.mjs",
     "start": "electron .",
     "dist": "pnpm build && electron-builder build --mac",
-    "test": "node --import tsx --test src/**/*.test.ts"
+    "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "devDependencies": {
     "@fortawesome/fontawesome-free": "^7.2.0",

@@ -11,7 +11,7 @@
   },
   "scripts": {
     "build": "tsc -b",
-    "test": "node --import tsx --test src/**/*.test.ts"
+    "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@perch/core": "workspace:*",
