@@ -8,10 +8,12 @@
  * (the main process owns the folder picker, validation, and config RPCs).
  */
 import { contextBridge, ipcRenderer } from "electron";
+import type { Proc } from "./procs.js";
 import {
   SettingsChannels,
   type PerchSettingsBridge,
   type PluginSettingsResult,
+  type ServicesResult,
   type SetFieldRequest,
   type SettingsResult,
 } from "./settings-ipc.js";
@@ -34,6 +36,15 @@ const bridge: PerchSettingsBridge = {
   },
   setField(request: SetFieldRequest): Promise<PluginSettingsResult> {
     return ipcRenderer.invoke(SettingsChannels.setField, request);
+  },
+  listProcs(): Promise<ServicesResult> {
+    return ipcRenderer.invoke(SettingsChannels.listProcs);
+  },
+  addProc(proc: Proc): Promise<ServicesResult> {
+    return ipcRenderer.invoke(SettingsChannels.addProc, proc);
+  },
+  removeProc(name): Promise<ServicesResult> {
+    return ipcRenderer.invoke(SettingsChannels.removeProc, name);
   },
 };
 
