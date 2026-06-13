@@ -203,9 +203,10 @@ body {
   font-size: 10px;
 }
 
-/* Standalone-PR / service marker; a health-shaped glyph (PRs) or ● (services),
-   colored by health (.ok green / .warn amber / .bad red). Fixed 16px box (like
-   .num) so the differing glyph widths keep the following text aligned. */
+/* Standalone-PR / service marker; a health-shaped Font Awesome glyph (check /
+   triangle / x / circle), colored by health (.ok green / .warn amber / .bad red
+   / .muted grey). Shape is a non-color cue so health never depends on hue alone.
+   Fixed 16px box (like .num) so the differing glyph widths keep text aligned. */
 .dot {
   flex: 0 0 auto;
   width: 16px;

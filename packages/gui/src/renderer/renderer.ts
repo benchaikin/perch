@@ -6,7 +6,12 @@
  * plain browser JS by esbuild.
  */
 import type { GroupRow, Health, PanelState, PrRow, RepoSection } from "../panel-state.js";
-import type { ServiceAction, ServiceRow, ServicesSection } from "../services-state.js";
+import type {
+  ServiceAction,
+  ServiceHealth,
+  ServiceRow,
+  ServicesSection,
+} from "../services-state.js";
 
 /**
  * The health marker is a distinct Font Awesome *shape* per state (not just a
@@ -22,6 +27,18 @@ const HEALTH_LABEL: Record<Health, string> = {
   ok: "Clean",
   warn: "Review comments to address",
   bad: "Needs attention",
+};
+
+/**
+ * Service markers carry a fourth state — `muted` (stopped) — on top of the
+ * PR health trio. Reuse the same shapes for the overlapping states so PR and
+ * service dots read consistently, and give "stopped" a plain neutral circle.
+ */
+const SERVICE_HEALTH_ICON: Record<ServiceHealth, string> = {
+  ok: HEALTH_ICON.ok,
+  warn: HEALTH_ICON.warn,
+  bad: HEALTH_ICON.bad,
+  muted: "circle",
 };
 
 /**
@@ -229,9 +246,9 @@ function serviceRowEl(svc: ServiceRow): HTMLElement {
   el.className = "row service-row";
   el.title = `${svc.name} — ${svc.statusLabel}${svc.detail ? ` (${svc.detail})` : ""}`;
 
-  const dot = document.createElement("span");
-  dot.className = `dot ${svc.health}`;
-  dot.textContent = "●";
+  const dot = document.createElement("i");
+  dot.className = `dot ${svc.health} fa-solid fa-${SERVICE_HEALTH_ICON[svc.health]}`;
+  dot.title = svc.statusLabel;
   el.append(dot);
 
   const name = document.createElement("span");
