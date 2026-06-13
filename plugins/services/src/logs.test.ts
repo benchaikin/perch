@@ -14,7 +14,9 @@ import {
   applyLogTerminalTemplate,
   buildLogsCommand,
   DEFAULT_LOG_TERMINAL,
+  resolveLogTerminal,
   spawnLogsTerminal,
+  TERMINAL_APP_TEMPLATES,
 } from "./logs.js";
 
 test("buildLogsCommand: socket target uses --use-uds --unix-socket", () => {
@@ -49,6 +51,47 @@ test("DEFAULT_LOG_TERMINAL embeds {cmd} inside the AppleScript do-script", () =>
     "process-compose process logs 'api' -f",
   );
   assert.match(out, /do script "process-compose process logs 'api' -f"/);
+});
+
+test("TERMINAL_APP_TEMPLATES: Terminal preset is the default; every preset carries {cmd}", () => {
+  assert.equal(TERMINAL_APP_TEMPLATES.Terminal, DEFAULT_LOG_TERMINAL);
+  for (const [app, template] of Object.entries(TERMINAL_APP_TEMPLATES)) {
+    assert.match(template, /\{cmd\}/, `${app} preset must contain {cmd}`);
+  }
+});
+
+test("TERMINAL_APP_TEMPLATES: iTerm2 preset drives the iTerm AppleScript", () => {
+  assert.match(TERMINAL_APP_TEMPLATES.iTerm2, /tell application "iTerm"/);
+  assert.match(TERMINAL_APP_TEMPLATES.iTerm2, /create window with default profile/);
+  assert.match(TERMINAL_APP_TEMPLATES.iTerm2, /write text "\{cmd\}"/);
+});
+
+test("resolveLogTerminal: a chosen terminalApp picks its preset", () => {
+  assert.equal(resolveLogTerminal({ terminalApp: "iTerm2" }), TERMINAL_APP_TEMPLATES.iTerm2);
+  assert.equal(resolveLogTerminal({ terminalApp: "kitty" }), TERMINAL_APP_TEMPLATES.kitty);
+});
+
+test("resolveLogTerminal: explicit logTerminal (Custom) overrides the app preset", () => {
+  assert.equal(
+    resolveLogTerminal({ terminalApp: "iTerm2", logTerminal: "MINE {cmd}" }),
+    "MINE {cmd}",
+  );
+});
+
+test("resolveLogTerminal: no app + no template, and unknown/Custom app → Terminal default", () => {
+  assert.equal(resolveLogTerminal({}), DEFAULT_LOG_TERMINAL);
+  assert.equal(resolveLogTerminal({ terminalApp: "Custom" }), DEFAULT_LOG_TERMINAL);
+  assert.equal(resolveLogTerminal({ terminalApp: "nonsense" }), DEFAULT_LOG_TERMINAL);
+});
+
+test("spawnLogsTerminal: terminalApp selects the preset for the spawned command", () => {
+  const { spawn, calls } = stubSpawn();
+  spawnLogsTerminal({ name: "api", socket: "/s.sock", terminalApp: "iTerm2", spawn });
+  const expected = applyLogTerminalTemplate(
+    TERMINAL_APP_TEMPLATES.iTerm2,
+    "process-compose process logs 'api' -f --use-uds --unix-socket '/s.sock'",
+  );
+  assert.deepEqual(calls[0]!.args, ["-c", expected]);
 });
 
 /** A spawn stub recording its calls; returns a child with `on`/`unref` no-ops. */

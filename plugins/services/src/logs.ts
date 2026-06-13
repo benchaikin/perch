@@ -24,6 +24,44 @@ export const DEFAULT_LOG_TERMINAL =
   `osascript -e 'tell application "Terminal" to do script "{cmd}"' ` +
   `-e 'tell application "Terminal" to activate'`;
 
+/**
+ * Built-in launcher presets keyed by terminal app, so the user can just pick
+ * their terminal in Settings instead of hand-authoring an osascript/CLI
+ * invocation. Each carries the same `{cmd}` placeholder. The AppleScript apps
+ * (Terminal.app, iTerm2) open a new window and run the logs command; the CLI
+ * apps launch a fresh OS window via `open -na` / their own CLI. `Custom` is not
+ * here — it's the {@link SpawnLogsOptions.logTerminal} free-text escape hatch.
+ */
+export const TERMINAL_APP_TEMPLATES = {
+  Terminal: DEFAULT_LOG_TERMINAL,
+  iTerm2:
+    `osascript ` +
+    `-e 'tell application "iTerm" to create window with default profile' ` +
+    `-e 'tell application "iTerm" to tell current session of current window to write text "{cmd}"' ` +
+    `-e 'tell application "iTerm" to activate'`,
+  kitty: `open -na kitty --args sh -c "{cmd}"`,
+  WezTerm: `open -na WezTerm --args start -- sh -c "{cmd}"`,
+  Ghostty: `open -na Ghostty --args -e sh -c "{cmd}"`,
+  tmux: `tmux new-window "{cmd}"`,
+} as const;
+
+/** A known terminal app name (a key of {@link TERMINAL_APP_TEMPLATES}). */
+export type TerminalApp = keyof typeof TERMINAL_APP_TEMPLATES;
+
+/**
+ * Resolve the launcher template from the two config knobs, in precedence order:
+ * an explicit `logTerminal` (the **Custom** escape hatch) wins; otherwise the
+ * chosen `terminalApp` preset; otherwise the Terminal.app default. An unknown
+ * `terminalApp` (e.g. `"Custom"` with no `logTerminal`) falls back to default.
+ */
+export function resolveLogTerminal(opts: { terminalApp?: string; logTerminal?: string }): string {
+  if (opts.logTerminal) return opts.logTerminal;
+  if (opts.terminalApp && opts.terminalApp in TERMINAL_APP_TEMPLATES) {
+    return TERMINAL_APP_TEMPLATES[opts.terminalApp as TerminalApp];
+  }
+  return DEFAULT_LOG_TERMINAL;
+}
+
 /** The `{cmd}` placeholder substituted with the inner logs command. */
 const CMD_PLACEHOLDER = "{cmd}";
 
@@ -70,7 +108,16 @@ export function applyLogTerminalTemplate(template: string, cmd: string): string 
 export interface SpawnLogsOptions extends ServerTarget {
   /** The process name to tail. */
   name: string;
-  /** The launcher template (`{cmd}` placeholder); defaults to {@link DEFAULT_LOG_TERMINAL}. */
+  /**
+   * Chosen terminal app, picking a {@link TERMINAL_APP_TEMPLATES} preset. Lower
+   * precedence than an explicit {@link logTerminal} (the Custom escape hatch).
+   */
+  terminalApp?: string;
+  /**
+   * An explicit launcher template (`{cmd}` placeholder) — the Custom escape
+   * hatch that overrides {@link terminalApp}. Defaults (when both are unset) to
+   * {@link DEFAULT_LOG_TERMINAL}.
+   */
   logTerminal?: string;
   /** Optional log sink. */
   log?: (message: string) => void;
@@ -92,7 +139,11 @@ export function spawnLogsTerminal(options: SpawnLogsOptions): { ok: boolean; mes
     ? { socket: options.socket }
     : { address: options.address ?? DEFAULT_ADDRESS };
   const inner = buildLogsCommand(options.name, target);
-  const launch = applyLogTerminalTemplate(options.logTerminal ?? DEFAULT_LOG_TERMINAL, inner);
+  const template = resolveLogTerminal({
+    terminalApp: options.terminalApp,
+    logTerminal: options.logTerminal,
+  });
+  const launch = applyLogTerminalTemplate(template, inner);
   const spawnFn = options.spawn ?? spawn;
   try {
     const child = spawnFn("sh", ["-c", launch], { detached: true, stdio: "ignore" });
