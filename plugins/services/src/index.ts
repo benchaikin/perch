@@ -88,10 +88,18 @@ const ServicesConfig = z.object({
   /** Spawn `process-compose up -D` when the server is unreachable. */
   autostart: z.boolean().optional(),
   /**
+   * Which terminal app the `services.logs` button opens, picking a built-in
+   * launcher preset (Terminal.app | iTerm2 | kitty | WezTerm | Ghostty | tmux).
+   * Lower precedence than {@link logTerminal} — choose `Custom` and set
+   * `logTerminal` for anything not listed. Defaults to Terminal.app.
+   */
+  terminalApp: z.string().optional(),
+  /**
    * Terminal launcher template for the `services.logs` jump-to-logs action: a
    * shell command with a `{cmd}` placeholder Perch substitutes with the
-   * `process-compose process logs <name> -f` command. Defaults to
-   * {@link DEFAULT_LOG_TERMINAL} (open Terminal.app via AppleScript on macOS).
+   * `process-compose process logs <name> -f` command. The **Custom** escape
+   * hatch — when set it overrides {@link terminalApp}. Defaults (with no
+   * `terminalApp` either) to {@link DEFAULT_LOG_TERMINAL} (Terminal.app).
    */
   logTerminal: z.string().optional(),
 });
@@ -164,13 +172,31 @@ export default definePlugin({
   // template so users on a non-Terminal.app setup can point it at their terminal.
   settings: validateSettingsDescriptor([
     {
+      key: "terminalApp",
+      type: "enum",
+      label: "Logs terminal app",
+      description:
+        "Which terminal the Logs button opens to tail a process. Pick your app, " +
+        "or choose Custom and set the command template below.",
+      default: "Terminal",
+      options: [
+        { value: "Terminal", label: "Terminal.app" },
+        { value: "iTerm2", label: "iTerm2" },
+        { value: "kitty", label: "kitty" },
+        { value: "WezTerm", label: "WezTerm" },
+        { value: "Ghostty", label: "Ghostty" },
+        { value: "tmux", label: "tmux" },
+        { value: "Custom", label: "Custom (use the command below)" },
+      ],
+    },
+    {
       key: "logTerminal",
       type: "string",
-      label: "Logs terminal command",
+      label: "Custom logs terminal command",
       description:
-        "Command template used by the Logs button to open a terminal tailing a " +
-        "process. Use `{cmd}` where the `process-compose process logs` command " +
-        "should go. Defaults to opening Terminal.app via AppleScript on macOS.",
+        "Only used when the app above is Custom: a command template the Logs " +
+        "button runs. Use `{cmd}` where the `process-compose process logs` " +
+        "command should go.",
       default: DEFAULT_LOG_TERMINAL,
     },
   ]),
@@ -294,6 +320,7 @@ export default definePlugin({
           name: input.name,
           socket: cfg.socket,
           address: cfg.address,
+          terminalApp: cfg.terminalApp,
           logTerminal: cfg.logTerminal,
           log: ctx.log,
           spawn: logsSpawn,
