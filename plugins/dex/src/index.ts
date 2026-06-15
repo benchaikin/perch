@@ -17,10 +17,12 @@ import { basename, join } from "node:path";
 import { definePlugin, read, validateSettingsDescriptor, z } from "@perch/sdk";
 
 import { buildDexBoard, DexBoard, type DexGroup, parseRawTasks } from "./normalize.js";
+import { dexNotifications } from "./notify.js";
 import { DexProvider, type Exec } from "./provider.js";
 
 export { buildDexBoard, DexBoard, DexStatus, DexTaskView, parseRawTasks, RawDexTask } from "./normalize.js";
 export type { DexGroup } from "./normalize.js";
+export { dexNotifications } from "./notify.js";
 export { DexProvider } from "./provider.js";
 export type { Exec, ListOptions } from "./provider.js";
 
@@ -82,6 +84,18 @@ export default definePlugin({
       description: "Include done tasks in the board (greyed out) instead of hiding them.",
       default: false,
     },
+    {
+      key: "dexBin",
+      type: "string",
+      label: "dex binary path",
+      description:
+        "Path to the `dex` CLI. Leave as `dex` to use PATH; set an absolute path " +
+        "if the daemon can't find it (e.g. an nvm/volta install when launched from Finder).",
+      default: "dex",
+    },
+    // `dirs` (the monitored project roots) stays a perch.json-only setting: the
+    // generic settings UI has no list field type yet, and exposing a string[] as
+    // a single text input would fight the config schema. Edit it in perch.json.
   ]),
   capabilities: {
     /**
@@ -125,6 +139,9 @@ export default definePlugin({
 
         return buildDexBoard(groups);
       },
+      // Announce tasks newly blocked, or freshly ready (unblocked) so an agent can
+      // pick them up. `prev`/`next` are validated DexBoards; skip the first poll.
+      notify: ({ prev, next }) => dexNotifications(prev, next),
     }),
   },
 });
