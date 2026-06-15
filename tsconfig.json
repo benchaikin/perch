@@ -8,6 +8,7 @@
     { "path": "packages/gui" },
     { "path": "plugins/stack" },
     { "path": "plugins/services" },
-    { "path": "plugins/dex" }
+    { "path": "plugins/dex" },
+    { "path": "plugins/worktrees" }
   ]
 }

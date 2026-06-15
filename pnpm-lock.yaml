@@ -138,6 +138,15 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sdk
 
+  plugins/worktrees:
+    dependencies:
+      '@perch/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@perch/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
 packages:
 
   '@electron/asar@3.4.1':
