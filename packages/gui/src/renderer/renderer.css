@@ -229,10 +229,9 @@ body {
   letter-spacing: 0.04em;
 }
 
-/* Worktree rows reuse .row/.dot/.chip/.branch; not click-to-open yet (the open
-   action lands with the worktrees config task). */
+/* Worktree rows reuse .row/.dot/.chip/.branch; click opens the worktree dir. */
 .worktree-row {
-  cursor: default;
+  cursor: pointer;
 }
 
 .repo-error {

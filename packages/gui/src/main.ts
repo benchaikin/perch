@@ -504,6 +504,16 @@ async function serviceLogs(name: string): Promise<void> {
   }
 }
 
+/** Open a worktree directory via the worktrees plugin's `open` action. */
+async function openWorktree(path: string): Promise<void> {
+  if (!client) return;
+  try {
+    await client.invoke({ id: "worktrees.open", input: { path } });
+  } catch (err) {
+    showNotice({ tone: "bad", text: `Open worktree failed: ${errorMessage(err)}` });
+  }
+}
+
 /** Show a transient status toast; auto-dismiss after a few seconds. */
 function showNotice(notice: Notice): void {
   buildInput.notice = notice;
@@ -1022,6 +1032,7 @@ function registerIpc(): void {
     (_event, action: ServicesBulkAction) => void servicesBulk(action),
   );
   ipcMain.on(Channels.serviceLogs, (_event, name: string) => void serviceLogs(name));
+  ipcMain.on(Channels.worktreeOpen, (_event, path: string) => void openWorktree(path));
   // Clipboard writes go through main (Electron's clipboard) rather than the
   // renderer's navigator.clipboard, which a non-activating panel can't rely on.
   ipcMain.on(Channels.copyText, (_event, text: string) => {

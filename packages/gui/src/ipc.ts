@@ -43,6 +43,8 @@ export const Channels = {
   copyText: "perch:copy-text",
   /** Renderer → main: persist the selected tab id (payload: the tab id). */
   setActiveTab: "perch:set-active-tab",
+  /** Renderer → main: open a worktree dir (payload: the path). Main runs `worktrees.open`. */
+  worktreeOpen: "perch:worktree-open",
 } as const;
 
 /**
@@ -68,6 +70,8 @@ export interface PerchBridge {
   copyText(text: string): void;
   /** Tell the main process which tab is now selected, so it persists across opens. */
   setActiveTab(id: string): void;
+  /** Ask the main process to open a worktree directory (by path). */
+  worktreeOpen(path: string): void;
 }
 
 declare global {

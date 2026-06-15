@@ -717,6 +717,9 @@ function worktreeRowEl(row: WorktreeRow): HTMLElement {
     chips.append(p);
   }
   el.append(chips);
+
+  // Click opens the worktree directory via the configured command.
+  el.addEventListener("click", () => window.perch.worktreeOpen(row.path));
   return el;
 }
 

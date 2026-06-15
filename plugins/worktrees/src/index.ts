@@ -9,9 +9,13 @@
  * The read never throws: a non-git directory or git failure degrades to an empty
  * list, so the section simply hides.
  */
-import { definePlugin, read, z } from "@perch/sdk";
+import type { spawn as nodeSpawn } from "node:child_process";
+
+import { action, definePlugin, read, validateSettingsDescriptor, z } from "@perch/sdk";
 
 import { buildWorktrees, parseStatus, parseWorktreeList, Worktrees, type WorktreeStatus } from "./parse.js";
+import { buildOpenCommand, DEFAULT_OPEN_COMMAND, spawnOpen } from "./open.js";
+import { worktreeNotifications } from "./notify.js";
 import { WorktreesProvider, type Exec } from "./provider.js";
 
 export {
@@ -24,6 +28,8 @@ export {
   worktreeHealth,
 } from "./parse.js";
 export type { RawWorktree, WorktreeHealth, WorktreeStatus } from "./parse.js";
+export { buildOpenCommand, DEFAULT_OPEN_COMMAND, spawnOpen } from "./open.js";
+export { worktreeNotifications } from "./notify.js";
 export { WorktreesProvider } from "./provider.js";
 export type { Exec } from "./provider.js";
 
@@ -33,6 +39,13 @@ const WorktreesConfig = z.object({
   repoRoot: z.string().optional(),
   /** Path to the `git` binary; defaults to `git` on PATH. */
   gitBin: z.string().optional(),
+  /**
+   * Command the "open" action runs, with `{path}` substituted by the worktree
+   * dir (e.g. `code {path}`, `cursor {path}`). Defaults to `open {path}` (macOS).
+   */
+  openCommand: z.string().optional(),
+  /** Include the repo's main worktree in the list (default true). */
+  showMain: z.boolean().optional(),
 });
 export type WorktreesConfig = z.infer<typeof WorktreesConfig>;
 
@@ -53,10 +66,37 @@ export function __setExec(exec: Exec | undefined): void {
   execOverride = exec;
 }
 
+/** Test seam for the open action's spawn (tests only); pass `undefined` to reset. */
+let openSpawn: typeof nodeSpawn | undefined;
+export function __setOpenSpawn(spawnFn: typeof nodeSpawn | undefined): void {
+  openSpawn = spawnFn;
+}
+
+/** A small {ok, message} result, mirroring the services actions. */
+const OpenInput = z.object({ path: z.string() });
+
 export default definePlugin({
   id: "worktrees",
   name: "Worktrees",
   config: WorktreesConfig,
+  settings: validateSettingsDescriptor([
+    {
+      key: "openCommand",
+      type: "string",
+      label: "Open command",
+      description:
+        "Command the Open action runs for a worktree. Use `{path}` for the " +
+        "directory, e.g. `code {path}` or `cursor {path}`. Defaults to the OS default.",
+      default: DEFAULT_OPEN_COMMAND,
+    },
+    {
+      key: "showMain",
+      type: "boolean",
+      label: "Show main worktree",
+      description: "Include the repository's primary worktree in the list.",
+      default: true,
+    },
+  ]),
   capabilities: {
     /**
      * The repo's worktrees with per-tree dirtiness + ahead/behind. Subscribable
@@ -90,7 +130,31 @@ export default definePlugin({
               statusByPath.set(r.path, parseStatus(await provider.statusRaw(r.path)));
             }),
         );
-        return buildWorktrees(raws, statusByPath);
+        const board = buildWorktrees(raws, statusByPath);
+        // Optionally hide the main worktree (the dir the daemon runs from).
+        if (cfg.showMain === false) {
+          return { worktrees: board.worktrees.filter((w) => !w.main) };
+        }
+        return board;
+      },
+      // Announce a worktree that newly conflicted, or one that just appeared.
+      notify: ({ prev, next }) => worktreeNotifications(prev, next),
+    }),
+
+    /**
+     * Open a worktree directory via the configured command (editor / terminal /
+     * file manager). Fire-and-forget; MCP-exposed so an agent can jump a human to
+     * a worktree. Returns a small {ok, message}.
+     */
+    open: action<z.infer<typeof OpenInput>, unknown, { ok: boolean; message: string }>({
+      summary: "Open a worktree directory in the configured editor/terminal",
+      input: OpenInput,
+      expose: { mcp: true },
+      run: ({ input, ctx }) => {
+        const cfg = configOf(ctx.config);
+        const command = buildOpenCommand(cfg.openCommand ?? DEFAULT_OPEN_COMMAND, input.path);
+        spawnOpen(command, { spawn: openSpawn });
+        return { ok: true, message: `Opening ${input.path}` };
       },
     }),
   },

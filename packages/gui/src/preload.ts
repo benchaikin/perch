@@ -38,6 +38,9 @@ const bridge: PerchBridge = {
   setActiveTab(id) {
     ipcRenderer.send(Channels.setActiveTab, id);
   },
+  worktreeOpen(path) {
+    ipcRenderer.send(Channels.worktreeOpen, path);
+  },
 };
 
 contextBridge.exposeInMainWorld("perch", bridge);
