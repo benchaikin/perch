@@ -8,8 +8,14 @@
   "scripts": {
     "build": "tsc -b && node esbuild.mjs",
     "start": "electron .",
+    "dev": "node esbuild.mjs && concurrently -k -n esbuild,electron -c blue,green \"node esbuild.mjs --watch\" \"electronmon .\"",
     "dist": "pnpm build && electron-builder build --mac",
     "test": "node --import tsx --test \"src/**/*.test.ts\""
+  },
+  "electronmon": {
+    "patterns": [
+      "dist/**"
+    ]
   },
   "devDependencies": {
     "@fortawesome/fontawesome-free": "^7.2.0",
@@ -17,8 +23,10 @@
     "@perch/core": "workspace:*",
     "@perch/plugin-stack": "workspace:*",
     "@perch/sdk": "workspace:*",
+    "concurrently": "^9.1.0",
     "electron": "^33.0.0",
     "electron-builder": "^26.15.2",
+    "electronmon": "^2.0.3",
     "esbuild": "^0.24.0"
   },
   "build": {
