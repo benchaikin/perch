@@ -444,6 +444,15 @@ const DEX_STATUS_LABEL: Record<DexStatus, string> = {
   done: "Done",
 };
 
+/**
+ * Marker tone (CSS class) for a task's status dot. In-progress reads accent-blue
+ * ("actively being worked") rather than the amber its health tone would give;
+ * everything else uses its health tone.
+ */
+function dexMarkerTone(row: DexRow): string {
+  return row.status === "in-progress" ? "dex-active" : row.health;
+}
+
 /** A small blocker-count chip ("blocked ×N"). */
 function dexBlockedChip(count: number): HTMLElement {
   const badge = document.createElement("span");
@@ -491,7 +500,7 @@ function dexRowEl(row: DexRow): HTMLElement {
   }
 
   const marker = document.createElement("i");
-  marker.className = `dot ${row.health} fa-solid fa-${DEX_STATUS_ICON[row.status]}`;
+  marker.className = `dot ${dexMarkerTone(row)} fa-solid fa-${DEX_STATUS_ICON[row.status]}`;
   marker.title = DEX_STATUS_LABEL[row.status];
   el.append(marker);
 
@@ -536,7 +545,7 @@ function dexDetailEl(row: DexRow): HTMLElement {
   const head = document.createElement("div");
   head.className = "dex-detail-head";
   const marker = document.createElement("i");
-  marker.className = `dot ${row.health} fa-solid fa-${DEX_STATUS_ICON[row.status]}`;
+  marker.className = `dot ${dexMarkerTone(row)} fa-solid fa-${DEX_STATUS_ICON[row.status]}`;
   const title = document.createElement("span");
   title.className = "dex-detail-title";
   title.textContent = row.name;
@@ -574,11 +583,14 @@ function dexHeaderEl(epicIds: string[]): HTMLElement {
   header.className = "repo-header dex-header";
   const allCollapsed = epicIds.every((id) => collapsedDexIds.has(id));
   const btn = document.createElement("button");
-  btn.className = "btn btn-sm dex-toggle-all";
-  btn.title = allCollapsed ? "Expand all" : "Collapse all";
+  // Icon-only, minimalist — reuse the header's subtle borderless icon-button style.
+  btn.className = "icon-btn dex-toggle-all";
+  const label = allCollapsed ? "Expand all" : "Collapse all";
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
   const icon = document.createElement("i");
   icon.className = `fa-solid fa-${allCollapsed ? "angles-down" : "angles-up"}`;
-  btn.append(icon, ` ${allCollapsed ? "Expand all" : "Collapse all"}`);
+  btn.append(icon);
   btn.addEventListener("click", () => {
     if (allCollapsed) collapsedDexIds.clear();
     else for (const id of epicIds) collapsedDexIds.add(id);
