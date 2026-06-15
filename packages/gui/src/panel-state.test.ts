@@ -413,6 +413,36 @@ test("Services tab badge is a bare dot toned by worst service health", () => {
   assert.equal(svc.badge?.tone, "bad");
 });
 
+test("Dex tab appears via the registry when the board is non-empty", () => {
+  const state = buildPanelState({
+    overview: twoPrOverview,
+    daemonUp: true,
+    syncAvailable: true,
+    dexBoard: {
+      tasks: [
+        { id: "e", name: "Epic", status: "ready", priority: 0, depth: 0, isEpic: true, blockedByCount: 0 },
+        { id: "a", name: "Blocked", status: "blocked", priority: 0, depth: 1, isEpic: false, blockedByCount: 1 },
+        { id: "b", name: "Ready", status: "ready", priority: 0, depth: 1, isEpic: false, blockedByCount: 0 },
+      ],
+    },
+  });
+  assert.deepEqual(
+    state.tabs.map((t) => t.id),
+    ["stack.prs", "dex.tasks"],
+  );
+  const dex = state.tabs.find((t) => t.id === "dex.tasks")!;
+  assert.equal(dex.label, "Dex");
+  // Badge counts ready + blocked (the epic is ready too → 2 ready + 1 blocked = 3).
+  assert.equal(dex.badge?.count, 3);
+  assert.equal(dex.badge?.tone, "bad"); // a blocked task dominates
+  // No board → no Dex tab.
+  const noDex = buildPanelState({ overview: twoPrOverview, daemonUp: true, syncAvailable: true });
+  assert.equal(
+    noDex.tabs.some((t) => t.id === "dex.tasks"),
+    false,
+  );
+});
+
 test("buildPanelState: no PRs → PRs tab with a bare muted badge", () => {
   // daemon-down has no overview and no services.
   const down = buildPanelState({ daemonUp: false, syncAvailable: false });

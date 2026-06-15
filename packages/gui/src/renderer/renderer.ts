@@ -15,6 +15,7 @@ import type {
   TabBadge,
 } from "../panel-state.js";
 import { SERVICES_TAB_ID } from "../panel-state.js";
+import { DEX_TASKS_ID, type DexRow, type DexSection, type DexStatus } from "../dex-state.js";
 import type {
   ServiceAction,
   ServiceHealth,
@@ -421,6 +422,66 @@ function servicesSectionEl(section: ServicesSection, showTitle = true): HTMLElem
   return el;
 }
 
+/**
+ * Status-specific marker glyphs for dex task rows. Distinct *shapes* (open
+ * circle / half-filled / no-entry / check) so status reads without relying on
+ * the color a colorblind viewer can't separate; the health tone layers color.
+ */
+const DEX_STATUS_ICON: Record<DexStatus, string> = {
+  ready: "circle",
+  "in-progress": "circle-half-stroke",
+  blocked: "ban",
+  done: "circle-check",
+};
+const DEX_STATUS_LABEL: Record<DexStatus, string> = {
+  ready: "Ready",
+  "in-progress": "In progress",
+  blocked: "Blocked",
+  done: "Done",
+};
+
+/** Build one dex task row: a status-shaped marker, the name, an optional blocker hint. */
+function dexRowEl(row: DexRow): HTMLElement {
+  const el = document.createElement("div");
+  el.className = `row dex-row${row.isEpic ? " dex-epic" : ""}`;
+  // Indent by tree depth so epics → tasks → subtasks read as a hierarchy.
+  el.style.paddingLeft = `${row.depth * 14}px`;
+  const blockedHint = row.blockedByCount > 0 ? ` (blocked by ${row.blockedByCount})` : "";
+  el.title = `${row.name} — ${DEX_STATUS_LABEL[row.status]}${blockedHint}`;
+
+  const marker = document.createElement("i");
+  marker.className = `dot ${row.health} fa-solid fa-${DEX_STATUS_ICON[row.status]}`;
+  marker.title = DEX_STATUS_LABEL[row.status];
+  el.append(marker);
+
+  const name = document.createElement("span");
+  name.className = "branch";
+  name.textContent = row.name;
+  el.append(name);
+
+  if (row.blockedByCount > 0) {
+    const badge = document.createElement("span");
+    badge.className = "chip bad";
+    badge.title = `Blocked by ${row.blockedByCount} task${row.blockedByCount === 1 ? "" : "s"}`;
+    badge.textContent = `blocked ×${row.blockedByCount}`;
+    el.append(badge);
+  }
+  return el;
+}
+
+/**
+ * Build the "Dex" section: one row per task, pre-ordered as a tree and
+ * depth-indented. Returns null when hidden (no dex plugin / no tasks). No section
+ * title — the active "Dex" tab already names it.
+ */
+function dexSectionEl(section: DexSection): HTMLElement | null {
+  if (!section.visible) return null;
+  const el = document.createElement("section");
+  el.className = "repo-section dex-section";
+  for (const row of section.rows) el.append(dexRowEl(row));
+  return el;
+}
+
 /** Render a centered message (empty / daemon-down / error). */
 function messageEl(text: string, isError: boolean): HTMLElement {
   const el = document.createElement("div");
@@ -531,6 +592,9 @@ function render(state: PanelState): void {
     // section's own title (keep its controls toolbar).
     const services = servicesSectionEl(state.services, false);
     if (services) rowsEl.append(services);
+  } else if (activeId === DEX_TASKS_ID) {
+    const dex = dexSectionEl(state.dex);
+    if (dex) rowsEl.append(dex);
   } else {
     renderPrsPane(state);
   }

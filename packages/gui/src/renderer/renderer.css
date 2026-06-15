@@ -316,6 +316,16 @@ body {
   color: var(--muted);
 }
 
+/* Dex task rows: informational (not click-to-open like PR rows), so no pointer.
+   Epics read slightly heavier as group headers; depth indentation is applied
+   inline by the renderer (padding-left per tree depth). */
+.dex-row {
+  cursor: default;
+}
+.dex-epic .branch {
+  font-weight: 600;
+}
+
 /* The per-service status text (e.g. "running · pid 42", "crashed · exit 1"). */
 .service-status {
   flex: 0 0 auto;

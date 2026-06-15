@@ -20,7 +20,13 @@ import {
   type ServicesBulkAction,
   type ServicesSection,
 } from "./services-state.js";
-import { buildDexSection, type DexBoard, type DexSection } from "./dex-state.js";
+import {
+  buildDexSection,
+  worstDexHealth,
+  DEX_TASKS_ID,
+  type DexBoard,
+  type DexSection,
+} from "./dex-state.js";
 
 /** Canonical capability id of the cross-repo "My PRs" read the panel renders. */
 export const STACK_PRS_ID = "stack.prs";
@@ -394,33 +400,71 @@ function worstRepoHealth(repos: RepoSection[]): Health {
   return worst;
 }
 
+/** The derived sections a tab spec inspects to decide visibility + its badge. */
+interface TabContext {
+  repos: RepoSection[];
+  services: ServicesSection;
+  dex: DexSection;
+}
+
 /**
- * Build the plugin tab list from the derived sections. PRs is always first; the
- * Services tab is appended only when its section is visible. The PRs badge shows
- * the open-PR count tinted by the worst PR health, falling back to a bare muted
- * dot when there are none (empty / loading / daemon-down). The Services badge is
- * a bare status dot tinted by the worst service health. Registry-driven by
- * intent: a future plugin's tab slots in after these without renderer changes.
+ * One plugin's tab, declared once. `visible` gates whether the tab shows for the
+ * current state; `badge` computes its glanceable status. Adding a plugin tab is
+ * a single entry here — the renderer draws whatever `buildTabs` returns.
  */
-function buildTabs(repos: RepoSection[], services: ServicesSection): PanelTab[] {
-  const count = panelPrCount(repos);
-  const tabs: PanelTab[] = [
-    {
-      id: STACK_TAB_ID,
-      label: "PRs",
-      icon: "code-pull-request",
-      badge: count > 0 ? { count, tone: worstRepoHealth(repos) } : { tone: "muted" },
+interface TabSpec {
+  id: string;
+  label: string;
+  icon: string;
+  visible: (ctx: TabContext) => boolean;
+  badge: (ctx: TabContext) => TabBadge | undefined;
+}
+
+/**
+ * The ordered tab registry: PRs first (always), then Services and Dex when their
+ * sections are visible. Each spec owns its badge logic — PRs shows the open-PR
+ * count tinted by worst PR health (a bare muted dot when there are none);
+ * Services a bare status dot; Dex the ready+blocked count tinted by worst dex
+ * health (blocked → red), or a bare dot when nothing's waiting.
+ */
+const TAB_SPECS: readonly TabSpec[] = [
+  {
+    id: STACK_TAB_ID,
+    label: "PRs",
+    icon: "code-pull-request",
+    visible: () => true,
+    badge: ({ repos }) => {
+      const count = panelPrCount(repos);
+      return count > 0 ? { count, tone: worstRepoHealth(repos) } : { tone: "muted" };
     },
-  ];
-  if (services.visible) {
-    tabs.push({
-      id: SERVICES_TAB_ID,
-      label: "Services",
-      icon: "gears",
-      badge: { tone: worstServiceHealth(services) },
-    });
-  }
-  return tabs;
+  },
+  {
+    id: SERVICES_TAB_ID,
+    label: "Services",
+    icon: "gears",
+    visible: ({ services }) => services.visible,
+    badge: ({ services }) => ({ tone: worstServiceHealth(services) }),
+  },
+  {
+    id: DEX_TASKS_ID,
+    label: "Dex",
+    icon: "list-check",
+    visible: ({ dex }) => dex.visible,
+    badge: ({ dex }) => {
+      const open = dex.counts.ready + dex.counts.blocked;
+      return { count: open > 0 ? open : undefined, tone: worstDexHealth(dex) };
+    },
+  },
+];
+
+/** Build the visible tabs (in registry order) from the derived sections. */
+function buildTabs(ctx: TabContext): PanelTab[] {
+  return TAB_SPECS.filter((spec) => spec.visible(ctx)).map((spec) => ({
+    id: spec.id,
+    label: spec.label,
+    icon: spec.icon,
+    badge: spec.badge(ctx),
+  }));
 }
 
 /**
@@ -449,7 +493,7 @@ export function buildPanelState(input: BuildInput): PanelState {
       repos: [],
       syncAvailable: false,
       ...live,
-      tabs: buildTabs([], live.services),
+      tabs: buildTabs({ repos: [], services: live.services, dex: live.dex }),
     };
   }
 
@@ -460,7 +504,7 @@ export function buildPanelState(input: BuildInput): PanelState {
       repos: [],
       syncAvailable,
       ...live,
-      tabs: buildTabs([], live.services),
+      tabs: buildTabs({ repos: [], services: live.services, dex: live.dex }),
     };
   }
 
@@ -471,7 +515,7 @@ export function buildPanelState(input: BuildInput): PanelState {
       repos: [],
       syncAvailable,
       ...live,
-      tabs: buildTabs([], live.services),
+      tabs: buildTabs({ repos: [], services: live.services, dex: live.dex }),
     };
   }
 
@@ -486,7 +530,7 @@ export function buildPanelState(input: BuildInput): PanelState {
 
   // "Empty" when every repo has neither PRs nor an error to surface.
   const anyContent = overview.repos.some((r) => repoPrCount(r) > 0 || r.error);
-  const tabs = buildTabs(repos, live.services);
+  const tabs = buildTabs({ repos, services: live.services, dex: live.dex });
   if (!anyContent) {
     return { status: "empty", message: "No open PRs", repos, syncAvailable, ...live, tabs };
   }
