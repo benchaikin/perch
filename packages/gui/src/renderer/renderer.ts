@@ -16,6 +16,7 @@ import type {
 } from "../panel-state.js";
 import { SERVICES_TAB_ID } from "../panel-state.js";
 import { DEX_TASKS_ID, type DexRow, type DexSection, type DexStatus } from "../dex-state.js";
+import { WORKTREES_LIST_ID, type WorktreeRow, type WorktreesSection } from "../worktrees-state.js";
 import type {
   ServiceAction,
   ServiceHealth,
@@ -655,6 +656,83 @@ function dexSectionEl(section: DexSection): HTMLElement | null {
   return el;
 }
 
+/** Build one worktree row: a health dot, branch/name (main tagged), and state chips. */
+function worktreeRowEl(row: WorktreeRow): HTMLElement {
+  const el = document.createElement("div");
+  el.className = "row worktree-row";
+  const detail = [
+    row.branch ?? "(detached)",
+    row.dirty ? `${row.dirtyCount} uncommitted` : "clean",
+    row.conflict ? "conflict" : "",
+    row.prunable ? "prunable" : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  el.title = `${row.name} — ${detail}`;
+
+  const dot = document.createElement("i");
+  dot.className = `dot ${row.health} fa-solid fa-${row.conflict ? "code-merge" : "code-branch"}`;
+  el.append(dot);
+
+  // Branch is the primary label (what an agent is working on); the worktree
+  // directory name follows, muted, when it differs.
+  const branch = document.createElement("span");
+  branch.className = "branch";
+  branch.textContent = row.branch ?? "(detached)";
+  el.append(branch);
+
+  if (row.main) {
+    const tag = document.createElement("span");
+    tag.className = "chip muted";
+    tag.textContent = "main";
+    el.append(tag);
+  }
+
+  const chips = document.createElement("span");
+  chips.className = "chips";
+  if (row.dirty) {
+    const d = document.createElement("span");
+    d.className = "chip warn";
+    d.title = `${row.dirtyCount} uncommitted change${row.dirtyCount === 1 ? "" : "s"}`;
+    d.textContent = `●${row.dirtyCount}`;
+    chips.append(d);
+  }
+  if (row.conflict) {
+    const c = document.createElement("span");
+    c.className = "chip bad";
+    c.textContent = "conflict";
+    chips.append(c);
+  }
+  if ((row.ahead ?? 0) > 0 || (row.behind ?? 0) > 0) {
+    const ab = document.createElement("span");
+    ab.className = `chip ${(row.ahead ?? 0) > 0 && (row.behind ?? 0) > 0 ? "warn" : "muted"}`;
+    ab.title = `${row.ahead ?? 0} ahead, ${row.behind ?? 0} behind upstream`;
+    ab.textContent = `↑${row.ahead ?? 0} ↓${row.behind ?? 0}`;
+    chips.append(ab);
+  }
+  if (row.prunable) {
+    const p = document.createElement("span");
+    p.className = "chip bad";
+    p.textContent = "prunable";
+    chips.append(p);
+  }
+  el.append(chips);
+  return el;
+}
+
+/**
+ * Build the "Worktrees" section: one row per worktree (main first). Returns null
+ * when hidden (no worktrees plugin / none). No section title — the active
+ * "Worktrees" tab already names it.
+ */
+function worktreesSectionEl(section: WorktreesSection): HTMLElement | null {
+  if (!section.visible) return null;
+  const el = document.createElement("section");
+  el.className = "repo-section worktrees-section";
+  for (const row of section.rows) el.append(worktreeRowEl(row));
+  return el;
+}
+
 /** Render a centered message (empty / daemon-down / error). */
 function messageEl(text: string, isError: boolean): HTMLElement {
   const el = document.createElement("div");
@@ -772,6 +850,9 @@ function render(state: PanelState): void {
   } else if (activeId === DEX_TASKS_ID) {
     const dex = dexSectionEl(state.dex);
     if (dex) rowsEl.append(dex);
+  } else if (activeId === WORKTREES_LIST_ID) {
+    const worktrees = worktreesSectionEl(state.worktrees);
+    if (worktrees) rowsEl.append(worktrees);
   } else {
     renderPrsPane(state);
   }

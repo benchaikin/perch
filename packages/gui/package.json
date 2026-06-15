@@ -24,6 +24,7 @@
     "@perch/plugin-dex": "workspace:*",
     "@perch/plugin-services": "workspace:*",
     "@perch/plugin-stack": "workspace:*",
+    "@perch/plugin-worktrees": "workspace:*",
     "@perch/sdk": "workspace:*",
     "concurrently": "^9.1.0",
     "electron": "^33.0.0",

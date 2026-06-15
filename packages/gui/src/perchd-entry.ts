@@ -35,9 +35,10 @@ import {
 import stackPlugin from "@perch/plugin-stack";
 import servicesPlugin from "@perch/plugin-services";
 import dexPlugin from "@perch/plugin-dex";
+import worktreesPlugin from "@perch/plugin-worktrees";
 
 /** The plugins bundled into the packaged daemon (statically imported above). */
-const BUNDLED_PLUGINS = [stackPlugin, servicesPlugin, dexPlugin];
+const BUNDLED_PLUGINS = [stackPlugin, servicesPlugin, dexPlugin, worktreesPlugin];
 
 /** Boot the bundled daemon, then keep the process alive for the RPC server. */
 async function main(): Promise<void> {

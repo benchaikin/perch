@@ -29,6 +29,8 @@ import {
 } from "./dex-state.js";
 import {
   buildWorktreesSection,
+  worstWorktreeHealth,
+  WORKTREES_LIST_ID,
   type WorktreeList,
   type WorktreesSection,
 } from "./worktrees-state.js";
@@ -423,6 +425,7 @@ interface TabContext {
   repos: RepoSection[];
   services: ServicesSection;
   dex: DexSection;
+  worktrees: WorktreesSection;
 }
 
 /**
@@ -473,6 +476,18 @@ const TAB_SPECS: readonly TabSpec[] = [
       return { count: open > 0 ? open : undefined, tone: worstDexHealth(dex) };
     },
   },
+  {
+    id: WORKTREES_LIST_ID,
+    label: "Worktrees",
+    icon: "code-branch",
+    visible: ({ worktrees }) => worktrees.visible,
+    // The worktree count, tinted by the worst state (conflict/prunable → red,
+    // diverged → amber, else neutral).
+    badge: ({ worktrees }) => ({
+      count: worktrees.counts.total,
+      tone: worstWorktreeHealth(worktrees),
+    }),
+  },
 ];
 
 /** Build the visible tabs (in registry order) from the derived sections. */
@@ -512,7 +527,7 @@ export function buildPanelState(input: BuildInput): PanelState {
       repos: [],
       syncAvailable: false,
       ...live,
-      tabs: buildTabs({ repos: [], services: live.services, dex: live.dex }),
+      tabs: buildTabs({ repos: [], services: live.services, dex: live.dex, worktrees: live.worktrees }),
     };
   }
 
@@ -523,7 +538,7 @@ export function buildPanelState(input: BuildInput): PanelState {
       repos: [],
       syncAvailable,
       ...live,
-      tabs: buildTabs({ repos: [], services: live.services, dex: live.dex }),
+      tabs: buildTabs({ repos: [], services: live.services, dex: live.dex, worktrees: live.worktrees }),
     };
   }
 
@@ -534,7 +549,7 @@ export function buildPanelState(input: BuildInput): PanelState {
       repos: [],
       syncAvailable,
       ...live,
-      tabs: buildTabs({ repos: [], services: live.services, dex: live.dex }),
+      tabs: buildTabs({ repos: [], services: live.services, dex: live.dex, worktrees: live.worktrees }),
     };
   }
 
@@ -549,7 +564,7 @@ export function buildPanelState(input: BuildInput): PanelState {
 
   // "Empty" when every repo has neither PRs nor an error to surface.
   const anyContent = overview.repos.some((r) => repoPrCount(r) > 0 || r.error);
-  const tabs = buildTabs({ repos, services: live.services, dex: live.dex });
+  const tabs = buildTabs({ repos, services: live.services, dex: live.dex, worktrees: live.worktrees });
   if (!anyContent) {
     return { status: "empty", message: "No open PRs", repos, syncAvailable, ...live, tabs };
   }

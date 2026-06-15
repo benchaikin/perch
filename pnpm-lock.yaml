@@ -74,6 +74,9 @@ importers:
       '@perch/plugin-stack':
         specifier: workspace:*
         version: link:../../plugins/stack
+      '@perch/plugin-worktrees':
+        specifier: workspace:*
+        version: link:../../plugins/worktrees
       '@perch/sdk':
         specifier: workspace:*
         version: link:../sdk

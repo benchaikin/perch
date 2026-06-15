@@ -229,6 +229,12 @@ body {
   letter-spacing: 0.04em;
 }
 
+/* Worktree rows reuse .row/.dot/.chip/.branch; not click-to-open yet (the open
+   action lands with the worktrees config task). */
+.worktree-row {
+  cursor: default;
+}
+
 .repo-error {
   color: var(--bad);
   font-size: 11px;
