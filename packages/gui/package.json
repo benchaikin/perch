@@ -21,6 +21,7 @@
     "@fortawesome/fontawesome-free": "^7.2.0",
     "@perch/cli": "workspace:*",
     "@perch/core": "workspace:*",
+    "@perch/plugin-services": "workspace:*",
     "@perch/plugin-stack": "workspace:*",
     "@perch/sdk": "workspace:*",
     "concurrently": "^9.1.0",

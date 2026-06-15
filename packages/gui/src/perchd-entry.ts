@@ -5,8 +5,10 @@
  * A packaged Perch.app ships no `node_modules` and no workspace `plugins/` dir,
  * so the daemon's normal dynamic/filesystem plugin discovery (`loadPluginsByIds`
  * walking up to `pnpm-workspace.yaml`) can't run. Instead we **statically import**
- * the stack plugin and hand it to {@link startDaemon} as a pre-loaded `PluginDef`,
- * so esbuild inlines it into the bundle and no filesystem discovery happens.
+ * the bundled plugins (stack + services) and hand them to {@link startDaemon} as
+ * pre-loaded `PluginDef`s, so esbuild inlines them into the bundle and no
+ * filesystem discovery happens. Without this, a packaged build's `services.list`
+ * (and the panel's Services section) would be missing entirely.
  *
  * We still want a REAL daemon (not the test-mode daemon `pluginDefs` implies):
  * it must read the user's `perch.json` for the stack plugin's per-repo config,
@@ -31,10 +33,10 @@ import {
   startDaemon,
 } from "@perch/core";
 import stackPlugin from "@perch/plugin-stack";
-// TODO: bundle services plugin for packaged daemon (Dev services M1 ships the
-// @perch/plugin-services package + the GUI Services section; the packaged
-// perchd.cjs still only statically imports the stack plugin, so process-compose
-// status won't surface in a packaged build until this entry also bundles it).
+import servicesPlugin from "@perch/plugin-services";
+
+/** The plugins bundled into the packaged daemon (statically imported above). */
+const BUNDLED_PLUGINS = [stackPlugin, servicesPlugin];
 
 /** Boot the bundled daemon, then keep the process alive for the RPC server. */
 async function main(): Promise<void> {
@@ -44,23 +46,23 @@ async function main(): Promise<void> {
   const socketPath = process.env.PERCH_SOCKET ?? defaultSocketPath();
   const configPath = process.env.PERCH_CONFIG ?? defaultConfigPath();
 
-  // Resolve the stack plugin's config from `perch.json` (keyed by plugin id —
-  // `"stack"` — which matches the static plugin's `id`). A missing file yields an
-  // empty config and the plugin operates on its defaults.
+  // Resolve the bundled plugins' config from `perch.json` (keyed by plugin id —
+  // `"stack"` / `"services"` — matching each static plugin's `id`). A missing
+  // file yields empty config and the plugins operate on their defaults.
   const { configs } = pluginsFromConfig(await loadConfig(configPath));
 
   const daemon = await startDaemon({
     socketPath,
     configPath,
-    // Pre-loaded plugin: esbuild inlines it; no `plugins/`-dir discovery.
-    pluginDefs: [stackPlugin],
+    // Pre-loaded plugins: esbuild inlines them; no `plugins/`-dir discovery.
+    pluginDefs: BUNDLED_PLUGINS,
     configs,
     // `pluginDefs` defaults these off (test mode) — we want the real behavior.
     pidFile: true,
     watch: true,
-    // Live reloads ask for plugins by id; resolve every id to the static plugin
-    // so a re-enabled stack plugin doesn't fall back to filesystem discovery.
-    loadPlugins: async () => [stackPlugin],
+    // Live reloads ask for plugins by id; resolve to the static plugins so a
+    // re-enabled plugin doesn't fall back to filesystem discovery.
+    loadPlugins: async () => BUNDLED_PLUGINS,
   });
 
   // `pluginDefs` also suppresses core's own SIGINT/SIGTERM handlers; install our
