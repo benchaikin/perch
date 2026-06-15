@@ -39,6 +39,8 @@ export const Channels = {
    * process name). Main runs `services.logs` (fire-and-forget; M3).
    */
   serviceLogs: "perch:service-logs",
+  /** Renderer → main: copy text to the clipboard (payload: the text). */
+  copyText: "perch:copy-text",
 } as const;
 
 /**
@@ -60,6 +62,8 @@ export interface PerchBridge {
   servicesBulk(action: ServicesBulkAction): void;
   /** Ask the main process to open a terminal tailing a service's logs (by name). */
   serviceLogs(name: string): void;
+  /** Ask the main process to copy text to the system clipboard. */
+  copyText(text: string): void;
 }
 
 declare global {

@@ -17,6 +17,7 @@ import { dirname, join } from "node:path";
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   Menu,
@@ -965,6 +966,11 @@ function registerIpc(): void {
     (_event, action: ServicesBulkAction) => void servicesBulk(action),
   );
   ipcMain.on(Channels.serviceLogs, (_event, name: string) => void serviceLogs(name));
+  // Clipboard writes go through main (Electron's clipboard) rather than the
+  // renderer's navigator.clipboard, which a non-activating panel can't rely on.
+  ipcMain.on(Channels.copyText, (_event, text: string) => {
+    if (typeof text === "string" && text.length > 0) clipboard.writeText(text);
+  });
 
   // Settings window: request/response handlers returning the refreshed repo list.
   ipcMain.handle(SettingsChannels.list, () => loadSettings());

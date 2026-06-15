@@ -22,6 +22,9 @@
   --bad: #e01e37;
   --bad-rgb: 224, 30, 55;
   --accent: #4a9eff;
+  /* Body text for the dex detail view: a warm, slightly-yellowed off-white
+     (softer than the near-pure --fg) so long task bodies are easier on the eyes. */
+  --detail-fg: #e8e0cd;
 }
 
 @media (prefers-color-scheme: light) {
@@ -40,6 +43,9 @@
     --bad: #d70015;
     --bad-rgb: 215, 0, 21;
     --accent: #0a66d6;
+    /* Warm near-black for the detail body in light mode (the off-white only
+       makes sense on a dark background). */
+    --detail-fg: #33302a;
   }
 }
 
@@ -392,6 +398,18 @@ body {
   gap: 4px;
   flex-wrap: wrap;
 }
+/* The task id chip: monospace so it reads as a copyable identifier, and
+   click-to-copy (pointer + brighten on hover, green on confirm). */
+.dex-id {
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, "Courier New", monospace;
+  cursor: pointer;
+}
+.dex-id:hover {
+  color: var(--fg);
+}
+.dex-id.copied {
+  color: var(--ok);
+}
 .dex-detail-label {
   font-size: 11px;
   font-weight: 600;
@@ -400,14 +418,17 @@ body {
   letter-spacing: 0.04em;
 }
 /* Pre-formatted, wrapping body for the description / result: a slightly larger
-   fixed-width font, since task bodies are technical (commands, paths, code). */
+   fixed-width font, since task bodies are technical (commands, paths, code). A
+   touch of space above sets the body off from the meta chips, and the warm
+   off-white (--detail-fg) is gentler than near-pure white for long reads. */
 .dex-detail-body {
   margin: 0;
+  margin-top: 4px;
   white-space: pre-wrap;
   word-break: break-word;
   font-family: ui-monospace, "SF Mono", Menlo, Monaco, "Courier New", monospace;
   font-size: 12px;
-  color: var(--fg);
+  color: var(--detail-fg);
   line-height: 1.5;
 }
 

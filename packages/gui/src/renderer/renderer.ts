@@ -554,6 +554,24 @@ function dexDetailEl(row: DexRow): HTMLElement {
 
   const meta = document.createElement("div");
   meta.className = "dex-detail-meta";
+  // The task id leads the meta row as a monospace reference (for `dex show`,
+  // commit messages, etc.). Click to copy it to the clipboard.
+  const idChip = document.createElement("span");
+  idChip.className = "chip muted dex-id";
+  idChip.title = "Copy task id";
+  idChip.textContent = row.id;
+  idChip.addEventListener("click", () => {
+    window.perch.copyText(row.id);
+    // Brief inline confirmation; reverts after a moment (a re-render would also
+    // recreate the chip, which is fine — this closure just no-ops on the stale el).
+    idChip.textContent = "copied ✓";
+    idChip.classList.add("copied");
+    setTimeout(() => {
+      idChip.textContent = row.id;
+      idChip.classList.remove("copied");
+    }, 1000);
+  });
+  meta.append(idChip);
   const status = document.createElement("span");
   status.className = `chip ${row.health}`;
   status.textContent = DEX_STATUS_LABEL[row.status];
