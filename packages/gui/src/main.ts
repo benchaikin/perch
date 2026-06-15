@@ -55,6 +55,7 @@ import {
   type PrOverview,
 } from "./panel-state.js";
 import { SERVICES_LIST_ID, type ServiceList, type ServicesBulkAction } from "./services-state.js";
+import { DEX_TASKS_ID, type DexBoard } from "./dex-state.js";
 import {
   centeredPosition,
   MIN_WINDOW_SIZE,
@@ -88,6 +89,8 @@ const buildInput: BuildInput = { daemonUp: false, syncAvailable: false };
 let subscriptionKey: string | undefined;
 /** Subscription key echoed on `services.list` `capability.update` notifications. */
 let servicesKey: string | undefined;
+/** Subscription key echoed on `dex.tasks` `capability.update` notifications. */
+let dexKey: string | undefined;
 
 /** Recompute the panel state from current inputs and push it to the renderer. */
 function pushState(): void {
@@ -119,6 +122,19 @@ async function subscribeServices(): Promise<void> {
   const sub = await client.subscribe({ id: SERVICES_LIST_ID });
   servicesKey = sub.inputKey;
   if (sub.current !== undefined) buildInput.servicesList = sub.current as ServiceList;
+}
+
+/**
+ * (Re)subscribe to `dex.tasks` and seed the section from the subscription's
+ * current value. Mirrors {@link subscribeServices}. Best-effort and gated by the
+ * registry — the dex plugin may be disabled, in which case this isn't called and
+ * the Dex section stays hidden.
+ */
+async function subscribeDex(): Promise<void> {
+  if (!client) return;
+  const sub = await client.subscribe({ id: DEX_TASKS_ID });
+  dexKey = sub.inputKey;
+  if (sub.current !== undefined) buildInput.dexBoard = sub.current as DexBoard;
 }
 
 /**
@@ -217,6 +233,9 @@ async function connect(): Promise<void> {
     } else if (note.id === SERVICES_LIST_ID && note.inputKey === servicesKey) {
       buildInput.servicesList = note.data as ServiceList;
       pushState();
+    } else if (note.id === DEX_TASKS_ID && note.inputKey === dexKey) {
+      buildInput.dexBoard = note.data as DexBoard;
+      pushState();
     }
   });
 
@@ -235,10 +254,12 @@ async function connect(): Promise<void> {
   // (services plugin disabled) — gate both on the registry rather than assuming
   // they exist.
   let servicesPresent = false;
+  let dexPresent = false;
   try {
     const caps = await client.registryList();
     buildInput.syncAvailable = caps.some((c) => c.id === STACK_SYNC_ID);
     servicesPresent = caps.some((c) => c.id === SERVICES_LIST_ID);
+    dexPresent = caps.some((c) => c.id === DEX_TASKS_ID);
   } catch {
     buildInput.syncAvailable = false;
   }
@@ -256,6 +277,16 @@ async function connect(): Promise<void> {
       await subscribeServices();
     } catch (err) {
       console.error(`[services] subscribe failed: ${errorMessage(err)}`);
+    }
+  }
+
+  // Subscribe to the dex board only when the plugin is installed. Non-fatal —
+  // the Dex section just stays hidden on failure.
+  if (dexPresent) {
+    try {
+      await subscribeDex();
+    } catch (err) {
+      console.error(`[dex] subscribe failed: ${errorMessage(err)}`);
     }
   }
   pushState();

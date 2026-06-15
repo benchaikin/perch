@@ -20,6 +20,7 @@ import {
   type ServicesBulkAction,
   type ServicesSection,
 } from "./services-state.js";
+import { buildDexSection, type DexBoard, type DexSection } from "./dex-state.js";
 
 /** Canonical capability id of the cross-repo "My PRs" read the panel renders. */
 export const STACK_PRS_ID = "stack.prs";
@@ -216,9 +217,15 @@ export interface PanelState {
    */
   services: ServicesSection;
   /**
+   * The dex task board section. `visible` is false (renderer omits it) when the
+   * dex plugin is absent or reports no tasks, so the panel is unchanged for
+   * users without it.
+   */
+  dex: DexSection;
+  /**
    * The plugin tabs to draw in the tab strip, in display order (PRs first,
-   * Services when visible). The renderer shows one tab's content at a time and
-   * uses each tab's badge to keep the others glanceable.
+   * Services, Dex — each when visible). The renderer shows one tab's content at
+   * a time and uses each tab's badge to keep the others glanceable.
    */
   tabs: PanelTab[];
 }
@@ -239,6 +246,8 @@ export interface BuildInput {
   notice?: Notice;
   /** The latest `services.list` data, or `undefined` if none has arrived yet. */
   servicesList?: ServiceList;
+  /** The latest `dex.tasks` data, or `undefined` if none has arrived yet. */
+  dexBoard?: DexBoard;
   /** Service names with an in-flight start/stop/restart — their buttons spin. */
   servicesActing?: string[];
   /** The whole-stack action in flight (Start/Stop/Restart all), if any. */
@@ -430,6 +439,7 @@ export function buildPanelState(input: BuildInput): PanelState {
       input.servicesActing,
       input.servicesBulkActing,
     ),
+    dex: buildDexSection(daemonUp ? input.dexBoard : undefined),
   };
 
   if (!daemonUp) {
