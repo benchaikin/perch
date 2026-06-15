@@ -420,9 +420,9 @@ test("Dex tab appears via the registry when the board is non-empty", () => {
     syncAvailable: true,
     dexBoard: {
       tasks: [
-        { id: "e", name: "Epic", status: "ready", priority: 0, depth: 0, isEpic: true, blockedByCount: 0 },
-        { id: "a", name: "Blocked", status: "blocked", priority: 0, depth: 1, isEpic: false, blockedByCount: 1 },
-        { id: "b", name: "Ready", status: "ready", priority: 0, depth: 1, isEpic: false, blockedByCount: 0 },
+        { id: "e", name: "Epic", description: "", result: null, status: "ready", priority: 0, depth: 0, isEpic: true, blockedByCount: 0 },
+        { id: "a", name: "Blocked", description: "", result: null, status: "blocked", priority: 0, depth: 1, isEpic: false, blockedByCount: 1 },
+        { id: "b", name: "Ready", description: "", result: null, status: "ready", priority: 0, depth: 1, isEpic: false, blockedByCount: 0 },
       ],
     },
   });

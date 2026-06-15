@@ -22,6 +22,10 @@ export type DexStatus = "done" | "in-progress" | "blocked" | "ready";
 export interface DexTask {
   id: string;
   name: string;
+  /** Full task description (the "ticket body"); empty string when none. */
+  description: string;
+  /** Completion result, present only on done tasks; null otherwise. */
+  result: string | null;
   status: DexStatus;
   priority: number;
   /** Tree depth: 0 for a root/epic, 1 for its tasks, etc. */
@@ -47,6 +51,8 @@ export type DexHealth = "ok" | "warn" | "bad" | "muted";
 export interface DexRow {
   id: string;
   name: string;
+  description: string;
+  result: string | null;
   status: DexStatus;
   depth: number;
   isEpic: boolean;
@@ -135,6 +141,8 @@ export function buildDexSection(board: DexBoard | undefined): DexSection {
     return {
       id: t.id,
       name: t.name,
+      description: t.description,
+      result: t.result,
       status: t.status,
       depth: t.depth,
       isEpic: t.isEpic,

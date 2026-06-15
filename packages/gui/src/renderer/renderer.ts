@@ -93,6 +93,10 @@ let syncingRepos: string[] = [];
  * focus to PRs). Undefined until the first state arrives.
  */
 let activeTabId: string | undefined;
+/** Collapsed dex epic ids (their descendants are hidden); preserved across re-renders. */
+const collapsedDexIds = new Set<string>();
+/** The dex task whose detail view is open, if any (else the task list shows). */
+let selectedDexId: string | undefined;
 /** The last rendered state, replayed when the active tab changes (a click). */
 let lastState: PanelState | undefined;
 
@@ -440,7 +444,21 @@ const DEX_STATUS_LABEL: Record<DexStatus, string> = {
   done: "Done",
 };
 
-/** Build one dex task row: a status-shaped marker, the name, an optional blocker hint. */
+/** A small blocker-count chip ("blocked ×N"). */
+function dexBlockedChip(count: number): HTMLElement {
+  const badge = document.createElement("span");
+  badge.className = "chip bad";
+  badge.title = `Blocked by ${count} task${count === 1 ? "" : "s"}`;
+  badge.textContent = `blocked ×${count}`;
+  return badge;
+}
+
+/**
+ * Build one dex task row: an expand/collapse chevron (epics) or aligning spacer
+ * (leaves), a status-shaped marker, the name, and an optional blocker chip.
+ * Clicking the row body opens the task's detail; clicking an epic's chevron
+ * toggles its children (without opening detail).
+ */
 function dexRowEl(row: DexRow): HTMLElement {
   const el = document.createElement("div");
   el.className = `row dex-row${row.isEpic ? " dex-epic" : ""}`;
@@ -448,6 +466,29 @@ function dexRowEl(row: DexRow): HTMLElement {
   el.style.paddingLeft = `${row.depth * 14}px`;
   const blockedHint = row.blockedByCount > 0 ? ` (blocked by ${row.blockedByCount})` : "";
   el.title = `${row.name} — ${DEX_STATUS_LABEL[row.status]}${blockedHint}`;
+
+  if (row.isEpic) {
+    const collapsed = collapsedDexIds.has(row.id);
+    const chevron = document.createElement("button");
+    chevron.className = "dex-chevron";
+    chevron.title = collapsed ? "Expand" : "Collapse";
+    chevron.setAttribute("aria-label", chevron.title);
+    const ci = document.createElement("i");
+    ci.className = `fa-solid fa-chevron-${collapsed ? "right" : "down"}`;
+    chevron.append(ci);
+    chevron.addEventListener("click", (e) => {
+      // Toggle children without triggering the row's open-detail click.
+      e.stopPropagation();
+      if (collapsed) collapsedDexIds.delete(row.id);
+      else collapsedDexIds.add(row.id);
+      if (lastState) render(lastState);
+    });
+    el.append(chevron);
+  } else {
+    const spacer = document.createElement("span");
+    spacer.className = "dex-chevron-spacer";
+    el.append(spacer);
+  }
 
   const marker = document.createElement("i");
   marker.className = `dot ${row.health} fa-solid fa-${DEX_STATUS_ICON[row.status]}`;
@@ -459,26 +500,128 @@ function dexRowEl(row: DexRow): HTMLElement {
   name.textContent = row.name;
   el.append(name);
 
-  if (row.blockedByCount > 0) {
-    const badge = document.createElement("span");
-    badge.className = "chip bad";
-    badge.title = `Blocked by ${row.blockedByCount} task${row.blockedByCount === 1 ? "" : "s"}`;
-    badge.textContent = `blocked ×${row.blockedByCount}`;
-    el.append(badge);
-  }
+  if (row.blockedByCount > 0) el.append(dexBlockedChip(row.blockedByCount));
+
+  el.addEventListener("click", () => {
+    selectedDexId = row.id;
+    if (lastState) render(lastState);
+  });
   return el;
 }
 
+/** A pre-formatted, wrapping text block for the detail view (description / result). */
+function dexBodyEl(text: string): HTMLElement {
+  const body = document.createElement("pre");
+  body.className = "dex-detail-body";
+  body.textContent = text;
+  return body;
+}
+
+/** Build the task detail view: a back affordance, the task header, meta chips, body + result. */
+function dexDetailEl(row: DexRow): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "dex-detail";
+
+  const back = document.createElement("button");
+  back.className = "btn btn-sm dex-back";
+  const bi = document.createElement("i");
+  bi.className = "fa-solid fa-arrow-left";
+  back.append(bi, " Tasks");
+  back.addEventListener("click", () => {
+    selectedDexId = undefined;
+    if (lastState) render(lastState);
+  });
+  wrap.append(back);
+
+  const head = document.createElement("div");
+  head.className = "dex-detail-head";
+  const marker = document.createElement("i");
+  marker.className = `dot ${row.health} fa-solid fa-${DEX_STATUS_ICON[row.status]}`;
+  const title = document.createElement("span");
+  title.className = "dex-detail-title";
+  title.textContent = row.name;
+  head.append(marker, title);
+  wrap.append(head);
+
+  const meta = document.createElement("div");
+  meta.className = "dex-detail-meta";
+  const status = document.createElement("span");
+  status.className = `chip ${row.health}`;
+  status.textContent = DEX_STATUS_LABEL[row.status];
+  meta.append(status);
+  if (row.project) {
+    const proj = document.createElement("span");
+    proj.className = "chip muted";
+    proj.textContent = row.project;
+    meta.append(proj);
+  }
+  if (row.blockedByCount > 0) meta.append(dexBlockedChip(row.blockedByCount));
+  wrap.append(meta);
+
+  if (row.description) wrap.append(dexBodyEl(row.description));
+  if (row.result) {
+    const label = document.createElement("div");
+    label.className = "dex-detail-label";
+    label.textContent = "Result";
+    wrap.append(label, dexBodyEl(row.result));
+  }
+  return wrap;
+}
+
+/** Build the Dex section header: an expand/collapse-all toggle over the epics. */
+function dexHeaderEl(epicIds: string[]): HTMLElement {
+  const header = document.createElement("div");
+  header.className = "repo-header dex-header";
+  const allCollapsed = epicIds.every((id) => collapsedDexIds.has(id));
+  const btn = document.createElement("button");
+  btn.className = "btn btn-sm dex-toggle-all";
+  btn.title = allCollapsed ? "Expand all" : "Collapse all";
+  const icon = document.createElement("i");
+  icon.className = `fa-solid fa-${allCollapsed ? "angles-down" : "angles-up"}`;
+  btn.append(icon, ` ${allCollapsed ? "Expand all" : "Collapse all"}`);
+  btn.addEventListener("click", () => {
+    if (allCollapsed) collapsedDexIds.clear();
+    else for (const id of epicIds) collapsedDexIds.add(id);
+    if (lastState) render(lastState);
+  });
+  header.append(btn);
+  return header;
+}
+
 /**
- * Build the "Dex" section: one row per task, pre-ordered as a tree and
- * depth-indented. Returns null when hidden (no dex plugin / no tasks). No section
- * title — the active "Dex" tab already names it.
+ * Build the "Dex" section. With a task selected it shows that task's detail;
+ * otherwise the tree: an expand/collapse-all header (when there are epics) and
+ * the pre-ordered rows, skipping any hidden beneath a collapsed ancestor.
+ * Returns null when hidden (no dex plugin / no tasks).
  */
 function dexSectionEl(section: DexSection): HTMLElement | null {
   if (!section.visible) return null;
   const el = document.createElement("section");
   el.className = "repo-section dex-section";
-  for (const row of section.rows) el.append(dexRowEl(row));
+
+  // Detail view takes over the pane when a (still-present) task is selected.
+  if (selectedDexId !== undefined) {
+    const selected = section.rows.find((r) => r.id === selectedDexId);
+    if (selected) {
+      el.append(dexDetailEl(selected));
+      return el;
+    }
+    selectedDexId = undefined; // selection went away (task completed/removed)
+  }
+
+  const epicIds = section.rows.filter((r) => r.isEpic).map((r) => r.id);
+  if (epicIds.length > 0) el.append(dexHeaderEl(epicIds));
+
+  // Pre-ordered rows: skip anything deeper than a collapsed ancestor. On a row
+  // at or above the collapse threshold, reset it, then re-arm if this row is a
+  // collapsed epic (handles nested collapses).
+  let collapseDepth = Infinity;
+  for (const row of section.rows) {
+    if (row.depth > collapseDepth) continue;
+    collapseDepth = Infinity;
+    el.append(dexRowEl(row));
+    if (row.isEpic && collapsedDexIds.has(row.id)) collapseDepth = row.depth;
+  }
   return el;
 }
 

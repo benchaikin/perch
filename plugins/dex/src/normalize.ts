@@ -32,6 +32,8 @@ export const RawDexTask = z
     id: z.string(),
     parent_id: z.string().nullable().optional(),
     name: z.string(),
+    description: z.string().nullable().optional(),
+    result: z.string().nullable().optional(),
     priority: z.number().optional(),
     completed: z.boolean().optional(),
     started_at: z.string().nullable().optional(),
@@ -50,6 +52,10 @@ export type DexStatus = z.infer<typeof DexStatus>;
 export const DexTaskView = z.object({
   id: z.string(),
   name: z.string(),
+  /** Full task description (the "ticket body"); empty string when none. */
+  description: z.string(),
+  /** Completion result, present only on done tasks; null otherwise. */
+  result: z.string().nullable(),
   status: DexStatus,
   /** Lower = higher priority (dex convention); 0 when unset. */
   priority: z.number(),
@@ -128,6 +134,8 @@ function buildGroup(tasks: RawDexTask[], project: string | undefined): DexTaskVi
     out.push({
       id: task.id,
       name: task.name,
+      description: task.description ?? "",
+      result: task.result ?? null,
       status: deriveStatus(task, activeIds),
       priority: task.priority ?? 0,
       depth,

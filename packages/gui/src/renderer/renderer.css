@@ -316,14 +316,101 @@ body {
   color: var(--muted);
 }
 
-/* Dex task rows: informational (not click-to-open like PR rows), so no pointer.
-   Epics read slightly heavier as group headers; depth indentation is applied
-   inline by the renderer (padding-left per tree depth). */
+/* Dex task rows: click the body to open detail. Epics read slightly heavier as
+   group headers; depth indentation is applied inline (padding-left per depth). */
 .dex-row {
-  cursor: default;
+  cursor: pointer;
 }
 .dex-epic .branch {
   font-weight: 600;
+}
+
+/* Expand/collapse chevron on an epic row (and an aligning spacer on leaves), so
+   markers line up whether or not a row has children. The chevron is its own
+   click target (toggles children) and stops propagation to the row. */
+.dex-chevron,
+.dex-chevron-spacer {
+  flex: 0 0 auto;
+  width: 14px;
+  text-align: center;
+}
+.dex-chevron {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1;
+}
+.dex-chevron:hover {
+  color: var(--fg);
+}
+
+/* Dex section header: the expand/collapse-all control, right-aligned. */
+.dex-header {
+  display: flex;
+  justify-content: flex-end;
+}
+.dex-header .btn.btn-sm {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* Task detail view (replaces the list when a task is selected). */
+.dex-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* Back button sits at the left (override the shared .btn.btn-sm right-push). */
+.dex-detail .btn.btn-sm.dex-back {
+  margin-left: 0;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+.dex-detail-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.dex-detail-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+.dex-detail-meta {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.dex-detail-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+/* Pre-formatted, wrapping body for the description / result. */
+.dex-detail-body {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: inherit;
+  font-size: 11px;
+  color: var(--fg);
+  line-height: 1.5;
 }
 
 /* The per-service status text (e.g. "running · pid 42", "crashed · exit 1"). */

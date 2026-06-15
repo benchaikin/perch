@@ -16,6 +16,8 @@ import {
 function task(over: Partial<DexTask> & { id: string; status: DexTask["status"] }): DexTask {
   return {
     name: over.id,
+    description: "",
+    result: null,
     priority: 0,
     depth: 0,
     isEpic: false,
