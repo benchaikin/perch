@@ -111,6 +111,15 @@ importers:
         specifier: ^3.23.8
         version: 3.25.76
 
+  plugins/dex:
+    dependencies:
+      '@perch/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@perch/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+
   plugins/services:
     dependencies:
       '@perch/core':

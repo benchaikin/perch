@@ -1,0 +1,17 @@
+{
+  "name": "@perch/plugin-dex",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "test": "node --import tsx --test \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@perch/core": "workspace:*",
+    "@perch/sdk": "workspace:*"
+  }
+}
