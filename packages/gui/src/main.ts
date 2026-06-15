@@ -57,6 +57,7 @@ import {
 } from "./panel-state.js";
 import { SERVICES_LIST_ID, type ServiceList, type ServicesBulkAction } from "./services-state.js";
 import { DEX_TASKS_ID, type DexBoard } from "./dex-state.js";
+import { WORKTREES_LIST_ID, type WorktreeList } from "./worktrees-state.js";
 import {
   centeredPosition,
   MIN_WINDOW_SIZE,
@@ -94,6 +95,8 @@ let subscriptionKey: string | undefined;
 let servicesKey: string | undefined;
 /** Subscription key echoed on `dex.tasks` `capability.update` notifications. */
 let dexKey: string | undefined;
+/** Subscription key echoed on `worktrees.list` `capability.update` notifications. */
+let worktreesKey: string | undefined;
 /**
  * The last-selected tab id, loaded from GUI-local state when the panel is
  * created and updated when the renderer reports a tab change. Attached to every
@@ -145,6 +148,18 @@ async function subscribeDex(): Promise<void> {
   const sub = await client.subscribe({ id: DEX_TASKS_ID });
   dexKey = sub.inputKey;
   if (sub.current !== undefined) buildInput.dexBoard = sub.current as DexBoard;
+}
+
+/**
+ * (Re)subscribe to `worktrees.list` and seed the section from the subscription's
+ * current value. Mirrors {@link subscribeDex}; gated by the registry — the
+ * worktrees plugin may be disabled, in which case the section stays hidden.
+ */
+async function subscribeWorktrees(): Promise<void> {
+  if (!client) return;
+  const sub = await client.subscribe({ id: WORKTREES_LIST_ID });
+  worktreesKey = sub.inputKey;
+  if (sub.current !== undefined) buildInput.worktreesList = sub.current as WorktreeList;
 }
 
 /**
@@ -246,6 +261,9 @@ async function connect(): Promise<void> {
     } else if (note.id === DEX_TASKS_ID && note.inputKey === dexKey) {
       buildInput.dexBoard = note.data as DexBoard;
       pushState();
+    } else if (note.id === WORKTREES_LIST_ID && note.inputKey === worktreesKey) {
+      buildInput.worktreesList = note.data as WorktreeList;
+      pushState();
     }
   });
 
@@ -265,11 +283,13 @@ async function connect(): Promise<void> {
   // they exist.
   let servicesPresent = false;
   let dexPresent = false;
+  let worktreesPresent = false;
   try {
     const caps = await client.registryList();
     buildInput.syncAvailable = caps.some((c) => c.id === STACK_SYNC_ID);
     servicesPresent = caps.some((c) => c.id === SERVICES_LIST_ID);
     dexPresent = caps.some((c) => c.id === DEX_TASKS_ID);
+    worktreesPresent = caps.some((c) => c.id === WORKTREES_LIST_ID);
   } catch {
     buildInput.syncAvailable = false;
   }
@@ -297,6 +317,15 @@ async function connect(): Promise<void> {
       await subscribeDex();
     } catch (err) {
       console.error(`[dex] subscribe failed: ${errorMessage(err)}`);
+    }
+  }
+
+  // Subscribe to worktrees only when the plugin is installed. Non-fatal.
+  if (worktreesPresent) {
+    try {
+      await subscribeWorktrees();
+    } catch (err) {
+      console.error(`[worktrees] subscribe failed: ${errorMessage(err)}`);
     }
   }
   pushState();
@@ -349,6 +378,13 @@ async function reloadFromRegistry(): Promise<void> {
     } else {
       buildInput.dexBoard = undefined;
       dexKey = undefined;
+    }
+    // Same for worktrees.
+    if (caps.some((c) => c.id === WORKTREES_LIST_ID)) {
+      await subscribeWorktrees();
+    } else {
+      buildInput.worktreesList = undefined;
+      worktreesKey = undefined;
     }
   } catch (err) {
     buildInput.error = `registry: ${errorMessage(err)}`;
