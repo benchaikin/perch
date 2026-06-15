@@ -234,6 +234,12 @@ export interface PanelState {
    * a time and uses each tab's badge to keep the others glanceable.
    */
   tabs: PanelTab[];
+  /**
+   * The last-selected tab id, persisted across panel opens/restarts. Attached by
+   * the main process (not derived here); the renderer uses it to seed the active
+   * tab on first render, then owns the selection. Undefined when none is saved.
+   */
+  savedActiveTab?: string;
 }
 
 /** Inputs to {@link buildPanelState}. */

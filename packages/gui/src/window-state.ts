@@ -67,10 +67,38 @@ export function readWindowSize(file: string): WindowSize {
   return clampToMinimum({ width, height });
 }
 
-/** Write `size` to `file` as JSON (clamped to the minimum). */
+/** Read `file` as a JSON object, or `{}` when missing/unreadable/not an object. */
+function readObject(file: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
+    if (typeof parsed === "object" && parsed !== null) return parsed as Record<string, unknown>;
+  } catch {
+    /* missing or invalid — treat as empty */
+  }
+  return {};
+}
+
+/**
+ * Write `size` to `file` as JSON (clamped to the minimum), preserving any other
+ * keys already in the file (e.g. {@link readActiveTab}'s `activeTab`) so the two
+ * independent writers don't clobber each other.
+ */
 export function writeWindowSize(file: string, size: WindowSize): void {
   const clamped = clampToMinimum(size);
-  writeFileSync(file, `${JSON.stringify(clamped, null, 2)}\n`, "utf8");
+  const merged = { ...readObject(file), ...clamped };
+  writeFileSync(file, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
+}
+
+/** Read the saved active-tab id from `file`, or `undefined` if absent/invalid. */
+export function readActiveTab(file: string): string | undefined {
+  const activeTab = readObject(file).activeTab;
+  return typeof activeTab === "string" && activeTab.length > 0 ? activeTab : undefined;
+}
+
+/** Persist `activeTab` to `file`, preserving any saved window size. */
+export function writeActiveTab(file: string, activeTab: string): void {
+  const merged = { ...readObject(file), activeTab };
+  writeFileSync(file, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
 }
 
 /** A display work area (logical pixels), matching Electron's `Display.workArea`. */

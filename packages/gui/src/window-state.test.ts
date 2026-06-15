@@ -13,7 +13,9 @@ import {
   centeredPosition,
   DEFAULT_WINDOW_SIZE,
   MIN_WINDOW_SIZE,
+  readActiveTab,
   readWindowSize,
+  writeActiveTab,
   writeWindowSize,
 } from "./window-state.js";
 
@@ -87,5 +89,31 @@ test("writeWindowSize clamps a too-small size before persisting", () => {
     const file = join(dir, "window-state.json");
     writeWindowSize(file, { width: 10, height: 10 });
     assert.deepEqual(readWindowSize(file), MIN_WINDOW_SIZE);
+  });
+});
+
+test("readActiveTab returns undefined when absent / invalid, else the id", () => {
+  withTempDir((dir) => {
+    const file = join(dir, "window-state.json");
+    assert.equal(readActiveTab(join(dir, "absent.json")), undefined);
+    writeFileSync(file, JSON.stringify({ width: 320, height: 320 }), "utf8");
+    assert.equal(readActiveTab(file), undefined); // no activeTab key
+    writeActiveTab(file, "dex.tasks");
+    assert.equal(readActiveTab(file), "dex.tasks");
+  });
+});
+
+test("size and active-tab writers preserve each other (no clobbering)", () => {
+  withTempDir((dir) => {
+    const file = join(dir, "window-state.json");
+    writeWindowSize(file, { width: 480, height: 360 });
+    writeActiveTab(file, "services.list");
+    // Writing the tab kept the size...
+    assert.deepEqual(readWindowSize(file), { width: 480, height: 360 });
+    assert.equal(readActiveTab(file), "services.list");
+    // ...and writing a new size keeps the tab.
+    writeWindowSize(file, { width: 500, height: 400 });
+    assert.equal(readActiveTab(file), "services.list");
+    assert.deepEqual(readWindowSize(file), { width: 500, height: 400 });
   });
 });

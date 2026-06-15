@@ -60,7 +60,9 @@ import { DEX_TASKS_ID, type DexBoard } from "./dex-state.js";
 import {
   centeredPosition,
   MIN_WINDOW_SIZE,
+  readActiveTab,
   readWindowSize,
+  writeActiveTab,
   writeWindowSize,
 } from "./window-state.js";
 
@@ -92,11 +94,18 @@ let subscriptionKey: string | undefined;
 let servicesKey: string | undefined;
 /** Subscription key echoed on `dex.tasks` `capability.update` notifications. */
 let dexKey: string | undefined;
+/**
+ * The last-selected tab id, loaded from GUI-local state when the panel is
+ * created and updated when the renderer reports a tab change. Attached to every
+ * pushed state so the renderer can seed its selection (sticky across panel opens
+ * + restarts). Loaded lazily (not at module init) since it reads a userData path.
+ */
+let savedActiveTab: string | undefined;
 
 /** Recompute the panel state from current inputs and push it to the renderer. */
 function pushState(): void {
-  const state = buildPanelState(buildInput);
-  panel?.webContents.send(Channels.stateFromMain, state satisfies PanelState);
+  const state: PanelState = { ...buildPanelState(buildInput), savedActiveTab };
+  panel?.webContents.send(Channels.stateFromMain, state);
 }
 
 /**
@@ -547,8 +556,10 @@ function saveCurrentSize(win: BrowserWindow): void {
 
 /** Create the frameless, always-on-top, non-activating panel window (hidden). */
 function createPanel(): BrowserWindow {
-  // Restore the user's last size (or the default), clamped to the minimum.
+  // Restore the user's last size (or the default), clamped to the minimum, and
+  // the last-selected tab (seeded into the first pushed state).
   const { width, height } = readWindowSize(windowStatePath());
+  savedActiveTab = readActiveTab(windowStatePath());
   const win = new BrowserWindow({
     width,
     height,
@@ -970,6 +981,16 @@ function registerIpc(): void {
   // renderer's navigator.clipboard, which a non-activating panel can't rely on.
   ipcMain.on(Channels.copyText, (_event, text: string) => {
     if (typeof text === "string" && text.length > 0) clipboard.writeText(text);
+  });
+  // Persist the renderer's tab selection so it's restored on the next open.
+  ipcMain.on(Channels.setActiveTab, (_event, id: string) => {
+    if (typeof id !== "string" || id.length === 0 || id === savedActiveTab) return;
+    savedActiveTab = id;
+    try {
+      writeActiveTab(windowStatePath(), id);
+    } catch (err) {
+      console.error(`[window-state] save active tab failed: ${errorMessage(err)}`);
+    }
   });
 
   // Settings window: request/response handlers returning the refreshed repo list.

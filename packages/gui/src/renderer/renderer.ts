@@ -724,6 +724,7 @@ function tabEl(tab: PanelTab, active: boolean): HTMLElement {
   if (!active) {
     btn.addEventListener("click", () => {
       activeTabId = tab.id;
+      window.perch.setActiveTab(tab.id); // persist so it's restored next open
       if (lastState) render(lastState);
     });
   }
@@ -749,7 +750,10 @@ function render(state: PanelState): void {
   syncAvailable = state.syncAvailable;
   syncingRepos = state.syncing;
 
-  const activeId = resolveActiveTab(state.tabs, activeTabId);
+  // Seed from the persisted tab on first render (activeTabId undefined), then
+  // the renderer owns the selection. resolveActiveTab falls back to the first
+  // tab if the saved id no longer exists (e.g. that plugin was disabled).
+  const activeId = resolveActiveTab(state.tabs, activeTabId ?? state.savedActiveTab);
   activeTabId = activeId;
 
   // The tab strip (icon + name + badge per plugin) doubles as the panel header,

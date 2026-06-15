@@ -41,6 +41,8 @@ export const Channels = {
   serviceLogs: "perch:service-logs",
   /** Renderer → main: copy text to the clipboard (payload: the text). */
   copyText: "perch:copy-text",
+  /** Renderer → main: persist the selected tab id (payload: the tab id). */
+  setActiveTab: "perch:set-active-tab",
 } as const;
 
 /**
@@ -64,6 +66,8 @@ export interface PerchBridge {
   serviceLogs(name: string): void;
   /** Ask the main process to copy text to the system clipboard. */
   copyText(text: string): void;
+  /** Tell the main process which tab is now selected, so it persists across opens. */
+  setActiveTab(id: string): void;
 }
 
 declare global {

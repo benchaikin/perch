@@ -35,6 +35,9 @@ const bridge: PerchBridge = {
   copyText(text) {
     ipcRenderer.send(Channels.copyText, text);
   },
+  setActiveTab(id) {
+    ipcRenderer.send(Channels.setActiveTab, id);
+  },
 };
 
 contextBridge.exposeInMainWorld("perch", bridge);
