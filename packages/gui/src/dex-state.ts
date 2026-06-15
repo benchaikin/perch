@@ -54,6 +54,14 @@ export interface DexRow {
   description: string;
   result: string | null;
   status: DexStatus;
+  /**
+   * Status the row's marker should render as, which can differ from {@link status}:
+   * an epic that isn't itself blocked or in-progress rolls up to `in-progress`
+   * when any descendant is in progress, so a collapsed parent still signals that
+   * work is underway beneath it. Equals {@link status} for every other row. The
+   * rollup is display-only — {@link DexCounts} stay keyed off the real status.
+   */
+  displayStatus: DexStatus;
   depth: number;
   isEpic: boolean;
   blockedByCount: number;
@@ -122,6 +130,7 @@ export function buildDexSection(board: DexBoard | undefined): DexSection {
   if (!board || board.tasks.length === 0) {
     return { visible: false, rows: [], counts: { ...ZERO_COUNTS } };
   }
+  const activeAncestors = ancestorsWithActiveDescendant(board.tasks);
   const counts: DexCounts = { ...ZERO_COUNTS, total: board.tasks.length };
   const rows: DexRow[] = board.tasks.map((t) => {
     switch (t.status) {
@@ -144,6 +153,7 @@ export function buildDexSection(board: DexBoard | undefined): DexSection {
       description: t.description,
       result: t.result,
       status: t.status,
+      displayStatus: rollupDisplayStatus(t, activeAncestors),
       depth: t.depth,
       isEpic: t.isEpic,
       blockedByCount: t.blockedByCount,
@@ -152,4 +162,44 @@ export function buildDexSection(board: DexBoard | undefined): DexSection {
     };
   });
   return { visible: true, rows, counts };
+}
+
+/**
+ * Ids of every task that has an in-progress *descendant* (any depth). Built by
+ * walking each in-progress task's `parentId` chain up to the root and marking
+ * the ancestors — so it spans grandchildren, not just direct children. The
+ * `parentId` chain is authoritative; we don't rely on the rows' array ordering.
+ */
+function ancestorsWithActiveDescendant(tasks: DexTask[]): Set<string> {
+  const parentOf = new Map(tasks.map((t) => [t.id, t.parentId]));
+  const marked = new Set<string>();
+  for (const t of tasks) {
+    if (t.status !== "in-progress") continue;
+    let pid = t.parentId;
+    // Stop early once we hit an already-marked ancestor: its own ancestors were
+    // marked when it was added, so the rest of the chain is already covered.
+    while (pid && !marked.has(pid)) {
+      marked.add(pid);
+      pid = parentOf.get(pid);
+    }
+  }
+  return marked;
+}
+
+/**
+ * The status a row's marker renders as. An epic that isn't itself blocked or
+ * in-progress rolls up to `in-progress` when it has an in-progress descendant;
+ * blocked outranks the rollup (a blocked parent keeps reading as blocked,
+ * consistent with {@link worstDexHealth}). Everything else renders as-is.
+ */
+function rollupDisplayStatus(t: DexTask, activeAncestors: Set<string>): DexStatus {
+  if (
+    t.isEpic &&
+    t.status !== "blocked" &&
+    t.status !== "in-progress" &&
+    activeAncestors.has(t.id)
+  ) {
+    return "in-progress";
+  }
+  return t.status;
 }

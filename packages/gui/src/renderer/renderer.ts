@@ -433,7 +433,7 @@ function servicesSectionEl(section: ServicesSection, showTitle = true): HTMLElem
  */
 const DEX_STATUS_ICON: Record<DexStatus, string> = {
   ready: "circle",
-  "in-progress": "circle-half-stroke",
+  "in-progress": "spinner",
   blocked: "ban",
   done: "circle-check",
 };
@@ -447,10 +447,21 @@ const DEX_STATUS_LABEL: Record<DexStatus, string> = {
 /**
  * Marker tone (CSS class) for a task's status dot. In-progress reads accent-blue
  * ("actively being worked") rather than the amber its health tone would give;
- * everything else uses its health tone.
+ * everything else uses its health tone. Keyed off `displayStatus` so an epic
+ * rolled up to in-progress (active descendant) gets the active tone too.
  */
 function dexMarkerTone(row: DexRow): string {
-  return row.status === "in-progress" ? "dex-active" : row.health;
+  return row.displayStatus === "in-progress" ? "dex-active" : row.health;
+}
+
+/**
+ * Full class string for a task's status marker `<i>`: the health tone, the
+ * status-shaped Font Awesome glyph, and `fa-spin` for in-progress (the spinner
+ * actually spins). Shared by the list row and the detail header so they match.
+ */
+function dexMarkerClass(row: DexRow): string {
+  const spin = row.displayStatus === "in-progress" ? " fa-spin" : "";
+  return `dot ${dexMarkerTone(row)} fa-solid fa-${DEX_STATUS_ICON[row.displayStatus]}${spin}`;
 }
 
 /** A small blocker-count chip ("blocked ×N"). */
@@ -500,8 +511,8 @@ function dexRowEl(row: DexRow): HTMLElement {
   }
 
   const marker = document.createElement("i");
-  marker.className = `dot ${dexMarkerTone(row)} fa-solid fa-${DEX_STATUS_ICON[row.status]}`;
-  marker.title = DEX_STATUS_LABEL[row.status];
+  marker.className = dexMarkerClass(row);
+  marker.title = DEX_STATUS_LABEL[row.displayStatus];
   el.append(marker);
 
   const name = document.createElement("span");
@@ -545,7 +556,7 @@ function dexDetailEl(row: DexRow): HTMLElement {
   const head = document.createElement("div");
   head.className = "dex-detail-head";
   const marker = document.createElement("i");
-  marker.className = `dot ${dexMarkerTone(row)} fa-solid fa-${DEX_STATUS_ICON[row.status]}`;
+  marker.className = dexMarkerClass(row);
   const title = document.createElement("span");
   title.className = "dex-detail-title";
   title.textContent = row.name;
