@@ -5,7 +5,7 @@
  * A packaged Perch.app ships no `node_modules` and no workspace `plugins/` dir,
  * so the daemon's normal dynamic/filesystem plugin discovery (`loadPluginsByIds`
  * walking up to `pnpm-workspace.yaml`) can't run. Instead we **statically import**
- * the bundled plugins (stack + services) and hand them to {@link startDaemon} as
+ * the bundled plugins (stack + services + dex) and hand them to {@link startDaemon} as
  * pre-loaded `PluginDef`s, so esbuild inlines them into the bundle and no
  * filesystem discovery happens. Without this, a packaged build's `services.list`
  * (and the panel's Services section) would be missing entirely.
@@ -34,9 +34,10 @@ import {
 } from "@perch/core";
 import stackPlugin from "@perch/plugin-stack";
 import servicesPlugin from "@perch/plugin-services";
+import dexPlugin from "@perch/plugin-dex";
 
 /** The plugins bundled into the packaged daemon (statically imported above). */
-const BUNDLED_PLUGINS = [stackPlugin, servicesPlugin];
+const BUNDLED_PLUGINS = [stackPlugin, servicesPlugin, dexPlugin];
 
 /** Boot the bundled daemon, then keep the process alive for the RPC server. */
 async function main(): Promise<void> {

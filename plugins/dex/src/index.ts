@@ -32,8 +32,8 @@ const DexConfig = z.object({
   /**
    * Project roots to monitor (each must contain a `.dex/` store). When unset or
    * empty, the daemon's own resolved store is used (cwd-relative). When set,
-   * each store is read via `--storage-path <dir>/.dex/tasks.jsonl` and tagged
-   * with the directory's basename.
+   * each store is read via `--storage-path <dir>/.dex` and tagged with the
+   * directory's basename.
    */
   dirs: z.array(z.string()).optional(),
   /** Path to the `dex` binary; defaults to `dex` on PATH. */
@@ -61,9 +61,13 @@ export function __setExec(exec: Exec | undefined): void {
   execOverride = exec;
 }
 
-/** Where a project root's dex store lives. */
+/**
+ * The dex store path for a project root: its `.dex` directory. `dex
+ * --storage-path` expects the store *directory* (matching `dex dir`'s output),
+ * not the `tasks.jsonl` file inside it.
+ */
 function storagePathOf(dir: string): string {
-  return join(dir, ".dex", "tasks.jsonl");
+  return join(dir, ".dex");
 }
 
 export default definePlugin({
