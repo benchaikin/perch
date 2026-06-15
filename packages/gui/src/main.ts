@@ -341,6 +341,15 @@ async function reloadFromRegistry(): Promise<void> {
       buildInput.servicesList = undefined;
       servicesKey = undefined;
     }
+    // Same for dex: re-subscribe if present (a config edit like `showCompleted`
+    // stops the poller + clears the cache, so re-subscribing re-runs the read
+    // with the new config and applies it immediately), else clear so it hides.
+    if (caps.some((c) => c.id === DEX_TASKS_ID)) {
+      await subscribeDex();
+    } else {
+      buildInput.dexBoard = undefined;
+      dexKey = undefined;
+    }
   } catch (err) {
     buildInput.error = `registry: ${errorMessage(err)}`;
   }
