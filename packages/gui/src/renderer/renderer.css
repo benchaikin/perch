@@ -79,10 +79,6 @@ body {
   -webkit-app-region: drag;
 }
 
-.title {
-  font-weight: 600;
-}
-
 /* Subtle header icon button (e.g. Refresh), pushed to the top-right. */
 .icon-btn {
   margin-left: auto;
@@ -109,6 +105,100 @@ body {
   border: none;
   border-top: 1px solid var(--rule);
   margin: 6px 0;
+}
+
+/* Plugin tab strip: a compact horizontal row of one tab per plugin, living in
+   the header row itself (it doubles as the panel title, so there's no separate
+   title line). Only the active tab's content shows in .rows below; inactive tabs
+   keep their status glanceable via a badge. Clickable inside the otherwise-
+   draggable header region. */
+.tabs {
+  display: flex;
+  gap: 4px;
+  -webkit-app-region: no-drag;
+}
+
+/* One tab: a Font Awesome icon + plugin name + optional status badge. Muted
+   until hovered or active; the active tab reads in full --fg on a stronger
+   fill. */
+.tab {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.tab:hover {
+  background: var(--hover-bg);
+  color: var(--fg);
+}
+.tab-active {
+  background: var(--hover-bg-strong);
+  border-color: var(--rule);
+  color: var(--fg);
+  font-weight: 600;
+}
+
+/* Bare status dot (Services tab): a small filled circle tinted by tone. */
+.tab-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--muted);
+}
+/* Count pill (PRs tab): the open-PR count on a subtle tone-tinted fill,
+   mirroring the stacked-PR .num chip's sizing. */
+.tab-badge {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--chip-bg);
+  color: var(--muted);
+}
+/* Shared tone palette for both the dot and the count pill. The pill carries a
+   translucent fill (like .num); the dot carries a solid tinted background. */
+.tab-dot.ok {
+  background: var(--ok);
+}
+.tab-dot.warn {
+  background: var(--warn);
+}
+.tab-dot.bad {
+  background: var(--bad);
+}
+.tab-dot.muted {
+  background: var(--muted);
+}
+.tab-badge.ok {
+  background: rgba(var(--ok-rgb), 0.15);
+  color: var(--ok);
+}
+.tab-badge.warn {
+  background: rgba(var(--warn-rgb), 0.15);
+  color: var(--warn);
+}
+.tab-badge.bad {
+  background: rgba(var(--bad-rgb), 0.15);
+  color: var(--bad);
+}
+.tab-badge.muted {
+  background: var(--chip-bg);
+  color: var(--muted);
 }
 
 .rows {

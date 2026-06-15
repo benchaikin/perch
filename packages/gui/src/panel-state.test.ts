@@ -344,3 +344,91 @@ test("buildPanelState surfaces a per-repo error inline and stays ok overall", ()
   assert.deepEqual(state.repos[0]!.groups, []);
   assert.equal(state.repos[1]!.groups.length, 1);
 });
+
+// ── Plugin tabs ──────────────────────────────────────────────────────────────
+
+const twoPrOverview: PrOverview = {
+  repos: [
+    {
+      name: "r",
+      groups: [
+        { kind: "pr", pr: { ...basePr, number: 1 } }, // clean → ok
+        { kind: "pr", pr: { ...basePr, number: 2, ciStatus: "fail" } }, // → bad
+      ],
+    },
+  ],
+};
+
+test("buildPanelState always emits a PRs tab, Services only when present", () => {
+  // No services list → just the PRs tab.
+  const noSvc = buildPanelState({ overview: twoPrOverview, daemonUp: true, syncAvailable: true });
+  assert.deepEqual(
+    noSvc.tabs.map((t) => t.id),
+    ["stack.prs"],
+  );
+  assert.equal(noSvc.tabs[0]!.label, "PRs");
+
+  // With a live services list → PRs first, Services second.
+  const withSvc = buildPanelState({
+    overview: twoPrOverview,
+    daemonUp: true,
+    syncAvailable: true,
+    servicesList: { available: true, services: [{ name: "api", status: "running" }] },
+  });
+  assert.deepEqual(
+    withSvc.tabs.map((t) => t.id),
+    ["stack.prs", "services.list"],
+  );
+});
+
+test("PRs tab badge counts open PRs and tones by worst health", () => {
+  const state = buildPanelState({ overview: twoPrOverview, daemonUp: true, syncAvailable: true });
+  const prs = state.tabs.find((t) => t.id === "stack.prs")!;
+  assert.equal(prs.badge?.count, 2);
+  assert.equal(prs.badge?.tone, "bad"); // the failing PR dominates
+
+  // All-clean repo → ok tone.
+  const clean: PrOverview = { repos: [{ name: "r", groups: [{ kind: "pr", pr: { ...basePr } }] }] };
+  const okState = buildPanelState({ overview: clean, daemonUp: true, syncAvailable: true });
+  assert.equal(okState.tabs[0]!.badge?.count, 1);
+  assert.equal(okState.tabs[0]!.badge?.tone, "ok");
+});
+
+test("Services tab badge is a bare dot toned by worst service health", () => {
+  const state = buildPanelState({
+    overview: twoPrOverview,
+    daemonUp: true,
+    syncAvailable: true,
+    servicesList: {
+      available: true,
+      services: [
+        { name: "api", status: "running" },
+        { name: "db", status: "crashed", exitCode: 1 },
+      ],
+    },
+  });
+  const svc = state.tabs.find((t) => t.id === "services.list")!;
+  assert.equal(svc.label, "Services");
+  assert.equal(svc.badge?.count, undefined); // bare dot, no count
+  assert.equal(svc.badge?.tone, "bad");
+});
+
+test("buildPanelState: no PRs → PRs tab with a bare muted badge", () => {
+  // daemon-down has no overview and no services.
+  const down = buildPanelState({ daemonUp: false, syncAvailable: false });
+  assert.deepEqual(
+    down.tabs.map((t) => t.id),
+    ["stack.prs"],
+  );
+  assert.equal(down.tabs[0]!.badge?.count, undefined);
+  assert.equal(down.tabs[0]!.badge?.tone, "muted");
+
+  // "empty" (repos present but no PRs) likewise shows a muted PRs badge.
+  const empty = buildPanelState({
+    overview: { repos: [{ name: "r", groups: [] }] },
+    daemonUp: true,
+    syncAvailable: true,
+  });
+  assert.equal(empty.status, "empty");
+  assert.equal(empty.tabs[0]!.badge?.tone, "muted");
+});

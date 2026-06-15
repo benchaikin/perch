@@ -174,6 +174,21 @@ function servicesControls(available: boolean): ServicesControl[] {
 }
 
 /**
+ * The worst (most severe) health across a section's rows, for the Services
+ * tab's status dot: `bad` if any row is crashed, else `warn` if any is
+ * starting, else `ok` if any is running/completed, else `muted` (every row
+ * stopped, or no rows). Severity order: bad > warn > ok > muted.
+ */
+export function worstServiceHealth(section: ServicesSection): ServiceHealth {
+  let worst: ServiceHealth = "muted";
+  const rank: Record<ServiceHealth, number> = { muted: 0, ok: 1, warn: 2, bad: 3 };
+  for (const row of section.rows) {
+    if (rank[row.health] > rank[worst]) worst = row.health;
+  }
+  return worst;
+}
+
+/**
  * Build the Services section from the latest `services.list` output. Hidden
  * (`visible: false`) only when the list is absent or has no rows — note an
  * unreachable server can still carry configured procs as `stopped` rows, so the

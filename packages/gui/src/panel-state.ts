@@ -15,6 +15,7 @@
 
 import {
   buildServicesSection,
+  worstServiceHealth,
   type ServiceList,
   type ServicesBulkAction,
   type ServicesSection,
@@ -160,6 +161,40 @@ export interface Notice {
   text: string;
 }
 
+/**
+ * A small status badge shown on a plugin's tab so its state stays glanceable
+ * while the tab is inactive. `count` (when present) is a number to display
+ * (e.g. open PR count); omit it for a bare status dot. `tone` drives the
+ * badge/dot color. `"muted"` means "nothing notable" (grey).
+ */
+export interface TabBadge {
+  /** A number to display (e.g. open PR count). Omit for a bare status dot. */
+  count?: number;
+  /** Health tone driving the badge/dot color. */
+  tone: Health | "muted";
+}
+
+/**
+ * One plugin tab in the panel's tab strip. Derived from {@link PanelState}'s
+ * sections (registry-driven), so a new plugin showing up adds a tab with no
+ * renderer changes. `icon` is a Font Awesome glyph name (rendered `fa-<icon>`).
+ */
+export interface PanelTab {
+  /** Stable key for selection — the plugin's primary capability id. */
+  id: string;
+  /** Short label shown in the header title for the active tab. */
+  label: string;
+  /** Font Awesome glyph name (e.g. `"code-pull-request"`). */
+  icon: string;
+  /** Optional status badge; absent when there's nothing to signal. */
+  badge?: TabBadge;
+}
+
+/** Tab id for the cross-repo "My PRs" view (the stack plugin's tab). */
+export const STACK_TAB_ID = STACK_PRS_ID;
+/** Tab id for the "Services" view (the services plugin's tab). */
+export const SERVICES_TAB_ID = "services.list";
+
 /** The complete state the renderer needs to draw the panel. */
 export interface PanelState {
   /** Overall connection/data status. */
@@ -180,6 +215,12 @@ export interface PanelState {
    * services, so the panel is unchanged for users without it.
    */
   services: ServicesSection;
+  /**
+   * The plugin tabs to draw in the tab strip, in display order (PRs first,
+   * Services when visible). The renderer shows one tab's content at a time and
+   * uses each tab's badge to keep the others glanceable.
+   */
+  tabs: PanelTab[];
 }
 
 /** Inputs to {@link buildPanelState}. */
@@ -322,6 +363,57 @@ function repoPrCount(repo: PrRepo): number {
   return n;
 }
 
+/** Total rendered PR rows across all repo sections (a stack counts its layers). */
+function panelPrCount(repos: RepoSection[]): number {
+  let n = 0;
+  for (const repo of repos) {
+    for (const group of repo.groups) n += group.kind === "pr" ? 1 : group.rows.length;
+  }
+  return n;
+}
+
+/** Worst (most severe) health across all rendered PR rows: bad > warn > ok. */
+function worstRepoHealth(repos: RepoSection[]): Health {
+  const rank: Record<Health, number> = { ok: 0, warn: 1, bad: 2 };
+  let worst: Health = "ok";
+  for (const repo of repos) {
+    for (const group of repo.groups) {
+      const rows = group.kind === "pr" ? [group.pr] : group.rows;
+      for (const r of rows) if (rank[r.health] > rank[worst]) worst = r.health;
+    }
+  }
+  return worst;
+}
+
+/**
+ * Build the plugin tab list from the derived sections. PRs is always first; the
+ * Services tab is appended only when its section is visible. The PRs badge shows
+ * the open-PR count tinted by the worst PR health, falling back to a bare muted
+ * dot when there are none (empty / loading / daemon-down). The Services badge is
+ * a bare status dot tinted by the worst service health. Registry-driven by
+ * intent: a future plugin's tab slots in after these without renderer changes.
+ */
+function buildTabs(repos: RepoSection[], services: ServicesSection): PanelTab[] {
+  const count = panelPrCount(repos);
+  const tabs: PanelTab[] = [
+    {
+      id: STACK_TAB_ID,
+      label: "PRs",
+      icon: "code-pull-request",
+      badge: count > 0 ? { count, tone: worstRepoHealth(repos) } : { tone: "muted" },
+    },
+  ];
+  if (services.visible) {
+    tabs.push({
+      id: SERVICES_TAB_ID,
+      label: "Services",
+      icon: "gears",
+      badge: { tone: worstServiceHealth(services) },
+    });
+  }
+  return tabs;
+}
+
 /**
  * Build the full {@link PanelState} from raw inputs. Pure: same inputs → same
  * output, no side effects. The renderer draws whatever this returns.
@@ -347,15 +439,30 @@ export function buildPanelState(input: BuildInput): PanelState {
       repos: [],
       syncAvailable: false,
       ...live,
+      tabs: buildTabs([], live.services),
     };
   }
 
   if (error) {
-    return { status: "error", message: error, repos: [], syncAvailable, ...live };
+    return {
+      status: "error",
+      message: error,
+      repos: [],
+      syncAvailable,
+      ...live,
+      tabs: buildTabs([], live.services),
+    };
   }
 
   if (!overview) {
-    return { status: "loading", message: "Loading…", repos: [], syncAvailable, ...live };
+    return {
+      status: "loading",
+      message: "Loading…",
+      repos: [],
+      syncAvailable,
+      ...live,
+      tabs: buildTabs([], live.services),
+    };
   }
 
   // Presentation-only stack ordering; default to today's base-first behavior
@@ -369,9 +476,10 @@ export function buildPanelState(input: BuildInput): PanelState {
 
   // "Empty" when every repo has neither PRs nor an error to surface.
   const anyContent = overview.repos.some((r) => repoPrCount(r) > 0 || r.error);
+  const tabs = buildTabs(repos, live.services);
   if (!anyContent) {
-    return { status: "empty", message: "No open PRs", repos, syncAvailable, ...live };
+    return { status: "empty", message: "No open PRs", repos, syncAvailable, ...live, tabs };
   }
 
-  return { status: "ok", repos, syncAvailable, ...live };
+  return { status: "ok", repos, syncAvailable, ...live, tabs };
 }

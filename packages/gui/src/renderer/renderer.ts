@@ -5,7 +5,16 @@
  * `buildPanelState`) and renders the grouped "My PRs" panel DOM. Bundled to
  * plain browser JS by esbuild.
  */
-import type { GroupRow, Health, PanelState, PrRow, RepoSection } from "../panel-state.js";
+import type {
+  GroupRow,
+  Health,
+  PanelState,
+  PanelTab,
+  PrRow,
+  RepoSection,
+  TabBadge,
+} from "../panel-state.js";
+import { SERVICES_TAB_ID } from "../panel-state.js";
 import type {
   ServiceAction,
   ServiceHealth,
@@ -63,6 +72,7 @@ const SERVICE_BULK_ICON: Record<ServicesBulkAction, { icon: string; tint: string
   restartAll: { icon: "arrows-rotate", tint: "restart" },
 };
 
+const tabsEl = byId("tabs");
 const rowsEl = byId("rows");
 const refreshBtn = byId("refresh") as HTMLButtonElement;
 const refreshIcon = refreshBtn.querySelector("i");
@@ -76,6 +86,14 @@ function setRefreshSpinning(on: boolean): void {
 let syncAvailable = false;
 /** Repos with a sync in flight — their Sync button shows progress. */
 let syncingRepos: string[] = [];
+/**
+ * The selected plugin tab's id, preserved across re-renders while that tab still
+ * exists (else it falls back to the first tab — e.g. Services going away returns
+ * focus to PRs). Undefined until the first state arrives.
+ */
+let activeTabId: string | undefined;
+/** The last rendered state, replayed when the active tab changes (a click). */
+let lastState: PanelState | undefined;
 
 function byId(id: string): HTMLElement {
   const el = document.getElementById(id);
@@ -368,17 +386,24 @@ function servicesControlEl(control: ServicesControl, bulkActing?: ServicesBulkAc
  * none configured), so the panel is unchanged for users without process-compose.
  * When process-compose is down but procs are configured, rows show as stopped
  * and the header's **Start all** brings the stack up.
+ *
+ * `showTitle` is false when this section is the active full-tab pane: the panel
+ * header title already names "Services", so the section's own title would
+ * duplicate it — we drop the label and keep the header as a (right-aligned)
+ * controls toolbar above the rows.
  */
-function servicesSectionEl(section: ServicesSection): HTMLElement | null {
+function servicesSectionEl(section: ServicesSection, showTitle = true): HTMLElement | null {
   if (!section.visible) return null;
   const el = document.createElement("section");
   el.className = "repo-section services-section";
 
   const header = document.createElement("div");
   header.className = "repo-header services-header";
-  const title = document.createElement("span");
-  title.textContent = "Services";
-  header.append(title);
+  if (showTitle) {
+    const title = document.createElement("span");
+    title.textContent = "Services";
+    header.append(title);
+  }
 
   if (section.controls.length > 0) {
     const controls = document.createElement("span");
@@ -388,7 +413,9 @@ function servicesSectionEl(section: ServicesSection): HTMLElement | null {
     }
     header.append(controls);
   }
-  el.append(header);
+  // Only emit the header when it carries something (a title and/or controls);
+  // with `showTitle` false and no controls it would be an empty bar.
+  if (header.childElementCount > 0) el.append(header);
 
   for (const svc of section.rows) el.append(serviceRowEl(svc));
   return el;
@@ -412,29 +439,101 @@ function loadingEl(text: string): HTMLElement {
   return el;
 }
 
-/** Apply a {@link PanelState} to the DOM. */
-function render(state: PanelState): void {
-  syncAvailable = state.syncAvailable;
-  syncingRepos = state.syncing;
-  rowsEl.replaceChildren();
+/**
+ * Resolve which tab should be active: keep the current selection when it still
+ * exists (tabs come and go as plugins appear/disappear), else fall back to the
+ * first tab. Undefined only when there are no tabs at all. Mirrors the Settings
+ * window's `resolveActiveTab`.
+ */
+function resolveActiveTab(tabs: PanelTab[], current: string | undefined): string | undefined {
+  if (tabs.length === 0) return undefined;
+  if (current !== undefined && tabs.some((t) => t.id === current)) return current;
+  return tabs[0]!.id;
+}
 
+/** Build a tab's status badge: a count pill when `count` is set, else a bare dot. */
+function tabBadgeEl(badge: TabBadge): HTMLElement {
+  if (badge.count !== undefined) {
+    const pill = document.createElement("span");
+    pill.className = `tab-badge ${badge.tone}`;
+    pill.textContent = String(badge.count);
+    return pill;
+  }
+  const dot = document.createElement("span");
+  dot.className = `tab-dot ${badge.tone}`;
+  return dot;
+}
+
+/**
+ * Build one tab button: a Font Awesome icon, the plugin name, then an optional
+ * status badge (icon → label → badge). The label sits in the tab itself (the
+ * icon alone isn't self-evident), so there's no separate panel title. Clicking a
+ * non-active tab selects it and re-renders from the last state.
+ */
+function tabEl(tab: PanelTab, active: boolean): HTMLElement {
+  const btn = document.createElement("button");
+  btn.className = `tab${active ? " tab-active" : ""}`;
+  btn.title = tab.label;
+  btn.setAttribute("aria-label", tab.label);
+
+  const icon = document.createElement("i");
+  icon.className = `fa-solid fa-${tab.icon}`;
+  btn.append(icon);
+
+  const label = document.createElement("span");
+  label.className = "tab-label";
+  label.textContent = tab.label;
+  btn.append(label);
+
+  if (tab.badge) btn.append(tabBadgeEl(tab.badge));
+
+  if (!active) {
+    btn.addEventListener("click", () => {
+      activeTabId = tab.id;
+      if (lastState) render(lastState);
+    });
+  }
+  return btn;
+}
+
+/** Render the PRs pane (stack plugin) into `rowsEl` per the panel status. */
+function renderPrsPane(state: PanelState): void {
   if (state.status === "ok") {
     for (const repo of state.repos) rowsEl.append(repoSectionEl(repo));
   } else if (state.status === "loading") {
     rowsEl.append(loadingEl(state.message ?? "Loading…"));
-  } else if (state.status === "empty" && state.services.visible) {
-    // No PRs but process-compose is live: skip the "No open PRs" message so the
-    // Services section (appended below) stands on its own.
   } else {
+    // empty / daemon-down / error → a centered message in the PRs pane.
     const isError = state.status === "daemon-down" || state.status === "error";
     rowsEl.append(messageEl(state.message ?? "", isError));
   }
+}
 
-  // The Services section is self-hiding (omitted when process-compose is absent
-  // or reports nothing) — so the My-PRs-only panel is unchanged for users
-  // without process-compose. Appended after PRs regardless of PR status.
-  const services = servicesSectionEl(state.services);
-  if (services) rowsEl.append(services);
+/** Apply a {@link PanelState} to the DOM. */
+function render(state: PanelState): void {
+  lastState = state;
+  syncAvailable = state.syncAvailable;
+  syncingRepos = state.syncing;
+
+  const activeId = resolveActiveTab(state.tabs, activeTabId);
+  activeTabId = activeId;
+
+  // The tab strip (icon + name + badge per plugin) doubles as the panel header,
+  // so it always renders — even a lone PRs tab labels the view.
+  tabsEl.replaceChildren();
+  for (const tab of state.tabs) tabsEl.append(tabEl(tab, tab.id === activeId));
+
+  // Render only the active plugin's content. Services has its own self-contained
+  // section (header + controls + rows); everything else falls through to PRs.
+  rowsEl.replaceChildren();
+  if (activeId === SERVICES_TAB_ID) {
+    // Full-tab pane: the panel title already says "Services", so suppress the
+    // section's own title (keep its controls toolbar).
+    const services = servicesSectionEl(state.services, false);
+    if (services) rowsEl.append(services);
+  } else {
+    renderPrsPane(state);
+  }
 
   // A refresh started by the button stops spinning once the new state lands.
   setRefreshSpinning(false);

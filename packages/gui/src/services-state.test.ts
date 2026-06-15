@@ -9,6 +9,7 @@ import {
   serviceButtons,
   serviceHealth,
   toServiceRow,
+  worstServiceHealth,
   type ServiceList,
 } from "./services-state.js";
 
@@ -156,4 +157,19 @@ test("buildServicesSection shows rows when available with services", () => {
   // `acting` marks only the named service in-flight.
   assert.equal(section.rows[0]!.inFlight, false);
   assert.equal(section.rows[1]!.inFlight, true);
+});
+
+test("worstServiceHealth picks the most severe row (bad > warn > ok > muted)", () => {
+  const sec = (...statuses: ServiceList["services"][number]["status"][]) =>
+    buildServicesSection({ available: true, services: statuses.map((s, i) => ({ name: `s${i}`, status: s })) });
+  // A crash dominates everything.
+  assert.equal(worstServiceHealth(sec("running", "crashed", "stopped")), "bad");
+  // Starting (warn) outranks running/stopped but not a crash.
+  assert.equal(worstServiceHealth(sec("running", "starting")), "warn");
+  // Any running with nothing worse → ok.
+  assert.equal(worstServiceHealth(sec("running", "stopped", "completed")), "ok");
+  // All stopped → muted (nothing notable).
+  assert.equal(worstServiceHealth(sec("stopped", "stopped")), "muted");
+  // No rows (hidden section) → muted.
+  assert.equal(worstServiceHealth({ visible: false, rows: [], controls: [] }), "muted");
 });
