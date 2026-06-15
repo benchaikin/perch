@@ -106,6 +106,13 @@ function stoppedService(name: string): Service {
  * what's defined (and offers Start-all) even with process-compose down. When the
  * server is reachable, live processes are mapped and any configured proc not in
  * the live set is appended as `stopped`. The read never throws.
+ *
+ * Ordering follows the **configured order** (`plugins.services.procs[]`), not
+ * process-compose's `/processes` order (which is its own internal/sorted order):
+ * each configured proc appears in definition order (its live status if present,
+ * else a synthesized `stopped` row). Any live process NOT in the configured set
+ * (e.g. an externally-managed compose file with no `procs`) is appended after, in
+ * its original order.
  */
 export function buildServiceList(
   processes: ProcessState[] | undefined,
@@ -114,8 +121,13 @@ export function buildServiceList(
   if (processes === undefined) {
     return { services: procNames.map(stoppedService), available: false };
   }
-  const services = processes.map(toService);
-  const live = new Set(services.map((s) => s.name));
-  const missing = procNames.filter((name) => !live.has(name)).map(stoppedService);
-  return { services: [...services, ...missing], available: true };
+  const live = new Map(processes.map((state) => [state.name, toService(state)]));
+  // Configured procs first, in definition order (live status, else `stopped`).
+  const ordered = procNames.map((name) => live.get(name) ?? stoppedService(name));
+  // Then any live process not in the configured set, in process-compose's order.
+  const configured = new Set(procNames);
+  const extras = processes
+    .filter((state) => !configured.has(state.name))
+    .map((state) => live.get(state.name)!);
+  return { services: [...ordered, ...extras], available: true };
 }
