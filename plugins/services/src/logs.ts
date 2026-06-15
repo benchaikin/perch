@@ -11,6 +11,9 @@
  * a thin `spawnLogsTerminal` that wraps them around an injectable `spawn`.
  */
 import { spawn } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { DEFAULT_ADDRESS, type ServerTarget } from "./provider.js";
 
@@ -104,6 +107,29 @@ export function applyLogTerminalTemplate(template: string, cmd: string): string 
   return template.replaceAll(CMD_PLACEHOLDER, cmd);
 }
 
+/**
+ * Persist the inner logs command to a small shell script in a Perch temp dir and
+ * return its path. The launcher template then interpolates only a **quote-free**
+ * `sh <path>`, so the inner command's single-quoted args (the process name and
+ * socket path) live INSIDE the script instead of being nested into the launcher.
+ *
+ * This is the fix for the nested-quote collision: the AppleScript presets embed
+ * `{cmd}` inside `osascript -e '…'` (single-quoted) — the inner command's own
+ * single quotes would otherwise close that `-e` arg and mangle the whole launch.
+ * A generated temp path contains no quote characters, so it survives every preset
+ * (AppleScript single-quoted, `sh -c "…"` double-quoted, and tmux). `exec` so the
+ * terminal's shell becomes process-compose (clean Ctrl-C). One file per process
+ * name (sanitized), overwritten on each open so they don't accumulate.
+ */
+function defaultWriteLogsScript(name: string, command: string): string {
+  const dir = join(tmpdir(), "perch-logs");
+  mkdirSync(dir, { recursive: true });
+  const safe = name.replace(/[^A-Za-z0-9._-]/g, "_") || "service";
+  const path = join(dir, `${safe}.sh`);
+  writeFileSync(path, `#!/bin/sh\nexec ${command}\n`);
+  return path;
+}
+
 /** Options for {@link spawnLogsTerminal}. */
 export interface SpawnLogsOptions extends ServerTarget {
   /** The process name to tail. */
@@ -123,6 +149,12 @@ export interface SpawnLogsOptions extends ServerTarget {
   log?: (message: string) => void;
   /** Injected spawn (tests stub it); defaults to `child_process.spawn`. */
   spawn?: typeof spawn;
+  /**
+   * Injected script writer (tests stub it to avoid disk I/O); defaults to
+   * {@link defaultWriteLogsScript}. Returns the path the launcher runs as
+   * `sh <path>`.
+   */
+  writeScript?: (name: string, command: string) => string;
 }
 
 /**
@@ -143,9 +175,15 @@ export function spawnLogsTerminal(options: SpawnLogsOptions): { ok: boolean; mes
     terminalApp: options.terminalApp,
     logTerminal: options.logTerminal,
   });
-  const launch = applyLogTerminalTemplate(template, inner);
   const spawnFn = options.spawn ?? spawn;
+  const writeScript = options.writeScript ?? defaultWriteLogsScript;
   try {
+    // Route the inner command through a temp script so the template only ever
+    // interpolates a quote-free `sh <path>` — see defaultWriteLogsScript. Writing
+    // it here (inside the try) means a write failure surfaces as ok:false rather
+    // than throwing.
+    const scriptPath = writeScript(options.name, inner);
+    const launch = applyLogTerminalTemplate(template, `sh ${scriptPath}`);
     const child = spawnFn("sh", ["-c", launch], { detached: true, stdio: "ignore" });
     child.on("error", (err: Error) => {
       options.log?.(`services.logs launch failed: ${err.message}`);

@@ -103,3 +103,31 @@ test("buildServiceList: reachable list is augmented with configured procs not ru
     ],
   );
 });
+
+test("buildServiceList: output follows configured (procs[]) order, not process-compose's", () => {
+  // process-compose returns its own order (here: alphabetical); the result must
+  // reorder to the configured definition order.
+  const processes: ProcessState[] = [
+    { name: "async_task_worker", status: "Running", pid: 3 },
+    { name: "backend", status: "Running", pid: 1 },
+    { name: "frontend", status: "Running", pid: 2 },
+  ];
+  const result = buildServiceList(processes, ["backend", "frontend", "async_task_worker"]);
+  assert.deepEqual(
+    result.services.map((s) => s.name),
+    ["backend", "frontend", "async_task_worker"],
+  );
+});
+
+test("buildServiceList: live procs not in config are appended after configured ones", () => {
+  const processes: ProcessState[] = [
+    { name: "extra", status: "Running", pid: 9 },
+    { name: "backend", status: "Running", pid: 1 },
+  ];
+  // `backend` is configured (first); `extra` isn't → appended after, in pc order.
+  const result = buildServiceList(processes, ["backend"]);
+  assert.deepEqual(
+    result.services.map((s) => s.name),
+    ["backend", "extra"],
+  );
+});
