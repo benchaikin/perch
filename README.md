@@ -165,6 +165,38 @@ worktree bookkeeping.
   toolchain (`pnpm -r build`, `npm run build`, `make`, `cargo build`, `go build`,
   …) and only reaps if it passes.
 
+### Live agent fleet (Claude Code hooks)
+
+Perch can also show **which agent is running in which worktree, and its state** —
+`running` / `blocked` (waiting on you) / `idle` / `ended` — as a marker on each
+dex row, so a fleet of parallel agents reads at a glance. (This complements tools
+like Vibe Island, which own approvals/attention; Perch adds the project context —
+task, worktree, CI, review — they can't see.)
+
+It's fed by **Claude Code hooks**. The `agents` plugin exposes `agents.list` (the
+fleet) and `agents report`, which a hook calls on each session event; the daemon
+maps the event's `cwd` → the `dex/<id>` worktree → the task. To enable it:
+
+1. Turn the plugin on in `perch.json`: add `"agents": {}` under `plugins`.
+2. Add a hook to your **`~/.claude/settings.json`** on the
+   `SessionStart`, `UserPromptSubmit`, `Notification`, `Stop`, and `SessionEnd`
+   events, each running (append alongside any existing hooks — don't replace them):
+
+   ```
+   /bin/sh -c '<node> <repo>/packages/cli/dist/bin.js agents report --stdin-json >/dev/null 2>&1; exit 0'
+   ```
+
+   The trailing `; exit 0` means a stopped daemon never stalls your agent
+   (mirroring the way other agent-bridge hooks guard themselves). `--stdin-json`
+   passes the raw hook payload through; the daemon does the attribution, so the
+   hook stays a single cheap command. (`PreToolUse` is intentionally left off — it
+   fires on every tool call; `Stop`/`Notification` already give the
+   blocked/idle/done states.)
+
+> **Note:** `blocked` is a latch set by a permission/elicitation `Notification`
+> and cleared by the next activity event — there's no explicit "unblocked" hook,
+> so a cancelled prompt can leave a stale `blocked` until the next event.
+
 ---
 
 ## Core ideas
