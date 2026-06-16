@@ -16,12 +16,16 @@
  *     filesystem watcher. electronmon (launched alongside) then restarts the
  *     main process on a dist/main.js change and reloads the renderer otherwise.
  */
+import process from "node:process";
 import { build, context } from "esbuild";
 import { cp, mkdir } from "node:fs/promises";
 import { watch as watchDir } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+const log = (msg) => process.stdout.write(`${msg}\n`);
+const logErr = (msg) => process.stderr.write(`${msg}\n`);
 
 const watchMode = process.argv.includes("--watch");
 
@@ -166,9 +170,7 @@ function rebuildLogger(label) {
     setup(pluginBuild) {
       pluginBuild.onEnd((result) => {
         const errors = result.errors.length;
-        console.log(
-          errors ? `[esbuild] ${label}: ${errors} error(s)` : `[esbuild] rebuilt ${label}`,
-        );
+        log(errors ? `[esbuild] ${label}: ${errors} error(s)` : `[esbuild] rebuilt ${label}`);
       });
     },
   };
@@ -190,10 +192,10 @@ if (watchMode) {
   await copyAssets();
   for (const dir of [join(src, "renderer"), join(src, "settings")]) {
     watchDir(dir, { recursive: true }, () => {
-      copyAssets().catch((err) => console.error(`[esbuild] asset copy failed: ${err.message}`));
+      copyAssets().catch((err) => logErr(`[esbuild] asset copy failed: ${err.message}`));
     });
   }
-  console.log("[esbuild] watching for changes…");
+  log("[esbuild] watching for changes…");
 } else {
   await Promise.all(configs.map(build));
   await copyAssets();
