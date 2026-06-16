@@ -12,6 +12,8 @@
  * wire shape of `dex.tasks`'s output, not the plugin's internals.
  */
 
+import type { LinkedWorktree } from "./worktree-task-link.js";
+
 /** Canonical capability id of the dex task board read the section renders. */
 export const DEX_TASKS_ID = "dex.tasks";
 
@@ -68,6 +70,12 @@ export interface DexRow {
   project?: string;
   /** Marker color: blocked=red(bad), in-progress=amber(warn), done=green(ok), ready=grey(muted). */
   health: DexHealth;
+  /**
+   * The live git worktree this task is being worked in, when one matches —
+   * joined in by `buildPanelState` from `linkWorktreesAndTasks`. Absent when no
+   * worktree carries this task's id (or the worktrees board is missing).
+   */
+  worktree?: LinkedWorktree;
 }
 
 /** Tallies per status, for the tab badge + any header summary. */
@@ -128,9 +136,15 @@ export function worstDexHealth(section: DexSection): DexHealth {
  * exists) — not by whether a board has arrived. So an installed plugin with no
  * board yet (or an empty board) still shows an empty state, and finishing all
  * your tasks doesn't make the tab vanish; only an uninstalled plugin hides the
- * section. Pure.
+ * section. `worktreeByTaskId` (from `linkWorktreesAndTasks`) annotates each task
+ * row with its live worktree; pass an empty map (or omit it) for no annotation.
+ * Pure.
  */
-export function buildDexSection(board: DexBoard | undefined, present: boolean): DexSection {
+export function buildDexSection(
+  board: DexBoard | undefined,
+  present: boolean,
+  worktreeByTaskId?: ReadonlyMap<string, LinkedWorktree>,
+): DexSection {
   if (!board) {
     return { visible: present, rows: [], counts: { ...ZERO_COUNTS } };
   }
@@ -163,6 +177,7 @@ export function buildDexSection(board: DexBoard | undefined, present: boolean): 
       blockedByCount: t.blockedByCount,
       project: t.project,
       health: dexHealth(t.status),
+      worktree: worktreeByTaskId?.get(t.id),
     };
   });
   return { visible: present, rows, counts };

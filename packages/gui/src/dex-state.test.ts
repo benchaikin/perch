@@ -72,6 +72,28 @@ test("buildDexSection tallies counts and maps row health", () => {
   assert.equal(section.rows[1]!.blockedByCount, 2);
 });
 
+test("buildDexSection annotates rows from the worktree map (and only those)", () => {
+  const section = buildDexSection(
+    board(task({ id: "t1", status: "in-progress" }), task({ id: "t2", status: "ready" })),
+    true,
+    new Map([
+      ["t1", { path: "/wt/a", branch: "a", repo: "alpha", dirty: true, dirtyCount: 2, ahead: 1, behind: 0 }],
+    ]),
+  );
+  assert.deepEqual(section.rows[0]!.worktree, {
+    path: "/wt/a",
+    branch: "a",
+    repo: "alpha",
+    dirty: true,
+    dirtyCount: 2,
+    ahead: 1,
+    behind: 0,
+  });
+  // Unmatched tasks carry no worktree; an omitted map leaves every row bare.
+  assert.equal(section.rows[1]!.worktree, undefined);
+  assert.equal(buildDexSection(board(task({ id: "x", status: "ready" })), true).rows[0]!.worktree, undefined);
+});
+
 test("worstDexHealth: blocked > ready > in-progress > muted", () => {
   // A blocked task dominates.
   assert.equal(
