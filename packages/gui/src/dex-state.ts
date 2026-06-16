@@ -13,6 +13,7 @@
  */
 
 import type { LinkedWorktree } from "./worktree-task-link.js";
+import type { LandableState } from "./landable.js";
 
 /** Canonical capability id of the dex task board read the section renders. */
 export const DEX_TASKS_ID = "dex.tasks";
@@ -76,6 +77,16 @@ export interface DexRow {
    * worktree carries this task's id (or the worktrees board is missing).
    */
   worktree?: LinkedWorktree;
+  /**
+   * The work-item's "landable" signal — its open PR's CI + review + merge state
+   * reduced to one glanceable state (see `landable.ts`), joined in by
+   * `buildPanelState` from `deriveLandableByTaskId`. Absent (or `"none"`) when no
+   * PR matches this task's worktree branch; the renderer surfaces it as a chip so
+   * a finished agent's review/merge queue reads off the task list. The renderer
+   * falls back to a neutral chip for any state it doesn't recognize, so a future
+   * landable state added upstream renders rather than crashes.
+   */
+  landable?: LandableState;
 }
 
 /** Tallies per status, for the tab badge + any header summary. */
@@ -137,13 +148,15 @@ export function worstDexHealth(section: DexSection): DexHealth {
  * board yet (or an empty board) still shows an empty state, and finishing all
  * your tasks doesn't make the tab vanish; only an uninstalled plugin hides the
  * section. `worktreeByTaskId` (from `linkWorktreesAndTasks`) annotates each task
- * row with its live worktree; pass an empty map (or omit it) for no annotation.
- * Pure.
+ * row with its live worktree; `landableByTaskId` (from `deriveLandableByTaskId`)
+ * annotates it with its PR's landable state. Pass an empty map (or omit either)
+ * for no annotation. Pure.
  */
 export function buildDexSection(
   board: DexBoard | undefined,
   present: boolean,
   worktreeByTaskId?: ReadonlyMap<string, LinkedWorktree>,
+  landableByTaskId?: ReadonlyMap<string, LandableState>,
 ): DexSection {
   if (!board) {
     return { visible: present, rows: [], counts: { ...ZERO_COUNTS } };
@@ -178,6 +191,7 @@ export function buildDexSection(
       project: t.project,
       health: dexHealth(t.status),
       worktree: worktreeByTaskId?.get(t.id),
+      landable: landableByTaskId?.get(t.id),
     };
   });
   return { visible: present, rows, counts };

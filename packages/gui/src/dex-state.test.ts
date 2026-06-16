@@ -77,7 +77,18 @@ test("buildDexSection annotates rows from the worktree map (and only those)", ()
     board(task({ id: "t1", status: "in-progress" }), task({ id: "t2", status: "ready" })),
     true,
     new Map([
-      ["t1", { path: "/wt/a", branch: "a", repo: "alpha", dirty: true, dirtyCount: 2, ahead: 1, behind: 0 }],
+      [
+        "t1",
+        {
+          path: "/wt/a",
+          branch: "a",
+          repo: "alpha",
+          dirty: true,
+          dirtyCount: 2,
+          ahead: 1,
+          behind: 0,
+        },
+      ],
     ]),
   );
   assert.deepEqual(section.rows[0]!.worktree, {
@@ -91,7 +102,27 @@ test("buildDexSection annotates rows from the worktree map (and only those)", ()
   });
   // Unmatched tasks carry no worktree; an omitted map leaves every row bare.
   assert.equal(section.rows[1]!.worktree, undefined);
-  assert.equal(buildDexSection(board(task({ id: "x", status: "ready" })), true).rows[0]!.worktree, undefined);
+  assert.equal(
+    buildDexSection(board(task({ id: "x", status: "ready" })), true).rows[0]!.worktree,
+    undefined,
+  );
+});
+
+test("buildDexSection threads the landable state onto rows (and only those)", () => {
+  const section = buildDexSection(
+    board(task({ id: "t1", status: "in-progress" }), task({ id: "t2", status: "in-progress" })),
+    true,
+    undefined,
+    new Map([["t1", "ready" as const]]),
+  );
+  // The matched task carries its landable state; an unmatched one is bare.
+  assert.equal(section.rows[0]!.landable, "ready");
+  assert.equal(section.rows[1]!.landable, undefined);
+  // An omitted landable map leaves every row bare.
+  assert.equal(
+    buildDexSection(board(task({ id: "x", status: "ready" })), true).rows[0]!.landable,
+    undefined,
+  );
 });
 
 test("worstDexHealth: blocked > ready > in-progress > muted", () => {

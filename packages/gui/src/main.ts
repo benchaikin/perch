@@ -49,6 +49,7 @@ import {
 } from "./settings-ipc.js";
 import {
   buildPanelState,
+  landableDecisionCount,
   STACK_PRS_ID,
   STACK_SYNC_ID,
   type BuildInput,
@@ -110,6 +111,19 @@ let savedActiveTab: string | undefined;
 function pushState(): void {
   const state: PanelState = { ...buildPanelState(buildInput), savedActiveTab };
   panel?.webContents.send(Channels.stateFromMain, state);
+  updateTrayBadge(state);
+}
+
+/**
+ * Set the menu-bar badge to the count of landable work-items needing *your*
+ * decision (`needs-review` + `ready`) — the merge-queue counterpart of the
+ * panel's per-task landable chips. `Tray.setTitle` renders text beside the icon
+ * in the menu bar (a macOS-only API; a no-op elsewhere); an empty string clears
+ * it so the icon stands alone when there's nothing waiting.
+ */
+function updateTrayBadge(state: PanelState): void {
+  const count = landableDecisionCount(state.landableByTaskId);
+  tray?.setTitle(count > 0 ? String(count) : "");
 }
 
 /**
@@ -1013,6 +1027,8 @@ function showSettingsWindow(): void {
 function createTray(): void {
   tray = new Tray(trayImage());
   tray.setToolTip("Perch");
+  // Start with no badge; pushState updates it from the landable decision count.
+  tray.setTitle("");
   const menu = Menu.buildFromTemplate([
     { label: "Show / Hide", click: () => togglePanel() },
     { type: "separator" },

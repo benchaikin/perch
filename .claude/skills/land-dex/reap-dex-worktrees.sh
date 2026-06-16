@@ -20,12 +20,17 @@
 #   1. The worktree's branch parses to a dex id (or has perch.dexTask set).
 #   2. The branch has a PR and that PR is MERGED (state == MERGED, mergedAt set).
 #   3. The worktree tree is clean (`git status --porcelain` is empty).
+#   4. NO-CI BUILD GATE: if the PR's merged commit had NO CI checks at all, the
+#      repo's build must pass locally before reaping. Repos that HAVE CI skip
+#      this (CI was already the gate). A build that can't be inferred, or that
+#      fails, is FLAGGED + skipped — never reaped.
 # Only then: `git worktree remove` + `git branch -d` (note -d, not -D, as a
 # second merged-only safety net) + `dex complete --commit <mergeSha>`.
 #
-# NO-CI CAVEAT: this skill keys off PR-merged state only. For repos WITHOUT CI,
-# a sibling skill adds a local-build gate before reaping; this script does NOT
-# implement that build gate — merged-PR is the sole signal here.
+# NO-CI BUILD GATE: for a merged PR whose head reported NO CI checks (an empty
+# statusCheckRollup), CI never gated the merge, so before reaping we run the
+# repo's own build (inferred from its toolchain — see infer_build_command) in the
+# worktree and only proceed if it passes. Repos WITH CI are unchanged.
 set -euo pipefail
 
 DRY_RUN=0
@@ -70,6 +75,44 @@ parse_dex_id() {
   return 0
 }
 
+# Infer the build command for a repo from its toolchain, checking in priority
+# order and picking the FIRST that matches. Prints the command to stdout (empty
+# if none can be inferred). Rules (dir = repo/worktree root):
+#   pnpm        pnpm-lock.yaml present                  -> pnpm -r build
+#   npm/yarn    package.json with a "build" script      -> npm run build / yarn build
+#   make        Makefile / makefile present             -> make
+#   cargo       Cargo.toml present                       -> cargo build
+#   go          go.mod present                           -> go build ./...
+# pnpm is checked before plain npm/yarn so a pnpm monorepo builds recursively.
+infer_build_command() {
+  local dir="$1"
+  if [[ -f "$dir/pnpm-lock.yaml" ]]; then
+    printf 'pnpm -r build'
+    return 0
+  fi
+  if [[ -f "$dir/package.json" ]] && grep -Eq '"build"[[:space:]]*:' "$dir/package.json"; then
+    if [[ -f "$dir/yarn.lock" ]]; then
+      printf 'yarn build'
+    else
+      printf 'npm run build'
+    fi
+    return 0
+  fi
+  if [[ -f "$dir/Makefile" || -f "$dir/makefile" ]]; then
+    printf 'make'
+    return 0
+  fi
+  if [[ -f "$dir/Cargo.toml" ]]; then
+    printf 'cargo build'
+    return 0
+  fi
+  if [[ -f "$dir/go.mod" ]]; then
+    printf 'go build ./...'
+    return 0
+  fi
+  return 0 # nothing inferred -> empty
+}
+
 reaped=()
 flagged=()
 
@@ -110,8 +153,8 @@ process_record() {
   fi
 
   # --- Guard: PR must be MERGED ---
-  local pr_json state merged_at merge_sha pr_url pr_title pr_number
-  if ! pr_json="$(gh pr view "$branch" --json state,mergedAt,mergeCommit,url,title,number 2>/dev/null)"; then
+  local pr_json state merged_at merge_sha pr_url pr_title pr_number check_count
+  if ! pr_json="$(gh pr view "$branch" --json state,mergedAt,mergeCommit,url,title,number,statusCheckRollup 2>/dev/null)"; then
     note_flag "$id [$branch] @ $path — no PR found for branch (skipped)"
     return 0
   fi
@@ -121,6 +164,9 @@ process_record() {
   pr_url="$(printf '%s' "$pr_json" | jq -r '.url // ""')"
   pr_title="$(printf '%s' "$pr_json" | jq -r '.title // ""')"
   pr_number="$(printf '%s' "$pr_json" | jq -r '.number // ""')"
+  # Number of CI checks GitHub reported on the head. 0 == this is a NO-CI repo
+  # (no checks ever gated the merge), which triggers the local build gate below.
+  check_count="$(printf '%s' "$pr_json" | jq -r '(.statusCheckRollup // []) | length')"
 
   if [[ "$state" != "MERGED" || -z "$merged_at" ]]; then
     note_flag "$id [$branch] @ $path — PR not merged (state=$state, ${pr_url:-no url}) (skipped)"
@@ -139,12 +185,36 @@ process_record() {
     return 0
   fi
 
+  # --- Guard: NO-CI build gate ---
+  # If the PR reported NO CI checks, CI never gated the merge, so the build must
+  # pass locally before we reap. Repos WITH CI skip this (CI was the gate).
+  local build_cmd=""
+  if [[ "$check_count" == "0" ]]; then
+    build_cmd="$(infer_build_command "$path")"
+    if [[ -z "$build_cmd" ]]; then
+      note_flag "$id [$branch] @ $path — no CI and no build command could be inferred (skipped)"
+      return 0
+    fi
+    if [[ "$DRY_RUN" == 1 ]]; then
+      # Don't run the build in dry-run; just report the plan.
+      echo "      (no CI: would gate on build \`$build_cmd\` in $path before reaping)" >&2
+    else
+      echo "      no CI: running build gate \`$build_cmd\` in $path …" >&2
+      if ! ( cd "$path" && eval "$build_cmd" ) >&2; then
+        note_flag "$id [$branch] @ $path — no CI and build failed (\`$build_cmd\`) (skipped)"
+        return 0
+      fi
+    fi
+  fi
+
   # All guards pass. Build PR-derived completion evidence.
   local evidence
   evidence="Merged PR #${pr_number}: ${pr_title} (${pr_url}) — merge commit ${merge_sha}"
 
   if [[ "$DRY_RUN" == 1 ]]; then
-    note_reap "$id [$branch] @ $path — WOULD reap (merged, clean); complete with: $evidence"
+    local gate_note=""
+    [[ -n "$build_cmd" ]] && gate_note=" [no-CI build gate: $build_cmd]"
+    note_reap "$id [$branch] @ $path — WOULD reap (merged, clean)${gate_note}; complete with: $evidence"
     return 0
   fi
 

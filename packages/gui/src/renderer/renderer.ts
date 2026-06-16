@@ -22,6 +22,7 @@ import {
   type DexSection,
   type DexStatus,
 } from "../dex-state.js";
+import type { LandableState } from "../landable.js";
 import {
   WORKTREES_LIST_ID,
   type WorktreeRow,
@@ -479,6 +480,73 @@ function dexMarkerClass(row: DexRow): string {
   return `dot ${dexMarkerTone(row)} fa-solid fa-${DEX_STATUS_ICON[row.displayStatus]}${spin}`;
 }
 
+/**
+ * Glanceable spec for each "landable" state a finished work-item's PR can be in,
+ * so a task list doubles as a review/merge queue. Each carries a short label, a
+ * shared `.chip` tone, and a distinct Font Awesome *shape* (a non-color cue, so
+ * the state reads without relying on the red/green hue a colorblind viewer can't
+ * separate) — `ci-running` spins. `none` is intentionally absent: it renders no
+ * chip. The renderer falls back to a neutral chip for any state not listed here,
+ * so a landable state added upstream (e.g. `build-gated`) renders rather than
+ * crashes (see {@link LANDABLE_FALLBACK} / {@link dexLandableChipEl}).
+ */
+const LANDABLE_CHIP: Partial<
+  Record<LandableState, { label: string; tone: string; icon: string; spin?: boolean; hint: string }>
+> = {
+  "needs-review": {
+    label: "needs review",
+    tone: "warn",
+    icon: "eye",
+    hint: "CI passing — awaiting review",
+  },
+  "changes-requested": {
+    label: "changes requested",
+    tone: "bad",
+    icon: "pen",
+    hint: "A reviewer requested changes",
+  },
+  "ci-failed": { label: "CI failed", tone: "bad", icon: "circle-xmark", hint: "CI failed" },
+  "ci-running": {
+    label: "CI…",
+    tone: "muted",
+    icon: "arrows-spin",
+    spin: true,
+    hint: "CI in progress",
+  },
+  ready: {
+    label: "ready to merge",
+    tone: "ok",
+    icon: "circle-check",
+    hint: "CI passing and approved — ready to land",
+  },
+  merged: { label: "merged", tone: "muted", icon: "code-merge", hint: "Merged" },
+};
+
+/** Neutral fallback chip for an unmapped/unknown landable state — renders the
+ *  raw state text rather than crashing, so a future state added upstream still
+ *  shows up (just without a bespoke label/icon). */
+const LANDABLE_FALLBACK = { tone: "muted", icon: "code-pull-request" } as const;
+
+/**
+ * Build the "landable" chip for a dex task row from its PR's merge-readiness
+ * state, or null for `none` (nothing to land — no chip). Unknown states fall
+ * back to a neutral chip labeled with the raw state. Non-interactive: the
+ * landable map carries no PR URL, so the chip is glanceable only — clicking the
+ * row still opens the task detail.
+ */
+function dexLandableChipEl(state: LandableState): HTMLElement | null {
+  if (state === "none") return null;
+  const spec = LANDABLE_CHIP[state];
+  const tone = spec?.tone ?? LANDABLE_FALLBACK.tone;
+  const chip = document.createElement("span");
+  chip.className = `chip ${tone} dex-landable`;
+  chip.title = spec?.hint ?? `Landable: ${state}`;
+  const icon = document.createElement("i");
+  icon.className = `fa-solid fa-${spec?.icon ?? LANDABLE_FALLBACK.icon}${spec?.spin ? " fa-spin" : ""}`;
+  chip.append(icon, ` ${spec?.label ?? state}`);
+  return chip;
+}
+
 /** A small blocker-count chip ("blocked ×N"). */
 function dexBlockedChip(count: number): HTMLElement {
   const badge = document.createElement("span");
@@ -536,6 +604,13 @@ function dexRowEl(row: DexRow): HTMLElement {
   el.append(name);
 
   if (row.blockedByCount > 0) el.append(dexBlockedChip(row.blockedByCount));
+
+  // When the task's worktree branch matches an open PR, surface that PR's
+  // merge-readiness as a chip so the task list reads as a review/merge queue.
+  if (row.landable) {
+    const landable = dexLandableChipEl(row.landable);
+    if (landable) el.append(landable);
+  }
 
   // When a live git worktree is linked to this task, surface it (branch + git
   // health) with an open-in-terminal affordance.
@@ -613,6 +688,10 @@ function dexDetailEl(row: DexRow): HTMLElement {
     meta.append(proj);
   }
   if (row.blockedByCount > 0) meta.append(dexBlockedChip(row.blockedByCount));
+  if (row.landable) {
+    const landable = dexLandableChipEl(row.landable);
+    if (landable) meta.append(landable);
+  }
   wrap.append(meta);
 
   if (row.description) wrap.append(dexBodyEl(row.description));

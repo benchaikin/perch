@@ -29,12 +29,33 @@ of lowercase alphanumerics), optionally `-<slug>`. `dex/<id>` and
 when set, **wins** over the branch parse — so this skill checks that override
 first, exactly as the plugin does.
 
-## NO-CI repo caveat (boundary)
+## NO-CI repos: the local-build gate
 
-This skill keys off **PR-merged** state only (`gh pr view ... --json state`). For
-repos **without CI**, a sibling skill adds a local-build gate before reaping (run
-the build, only land if green). That build gate is **out of scope here** — do not
-implement it in this skill. Merged-PR is the sole signal this skill uses.
+This skill keys off **PR-merged** state (`gh pr view ... --json state,mergedAt`).
+That's enough for repos with CI: a green CI was the gate before the merge. But a
+repo **without CI** has no checks, so "merged" alone never proved the code builds
+("if it builds, ship it"). For those repos the reaper adds one more guard before
+anything destructive: it **runs the repo's build locally and only reaps if it
+passes**.
+
+A PR counts as **no-CI** when GitHub reports zero checks on its head
+(`statusCheckRollup` is empty). For such a PR, the reaper infers the build command
+from the repo's toolchain — first match wins:
+
+| Toolchain marker (in the worktree root) | Inferred build command |
+| --- | --- |
+| `pnpm-lock.yaml` | `pnpm -r build` |
+| `package.json` with a `"build"` script (+ `yarn.lock`) | `yarn build` |
+| `package.json` with a `"build"` script (no `yarn.lock`) | `npm run build` |
+| `Makefile` / `makefile` | `make` |
+| `Cargo.toml` | `cargo build` |
+| `go.mod` | `go build ./...` |
+
+The build runs in the worktree. **Build passes → reap as normal. Build fails, or
+no command could be inferred → FLAG + skip** (never delete). This is **in addition
+to** the merged-PR and clean-tree guards. Repos that **have** CI skip this gate
+entirely — their behavior is unchanged. In `--dry-run`, the reaper reports the
+build command it *would* run without executing it.
 
 ## Steps
 
@@ -58,7 +79,13 @@ gh pr view <branch> --json state,mergedAt,mergeCommit,url,title,number
 
 "Merged" = `state == MERGED` and `mergedAt` is present. No PR → flag and skip.
 
-### 3. Guarded cleanup (only when MERGED **and** clean)
+### 3. No-CI build gate (only when the PR had no CI checks)
+
+If the merged PR reported **zero** CI checks (`statusCheckRollup` empty), run the
+inferred build (see table above) in the worktree. **Pass → proceed; fail or no
+inferable command → FLAG + skip.** Repos with CI skip this step.
+
+### 4. Guarded cleanup (only when MERGED, clean, **and** build-gate satisfied)
 
 Confirm the tree is clean first — `git -C <path> status --porcelain` must be
 empty. Then, and only then:
@@ -73,12 +100,13 @@ The evidence is built from the PR — title, number/URL, and merge SHA, e.g.
 `Merged PR #123: <title> (<url>) — merge commit <sha>`. If `dex` isn't on PATH,
 use `npx @zeeg/dex`.
 
-### 4. Flag, never delete, anything unsafe
+### 5. Flag, never delete, anything unsafe
 
-An unmerged PR, no PR at all, or a dirty/uncommitted worktree → report it clearly
-and **SKIP**. No `git worktree remove`, no `git branch -d`, no `dex complete`.
+An unmerged PR, no PR at all, a dirty/uncommitted worktree, or (for a no-CI repo)
+a failed/uninferable build → report it clearly and **SKIP**. No `git worktree
+remove`, no `git branch -d`, no `dex complete`.
 
-### 5. Modes
+### 6. Modes
 
 - **Batch (default):** reap **all** merged dex worktrees in one pass.
 - **Single:** pass a `<id>` to reap only that task's worktree.
@@ -108,4 +136,5 @@ and a `==== summary ====` block reports the counts.
 - The PR isn't merged yet — wait, or finish/merge it first (see `dex-worktree`).
 - The worktree has uncommitted work — commit or stash it; this skill won't touch
   dirty trees.
-- A repo without CI where you want a build gate — that's the sibling skill's job.
+- A no-CI repo whose build is currently broken — fix the build first; the build
+  gate will FLAG + skip until it's green.

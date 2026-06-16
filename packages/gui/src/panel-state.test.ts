@@ -8,11 +8,13 @@ import { test } from "node:test";
 import {
   buildPanelState,
   ciChip,
+  landableDecisionCount,
   mergeableChip,
   reviewChip,
   toPrRow,
   type PrOverview,
 } from "./panel-state.js";
+import type { LandableState } from "./landable.js";
 
 test("ciChip maps each status to a tone", () => {
   assert.equal(ciChip("pass").tone, "ok");
@@ -109,6 +111,33 @@ test("PR health is warn when there are review comments but nothing blocking", ()
     toPrRow({ ...basePr, reviewDecision: "CHANGES_REQUESTED", humanReviewCommentCount: 2 }).health,
     "bad",
   );
+});
+
+test("landableDecisionCount counts only needs-review + ready (your-move states)", () => {
+  const map = (...states: LandableState[]): Map<string, LandableState> =>
+    new Map(states.map((s, i) => [`t${i}`, s]));
+  // The two "your move" states are counted; everything else is waiting on CI /
+  // the author / nothing (merged, none).
+  assert.equal(
+    landableDecisionCount(
+      map(
+        "needs-review",
+        "ready",
+        "ci-running",
+        "ci-failed",
+        "changes-requested",
+        "merged",
+        "none",
+      ),
+    ),
+    2,
+  );
+  // Empty map → 0 (no badge).
+  assert.equal(landableDecisionCount(new Map()), 0);
+  // Multiple of each accumulate.
+  assert.equal(landableDecisionCount(map("ready", "ready", "needs-review")), 3);
+  // Blocked/in-flight-only → 0 (nothing for you to act on yet).
+  assert.equal(landableDecisionCount(map("ci-running", "ci-failed", "changes-requested")), 0);
 });
 
 test("stack health is warn when any layer (or the stack) needs attention", () => {
@@ -421,9 +450,39 @@ test("Dex tab appears via the registry when the board is non-empty", () => {
     dexPresent: true,
     dexBoard: {
       tasks: [
-        { id: "e", name: "Epic", description: "", result: null, status: "ready", priority: 0, depth: 0, isEpic: true, blockedByCount: 0 },
-        { id: "a", name: "Blocked", description: "", result: null, status: "blocked", priority: 0, depth: 1, isEpic: false, blockedByCount: 1 },
-        { id: "b", name: "Ready", description: "", result: null, status: "ready", priority: 0, depth: 1, isEpic: false, blockedByCount: 0 },
+        {
+          id: "e",
+          name: "Epic",
+          description: "",
+          result: null,
+          status: "ready",
+          priority: 0,
+          depth: 0,
+          isEpic: true,
+          blockedByCount: 0,
+        },
+        {
+          id: "a",
+          name: "Blocked",
+          description: "",
+          result: null,
+          status: "blocked",
+          priority: 0,
+          depth: 1,
+          isEpic: false,
+          blockedByCount: 1,
+        },
+        {
+          id: "b",
+          name: "Ready",
+          description: "",
+          result: null,
+          status: "ready",
+          priority: 0,
+          depth: 1,
+          isEpic: false,
+          blockedByCount: 0,
+        },
       ],
     },
   });

@@ -252,6 +252,15 @@ body {
   white-space: nowrap;
 }
 
+/* The "landable" (PR merge-readiness) chip on a dex task row / detail: a shared
+   .chip toned by state, with a leading state-shaped icon. Reuses the .chip tone
+   colors; only the icon gap is new. */
+.dex-landable {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 /* The linked-worktree indicator on a dex task row: branch + git-health chips and
    an open-in-terminal button, hugging the row's trailing edge. Reuses the shared
    .chips / .chip markers; only the layout + compact open button are new. */
