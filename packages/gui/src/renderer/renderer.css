@@ -394,6 +394,30 @@ body {
   color: var(--accent);
 }
 
+/* The linked-worktree indicator on a dex task row: branch + git-health chips and
+   an open-in-terminal button, hugging the row's trailing edge. Reuses the shared
+   .chips / .chip markers; only the layout + compact open button are new. */
+.dex-worktree {
+  margin-left: auto;
+  align-items: center;
+}
+.dex-worktree-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Override .icon-btn's margin-left:auto — it already sits at the trailing edge,
+   right after the chips, and shouldn't push them apart. */
+.dex-worktree .dex-worktree-open {
+  margin-left: 0;
+  padding: 1px 4px;
+  font-size: 11px;
+}
+
 /* Dex section header: the icon-only expand/collapse-all control, right-aligned. */
 .dex-header {
   display: flex;
