@@ -295,6 +295,27 @@ export interface BuildInput {
   servicesBulkActing?: ServicesBulkAction;
 }
 
+/**
+ * Count the work-items whose landable state is awaiting *your* decision — the
+ * states where the next move is yours: `needs-review` (CI green, not yet
+ * approved) and `ready` (CI green AND approved, safe to land). The blocked /
+ * in-flight states (`ci-running`, `ci-failed`, `changes-requested`) are waiting
+ * on CI or the author, not on you; `merged`/`none` are nothing to act on.
+ *
+ * Drives the menu-bar tray badge (see `main.ts`): an at-a-glance count of how
+ * many finished agent PRs need you to review or land them. Pure — same map →
+ * same count — so it's unit-testable without Electron.
+ */
+export function landableDecisionCount(
+  landableByTaskId: ReadonlyMap<string, LandableState>,
+): number {
+  let n = 0;
+  for (const state of landableByTaskId.values()) {
+    if (state === "needs-review" || state === "ready") n += 1;
+  }
+  return n;
+}
+
 /** Map a normalized CI status to a status chip. */
 export function ciChip(ci: CiStatus): Chip {
   switch (ci) {
@@ -545,7 +566,12 @@ export function buildPanelState(input: BuildInput): PanelState {
       input.servicesActing,
       input.servicesBulkActing,
     ),
-    dex: buildDexSection(dexBoard, daemonUp && !!input.dexPresent, link.worktreeByTaskId),
+    dex: buildDexSection(
+      dexBoard,
+      daemonUp && !!input.dexPresent,
+      link.worktreeByTaskId,
+      landableByTaskId,
+    ),
     worktrees: buildWorktreesSection(worktreesList, link.taskByWorktreePath),
   };
 
@@ -556,7 +582,12 @@ export function buildPanelState(input: BuildInput): PanelState {
       repos: [],
       syncAvailable: false,
       ...live,
-      tabs: buildTabs({ repos: [], services: live.services, dex: live.dex, worktrees: live.worktrees }),
+      tabs: buildTabs({
+        repos: [],
+        services: live.services,
+        dex: live.dex,
+        worktrees: live.worktrees,
+      }),
     };
   }
 
@@ -567,7 +598,12 @@ export function buildPanelState(input: BuildInput): PanelState {
       repos: [],
       syncAvailable,
       ...live,
-      tabs: buildTabs({ repos: [], services: live.services, dex: live.dex, worktrees: live.worktrees }),
+      tabs: buildTabs({
+        repos: [],
+        services: live.services,
+        dex: live.dex,
+        worktrees: live.worktrees,
+      }),
     };
   }
 
@@ -578,7 +614,12 @@ export function buildPanelState(input: BuildInput): PanelState {
       repos: [],
       syncAvailable,
       ...live,
-      tabs: buildTabs({ repos: [], services: live.services, dex: live.dex, worktrees: live.worktrees }),
+      tabs: buildTabs({
+        repos: [],
+        services: live.services,
+        dex: live.dex,
+        worktrees: live.worktrees,
+      }),
     };
   }
 
@@ -593,7 +634,12 @@ export function buildPanelState(input: BuildInput): PanelState {
 
   // "Empty" when every repo has neither PRs nor an error to surface.
   const anyContent = overview.repos.some((r) => repoPrCount(r) > 0 || r.error);
-  const tabs = buildTabs({ repos, services: live.services, dex: live.dex, worktrees: live.worktrees });
+  const tabs = buildTabs({
+    repos,
+    services: live.services,
+    dex: live.dex,
+    worktrees: live.worktrees,
+  });
   if (!anyContent) {
     return { status: "empty", message: "No open PRs", repos, syncAvailable, ...live, tabs };
   }
