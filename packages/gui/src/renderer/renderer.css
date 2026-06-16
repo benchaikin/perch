@@ -234,26 +234,70 @@ body {
   cursor: pointer;
 }
 
-/* Chip annotating a worktree row with its linked dex task (🗒 id · name ·
-   status). Tone comes from the shared .chip status classes; only the layout is
-   local — a flex line so the name can ellipsis-truncate without pushing the id
-   or status off-screen. The id stays monospace to match .dex-id. */
-.worktree-task {
-  display: inline-flex;
-  align-items: baseline;
-  max-width: 18em;
-}
-.worktree-task-id {
-  font-family: ui-monospace, "SF Mono", Menlo, Monaco, "Courier New", monospace;
-}
-.worktree-task-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* Collapsible worktree repo header button. Styled like a header but interactive:
+   click toggles the repo's worktree rows. Resembles dex epic headers. */
+.worktree-repo-header-btn {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 2px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  text-align: left;
+  -webkit-app-region: no-drag;
+  /* A little top space separates each repo group, but not the first. */
+  margin-top: 10px;
 }
 
-/* Per-repo group header (only shown when worktrees span >1 repo); a little top
-   space separates each repo's group, but not the first. */
+.worktree-repo-header-btn:first-child {
+  margin-top: 0;
+}
+
+.worktree-repo-header-btn:hover {
+  background: var(--hover-bg);
+  color: var(--fg);
+}
+
+/* Chevron icon on repo header (down/right for collapsed state). */
+.worktree-repo-header-btn > i:first-child {
+  flex: 0 0 auto;
+  width: 14px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.worktree-repo-header-btn:hover > i:first-child {
+  color: var(--fg);
+}
+
+/* Repo name label (second flex child after the chevron). */
+.worktree-repo-name {
+  flex: 1 1 auto;
+}
+
+/* Container for aggregate indicators (count, dirty, conflict badges). */
+.worktree-repo-indicators {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Count chip on repo header (number of worktrees in repo). */
+.worktree-repo-count {
+  font-size: 10px;
+}
+
+/* Old static per-repo header styling (kept for backward compat if needed). */
 .worktrees-repo-header {
   margin-top: 10px;
 }
@@ -392,30 +436,6 @@ body {
    the amber its warn health would give. */
 .dot.dex-active {
   color: var(--accent);
-}
-
-/* The linked-worktree indicator on a dex task row: branch + git-health chips and
-   an open-in-terminal button, hugging the row's trailing edge. Reuses the shared
-   .chips / .chip markers; only the layout + compact open button are new. */
-.dex-worktree {
-  margin-left: auto;
-  align-items: center;
-}
-.dex-worktree-branch {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  max-width: 16ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* Override .icon-btn's margin-left:auto — it already sits at the trailing edge,
-   right after the chips, and shouldn't push them apart. */
-.dex-worktree .dex-worktree-open {
-  margin-left: 0;
-  padding: 1px 4px;
-  font-size: 11px;
 }
 
 /* Dex section header: the icon-only expand/collapse-all control, right-aligned. */

@@ -103,3 +103,61 @@ test("worstWorktreeHealth: bad > warn > muted", () => {
   // Empty/hidden → muted.
   assert.equal(worstWorktreeHealth(buildWorktreesSection(undefined)), "muted");
 });
+
+test("buildWorktreesSection creates repoGroups with aggregates when multiRepo=true", () => {
+  const section = buildWorktreesSection(
+    list(
+      wt({ name: "a", repo: "alpha", health: "ok" }),
+      wt({ name: "b", repo: "alpha", dirty: true, dirtyCount: 2, health: "warn" }),
+      wt({ name: "c", repo: "beta", health: "muted" }),
+      wt({ name: "d", repo: "beta", conflict: true, health: "bad" }),
+    ),
+  );
+
+  // multiRepo is true (2 repos).
+  assert.equal(section.multiRepo, true);
+
+  // repoGroups has one entry per repo, in order of first appearance.
+  assert.equal(section.repoGroups.length, 2);
+  assert.equal(section.repoGroups[0]!.repo, "alpha");
+  assert.equal(section.repoGroups[1]!.repo, "beta");
+
+  // Alpha group: 2 rows, health=worst(ok,warn)=warn, dirtyCount=2.
+  const alphaGroup = section.repoGroups[0]!;
+  assert.equal(alphaGroup.count, 2);
+  assert.equal(alphaGroup.health, "warn");
+  assert.equal(alphaGroup.dirtyCount, 2);
+  assert.equal(alphaGroup.hasConflict, false);
+
+  // Beta group: 2 rows, health=worst(muted,bad)=bad, dirtyCount=0, hasConflict=true.
+  const betaGroup = section.repoGroups[1]!;
+  assert.equal(betaGroup.count, 2);
+  assert.equal(betaGroup.health, "bad");
+  assert.equal(betaGroup.dirtyCount, 0);
+  assert.equal(betaGroup.hasConflict, true);
+});
+
+test("buildWorktreesSection has empty repoGroups when multiRepo=false", () => {
+  const section = buildWorktreesSection(list(wt({ name: "a", health: "muted" })));
+
+  // Single repo → multiRepo=false, repoGroups=empty.
+  assert.equal(section.multiRepo, false);
+  assert.equal(section.repoGroups.length, 0);
+});
+
+test("repoGroups rows preserve main-first ordering within each repo group", () => {
+  const section = buildWorktreesSection(
+    list(
+      wt({ name: "a", repo: "r1", main: true, health: "muted" }),
+      wt({ name: "b", repo: "r1", main: false, health: "muted" }),
+      wt({ name: "c", repo: "r2", main: true, health: "muted" }),
+      wt({ name: "d", repo: "r2", main: false, health: "muted" }),
+    ),
+  );
+
+  // Rows in each group preserve order from buildWorktreesSection input (main first).
+  assert.equal(section.repoGroups[0]!.rows[0]!.main, true);
+  assert.equal(section.repoGroups[0]!.rows[1]!.main, false);
+  assert.equal(section.repoGroups[1]!.rows[0]!.main, true);
+  assert.equal(section.repoGroups[1]!.rows[1]!.main, false);
+});

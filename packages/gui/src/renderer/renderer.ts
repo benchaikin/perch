@@ -15,9 +15,13 @@ import type {
   TabBadge,
 } from "../panel-state.js";
 import { SERVICES_TAB_ID } from "../panel-state.js";
-import { DEX_TASKS_ID, dexHealth, type DexRow, type DexSection, type DexStatus } from "../dex-state.js";
-import { WORKTREES_LIST_ID, type WorktreeRow, type WorktreesSection } from "../worktrees-state.js";
-import type { LinkedWorktree } from "../worktree-task-link.js";
+import { DEX_TASKS_ID, type DexRow, type DexSection, type DexStatus } from "../dex-state.js";
+import {
+  WORKTREES_LIST_ID,
+  type WorktreeRow,
+  type WorktreesSection,
+  type WorktreeRepoGroup,
+} from "../worktrees-state.js";
 import type {
   ServiceAction,
   ServiceHealth,
@@ -97,6 +101,8 @@ let syncingRepos: string[] = [];
 let activeTabId: string | undefined;
 /** Collapsed dex epic ids (their descendants are hidden); preserved across re-renders. */
 const collapsedDexIds = new Set<string>();
+/** Collapsed worktree repo ids (their rows are hidden); preserved across re-renders. */
+const collapsedWorktreeRepos = new Set<string>();
 /** The dex task whose detail view is open, if any (else the task list shows). */
 let selectedDexId: string | undefined;
 /** The last rendered state, replayed when the active tab changes (a click). */
@@ -466,44 +472,6 @@ function dexMarkerClass(row: DexRow): string {
   return `dot ${dexMarkerTone(row)} fa-solid fa-${DEX_STATUS_ICON[row.displayStatus]}${spin}`;
 }
 
-/**
- * The linked-worktree indicator for a dex task row: the branch (prefixed with
- * its repo when known) plus the shared dirty / ahead-behind health markers, and
- * an "open terminal here" button that drops the user into the worktree via the
- * same `worktrees.open` plumbing (`window.perch.worktreeOpen`) the Worktrees
- * panel uses. Fire-and-forget; clicks don't bubble to the row's open-detail.
- */
-function dexWorktreeEl(wt: LinkedWorktree): HTMLElement {
-  const wrap = document.createElement("span");
-  wrap.className = "chips dex-worktree";
-  const label = wt.repo && wt.branch ? `${wt.repo}/${wt.branch}` : (wt.branch ?? wt.repo ?? wt.path);
-
-  const branch = document.createElement("span");
-  branch.className = "chip muted dex-worktree-branch";
-  branch.title = `Worktree: ${wt.path}`;
-  const bi = document.createElement("i");
-  bi.className = "fa-solid fa-code-branch";
-  branch.append(bi, ` ${label}`);
-  wrap.append(branch);
-
-  appendWorktreeHealthChips(wrap, wt);
-
-  const open = document.createElement("button");
-  open.className = "icon-btn dex-worktree-open";
-  open.title = "Open terminal here";
-  open.setAttribute("aria-label", "Open terminal in worktree");
-  const oi = document.createElement("i");
-  oi.className = "fa-solid fa-terminal";
-  open.append(oi);
-  open.addEventListener("click", (e) => {
-    // Don't open the task detail; just launch the terminal in the worktree.
-    e.stopPropagation();
-    window.perch.worktreeOpen(wt.path);
-  });
-  wrap.append(open);
-  return wrap;
-}
-
 /** A small blocker-count chip ("blocked ×N"). */
 function dexBlockedChip(count: number): HTMLElement {
   const badge = document.createElement("span");
@@ -561,10 +529,6 @@ function dexRowEl(row: DexRow): HTMLElement {
   el.append(name);
 
   if (row.blockedByCount > 0) el.append(dexBlockedChip(row.blockedByCount));
-
-  // When a live git worktree is linked to this task, surface it (branch + git
-  // health) with an open-in-terminal affordance.
-  if (row.worktree) el.append(dexWorktreeEl(row.worktree));
 
   el.addEventListener("click", () => {
     selectedDexId = row.id;
@@ -721,60 +685,72 @@ function dexSectionEl(section: DexSection): HTMLElement | null {
 }
 
 /**
- * Build the chip annotating a worktree row with the dex task it was created for:
- * `🗒 <id> · <name> · <status>`, toned by the task's status the same way the dex
- * board's status chip is (`dexHealth` — blocked=red, in-progress/done/ready). The
- * name is truncated with CSS ellipsis so a long title can't blow out the row.
- * Non-interactive (clicking the row still opens the worktree dir).
+ * Build a collapsible worktree repo header: a chevron, health dot, count,
+ * and optional dirty/conflict indicators. Clicking toggles the repo's children.
  */
-function worktreeTaskChipEl(task: { id: string; name: string; status: DexStatus }): HTMLElement {
-  const chip = document.createElement("span");
-  chip.className = `chip ${dexHealth(task.status)} worktree-task`;
-  chip.title = `${task.id} · ${task.name} — ${DEX_STATUS_LABEL[task.status]}`;
-  const id = document.createElement("span");
-  id.className = "worktree-task-id";
-  id.textContent = task.id;
+function worktreeRepoHeaderEl(
+  group: WorktreeRepoGroup,
+  collapsed: boolean,
+): HTMLElement {
+  const el = document.createElement("button");
+  el.className = "worktree-repo-header-btn";
+  const rowCount = group.count;
+  const detail = [
+    `${rowCount} worktree${rowCount !== 1 ? "s" : ""}`,
+    group.dirtyCount > 0 ? `${group.dirtyCount} dirty` : "",
+    group.hasConflict ? "conflict" : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  el.title = `${group.repo} — ${detail}`;
+
+  const chevron = document.createElement("i");
+  chevron.className = `fa-solid fa-chevron-${collapsed ? "right" : "down"}`;
+  el.append(chevron);
+
+  const dot = document.createElement("i");
+  dot.className = `dot ${group.health} fa-solid fa-code-branch`;
+  el.append(dot);
+
   const name = document.createElement("span");
-  name.className = "worktree-task-name";
-  name.textContent = task.name;
-  const status = document.createElement("span");
-  status.className = "worktree-task-status";
-  status.textContent = DEX_STATUS_LABEL[task.status];
-  chip.append("🗒 ", id, " · ", name, " · ", status);
-  return chip;
-}
+  name.className = "branch worktree-repo-name";
+  name.textContent = group.repo;
+  el.append(name);
 
-/**
- * The git-health facets a dex task's linked worktree carries — enough to render
- * the dirty / ahead-behind markers exactly as the Worktrees panel does.
- */
-interface WorktreeHealthFacet {
-  dirty: boolean;
-  dirtyCount: number;
-  ahead?: number;
-  behind?: number;
-}
+  const indicators = document.createElement("span");
+  indicators.className = "worktree-repo-indicators";
 
-/**
- * Append the dirty + ahead/behind health chips to `chips`, mirroring the markers
- * `worktreeRowEl` draws. Used by the dex row's linked-worktree indicator so a
- * task's worktree reads the same as it does in the Worktrees panel.
- */
-function appendWorktreeHealthChips(chips: HTMLElement, w: WorktreeHealthFacet): void {
-  if (w.dirty) {
-    const d = document.createElement("span");
-    d.className = "chip warn";
-    d.title = `${w.dirtyCount} uncommitted change${w.dirtyCount === 1 ? "" : "s"}`;
-    d.textContent = `●${w.dirtyCount}`;
-    chips.append(d);
+  const count = document.createElement("span");
+  count.className = "chip muted worktree-repo-count";
+  count.textContent = String(rowCount);
+  indicators.append(count);
+
+  if (group.dirtyCount > 0) {
+    const dirty = document.createElement("span");
+    dirty.className = "chip warn";
+    dirty.title = `${group.dirtyCount} uncommitted change${group.dirtyCount === 1 ? "" : "s"}`;
+    dirty.textContent = `●${group.dirtyCount}`;
+    indicators.append(dirty);
   }
-  if ((w.ahead ?? 0) > 0 || (w.behind ?? 0) > 0) {
-    const ab = document.createElement("span");
-    ab.className = `chip ${(w.ahead ?? 0) > 0 && (w.behind ?? 0) > 0 ? "warn" : "muted"}`;
-    ab.title = `${w.ahead ?? 0} ahead, ${w.behind ?? 0} behind upstream`;
-    ab.textContent = `↑${w.ahead ?? 0} ↓${w.behind ?? 0}`;
-    chips.append(ab);
+
+  if (group.hasConflict) {
+    const conflict = document.createElement("span");
+    conflict.className = "chip bad";
+    conflict.textContent = "conflict";
+    indicators.append(conflict);
   }
+
+  el.append(indicators);
+
+  el.addEventListener("click", (e) => {
+    // Toggle the repo's children without propagating.
+    e.stopPropagation();
+    if (collapsed) collapsedWorktreeRepos.delete(group.repo);
+    else collapsedWorktreeRepos.add(group.repo);
+    if (lastState) render(lastState);
+  });
+
+  return el;
 }
 
 /** Build one worktree row: a health dot, branch/name (main tagged), and state chips. */
@@ -811,8 +787,6 @@ function worktreeRowEl(row: WorktreeRow): HTMLElement {
 
   const chips = document.createElement("span");
   chips.className = "chips";
-  // The linked dex task leads the chips so the row reads "what this is for".
-  if (row.task) chips.append(worktreeTaskChipEl(row.task));
   if (row.dirty) {
     const d = document.createElement("span");
     d.className = "chip warn";
@@ -848,26 +822,34 @@ function worktreeRowEl(row: WorktreeRow): HTMLElement {
 
 /**
  * Build the "Worktrees" section: one row per worktree (main first). Returns null
- * when hidden (no worktrees plugin / none). No section title — the active
- * "Worktrees" tab already names it.
+ * when hidden (no worktrees plugin / none). When multiRepo is true, rows are
+ * grouped under collapsible repo headers with aggregate indicators; otherwise
+ * a flat list of rows. No section title — the active "Worktrees" tab already
+ * names it.
  */
 function worktreesSectionEl(section: WorktreesSection): HTMLElement | null {
   if (!section.visible) return null;
   const el = document.createElement("section");
   el.className = "repo-section worktrees-section";
-  // With multiple repos, group rows under a per-repo header (rows arrive grouped
-  // by repo); a single repo renders the flat list unchanged.
-  let lastRepo: string | undefined;
-  for (const row of section.rows) {
-    if (section.multiRepo && row.repo !== lastRepo) {
-      const header = document.createElement("div");
-      header.className = "repo-header worktrees-repo-header";
-      header.textContent = row.repo ?? "(unknown repo)";
-      el.append(header);
-      lastRepo = row.repo;
+
+  if (section.multiRepo && section.repoGroups.length > 0) {
+    // Grouped render: collapsible per-repo sections with aggregate indicators.
+    for (const group of section.repoGroups) {
+      const collapsed = collapsedWorktreeRepos.has(group.repo);
+      el.append(worktreeRepoHeaderEl(group, collapsed));
+      if (!collapsed) {
+        for (const row of group.rows) {
+          el.append(worktreeRowEl(row));
+        }
+      }
     }
-    el.append(worktreeRowEl(row));
+  } else {
+    // Flat render: single repo or empty group list.
+    for (const row of section.rows) {
+      el.append(worktreeRowEl(row));
+    }
   }
+
   return el;
 }
 
