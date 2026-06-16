@@ -230,9 +230,9 @@ export interface PanelState {
    */
   services: ServicesSection;
   /**
-   * The dex task board section. `visible` is false (renderer omits it) when the
-   * dex plugin is absent or reports no tasks, so the panel is unchanged for
-   * users without it.
+   * The dex task board section. `visible` is false (renderer omits it) only when
+   * the dex plugin is absent, so the panel is unchanged for users without it; an
+   * installed plugin with zero tasks still shows an (empty) section.
    */
   dex: DexSection;
   /**
@@ -272,6 +272,12 @@ export interface BuildInput {
   servicesList?: ServiceList;
   /** The latest `dex.tasks` data, or `undefined` if none has arrived yet. */
   dexBoard?: DexBoard;
+  /**
+   * Whether `dex.tasks` is present in `registry.list`. Drives the Dex section's
+   * visibility independently of whether a board has arrived — an installed plugin
+   * with zero tasks still shows its (empty) section.
+   */
+  dexPresent?: boolean;
   /** The latest `worktrees.list` data, or `undefined` if none has arrived yet. */
   worktreesList?: WorktreeList;
   /** Service names with an in-flight start/stop/restart — their buttons spin. */
@@ -516,7 +522,7 @@ export function buildPanelState(input: BuildInput): PanelState {
       input.servicesActing,
       input.servicesBulkActing,
     ),
-    dex: buildDexSection(daemonUp ? input.dexBoard : undefined),
+    dex: buildDexSection(daemonUp ? input.dexBoard : undefined, daemonUp && !!input.dexPresent),
     worktrees: buildWorktreesSection(daemonUp ? input.worktreesList : undefined),
   };
 

@@ -418,6 +418,7 @@ test("Dex tab appears via the registry when the board is non-empty", () => {
     overview: twoPrOverview,
     daemonUp: true,
     syncAvailable: true,
+    dexPresent: true,
     dexBoard: {
       tasks: [
         { id: "e", name: "Epic", description: "", result: null, status: "ready", priority: 0, depth: 0, isEpic: true, blockedByCount: 0 },
@@ -435,10 +436,43 @@ test("Dex tab appears via the registry when the board is non-empty", () => {
   // Badge counts ready + blocked (the epic is ready too → 2 ready + 1 blocked = 3).
   assert.equal(dex.badge?.count, 3);
   assert.equal(dex.badge?.tone, "bad"); // a blocked task dominates
-  // No board → no Dex tab.
+  // Plugin not installed (no dexPresent) → no Dex tab, even with a board.
   const noDex = buildPanelState({ overview: twoPrOverview, daemonUp: true, syncAvailable: true });
   assert.equal(
     noDex.tabs.some((t) => t.id === "dex.tasks"),
+    false,
+  );
+});
+
+test("Dex tab appears when the plugin is present even with zero tasks", () => {
+  // Plugin installed but no board has arrived yet (subscription seeded nothing).
+  const noBoard = buildPanelState({
+    overview: twoPrOverview,
+    daemonUp: true,
+    syncAvailable: true,
+    dexPresent: true,
+  });
+  const noBoardTab = noBoard.tabs.find((t) => t.id === "dex.tasks");
+  assert.ok(noBoardTab, "Dex tab should show when the plugin is present");
+  assert.equal(noBoardTab!.badge?.count, undefined); // bare dot, nothing to tally
+  assert.equal(noBoardTab!.badge?.tone, "muted");
+
+  // Plugin installed with an empty board (all tasks completed) → still visible.
+  const empty = buildPanelState({
+    overview: twoPrOverview,
+    daemonUp: true,
+    syncAvailable: true,
+    dexPresent: true,
+    dexBoard: { tasks: [] },
+  });
+  const emptyTab = empty.tabs.find((t) => t.id === "dex.tasks");
+  assert.ok(emptyTab, "Dex tab should stay visible with an empty board");
+  assert.equal(emptyTab!.badge?.tone, "muted");
+
+  // Daemon down → hidden regardless of presence.
+  const down = buildPanelState({ daemonUp: false, syncAvailable: false, dexPresent: true });
+  assert.equal(
+    down.tabs.some((t) => t.id === "dex.tasks"),
     false,
   );
 });
