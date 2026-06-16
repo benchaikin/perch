@@ -296,3 +296,18 @@ export function parseRefreshInterval(every: string): number {
 
 /** Re-exported so plugin authors don't depend on zod directly. */
 export { z };
+
+/** Shared terminal launcher + the cross-plugin terminal setting. */
+export {
+  applyTemplate,
+  DEFAULT_TERMINAL,
+  GlobalTerminalConfig,
+  resolveTerminalTemplate,
+  shellQuote,
+  spawnInTerminal,
+  TERMINAL_APP_TEMPLATES,
+  TERMINAL_SETTINGS_FIELDS,
+  terminalConfigOf,
+  type SpawnInTerminalOptions,
+  type TerminalApp,
+} from "./terminal.js";

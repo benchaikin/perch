@@ -1,0 +1,187 @@
+/**
+ * Shared terminal launcher — the user's terminal-of-choice, used by any plugin
+ * that needs to open a window running a command (the services log viewer, the
+ * worktrees "open here" action). Lives in the SDK so every plugin authors
+ * against one launcher + one config shape, instead of each rolling its own.
+ *
+ * The config is the cross-plugin global setting `global.terminal` ({ terminalApp,
+ * logTerminal }); read it from `ctx.global` via {@link terminalConfigOf}. The
+ * command-building bits are pure + unit-testable; {@link spawnInTerminal} wraps
+ * them around an injectable `spawn`, routing the inner command through a temp
+ * script so the launcher template only ever interpolates a quote-free `sh <path>`
+ * (the fix for nested-quote collisions across the AppleScript/CLI presets).
+ */
+import { spawn as nodeSpawn } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { z } from "zod";
+
+import type { SettingsField } from "./index.js";
+
+/**
+ * The default macOS launcher template. `{cmd}` is replaced with the command to
+ * run; the AppleScript opens a new Terminal.app window running it and brings
+ * Terminal to the front.
+ */
+export const DEFAULT_TERMINAL =
+  `osascript -e 'tell application "Terminal" to do script "{cmd}"' ` +
+  `-e 'tell application "Terminal" to activate'`;
+
+/**
+ * Built-in launcher presets keyed by terminal app, so the user just picks their
+ * terminal in Settings. Each carries the same `{cmd}` placeholder. `Custom` is
+ * not here — it's the free-text {@link GlobalTerminalConfig.logTerminal} escape hatch.
+ */
+export const TERMINAL_APP_TEMPLATES = {
+  Terminal: DEFAULT_TERMINAL,
+  iTerm2:
+    `osascript ` +
+    `-e 'tell application "iTerm" to create window with default profile' ` +
+    `-e 'tell application "iTerm" to tell current session of current window to write text "{cmd}"' ` +
+    `-e 'tell application "iTerm" to activate'`,
+  kitty: `open -na kitty --args sh -c "{cmd}"`,
+  WezTerm: `open -na WezTerm --args start -- sh -c "{cmd}"`,
+  Ghostty: `open -na Ghostty --args -e sh -c "{cmd}"`,
+  tmux: `tmux new-window "{cmd}"`,
+} as const;
+
+/** A known terminal app name (a key of {@link TERMINAL_APP_TEMPLATES}). */
+export type TerminalApp = keyof typeof TERMINAL_APP_TEMPLATES;
+
+/** The cross-plugin terminal preference (lives at `global.terminal`). */
+export const GlobalTerminalConfig = z.object({
+  /** Chosen terminal app (a {@link TERMINAL_APP_TEMPLATES} key), e.g. "iTerm2". */
+  terminalApp: z.string().optional(),
+  /** Custom launcher template ({cmd} placeholder) — overrides terminalApp. */
+  logTerminal: z.string().optional(),
+});
+export type GlobalTerminalConfig = z.infer<typeof GlobalTerminalConfig>;
+
+/**
+ * The settings fields the "General" tab renders for the terminal preference.
+ * Shared so the descriptor and the launcher never drift. Keyed under
+ * `terminal.*` (the General tab writes to `global.terminal`).
+ */
+export const TERMINAL_SETTINGS_FIELDS: SettingsField[] = [
+  {
+    key: "terminal.terminalApp",
+    type: "enum",
+    label: "Terminal",
+    description:
+      "Which terminal app Perch opens for service logs and for opening a worktree. " +
+      "Choose Custom and set the command below for anything not listed.",
+    default: "Terminal",
+    options: [
+      { value: "Terminal", label: "Terminal.app" },
+      { value: "iTerm2", label: "iTerm2" },
+      { value: "kitty", label: "kitty" },
+      { value: "WezTerm", label: "WezTerm" },
+      { value: "Ghostty", label: "Ghostty" },
+      { value: "tmux", label: "tmux" },
+      { value: "Custom", label: "Custom (use the command below)" },
+    ],
+  },
+  {
+    key: "terminal.logTerminal",
+    type: "string",
+    label: "Custom terminal command",
+    description: "Only used when Terminal is Custom: a command template. Use {cmd} where the command to run should go.",
+    default: DEFAULT_TERMINAL,
+  },
+];
+
+/** Narrow `ctx.global` to the terminal settings at `global.terminal`; {} on miss. */
+export function terminalConfigOf(global: unknown): GlobalTerminalConfig {
+  const g = global && typeof global === "object" ? (global as Record<string, unknown>) : {};
+  const parsed = GlobalTerminalConfig.safeParse(g.terminal ?? {});
+  return parsed.success ? parsed.data : {};
+}
+
+/**
+ * Resolve the launcher template, in precedence order: an explicit `logTerminal`
+ * (Custom escape hatch) wins; else the chosen `terminalApp` preset; else the
+ * Terminal.app default. An unknown `terminalApp` (e.g. "Custom" with no
+ * `logTerminal`) falls back to the default.
+ */
+export function resolveTerminalTemplate(cfg: GlobalTerminalConfig): string {
+  if (cfg.logTerminal) return cfg.logTerminal;
+  if (cfg.terminalApp && cfg.terminalApp in TERMINAL_APP_TEMPLATES) {
+    return TERMINAL_APP_TEMPLATES[cfg.terminalApp as TerminalApp];
+  }
+  return DEFAULT_TERMINAL;
+}
+
+const CMD_PLACEHOLDER = "{cmd}";
+
+/** Substitute `cmd` into every `{cmd}` placeholder of `template` (literal replace). */
+export function applyTemplate(template: string, cmd: string): string {
+  return template.split(CMD_PLACEHOLDER).join(cmd);
+}
+
+/**
+ * Single-quote a shell word (wraps in `'…'`, escapes embedded single quotes the
+ * POSIX way) so callers can build inner commands with arbitrary paths/names.
+ */
+export function shellQuote(word: string): string {
+  return `'${word.replaceAll("'", `'\\''`)}'`;
+}
+
+/**
+ * Persist `command` to a small shell script in a Perch temp dir and return its
+ * path. The launcher then interpolates only a quote-free `sh <path>`, so the
+ * inner command's quoting lives in the script rather than nested into the
+ * launcher template (which survives every preset). `exec` so the terminal's
+ * shell becomes the command (clean Ctrl-C). One file per label (sanitized),
+ * overwritten each time.
+ */
+function defaultWriteScript(label: string, command: string): string {
+  const dir = join(tmpdir(), "perch-terminal");
+  mkdirSync(dir, { recursive: true });
+  const safe = label.replace(/[^A-Za-z0-9._-]/g, "_") || "perch";
+  const path = join(dir, `${safe}.sh`);
+  writeFileSync(path, `#!/bin/sh\nexec ${command}\n`);
+  return path;
+}
+
+/** Options for {@link spawnInTerminal}. */
+export interface SpawnInTerminalOptions {
+  /** The inner command to run in the terminal (callers shell-quote their args). */
+  command: string;
+  /** The terminal preference (from {@link terminalConfigOf}). */
+  terminal: GlobalTerminalConfig;
+  /** A short label for the temp-script filename, log lines, and result message. */
+  label: string;
+  /** Optional log sink. */
+  log?: (message: string) => void;
+  /** Injected spawn (tests stub it); defaults to `child_process.spawn`. */
+  spawn?: typeof nodeSpawn;
+  /** Injected script writer (tests stub it to avoid disk I/O). */
+  writeScript?: (label: string, command: string) => string;
+}
+
+/**
+ * Open the configured terminal running `command`, detached + best-effort. Never
+ * throws: a missing binary or spawn error is logged and reported as `ok:false`
+ * so the calling action can surface "couldn't open the terminal" without
+ * crashing. The full launcher runs via `sh -c` so AppleScript/CLI templates are
+ * interpreted as written.
+ */
+export function spawnInTerminal(opts: SpawnInTerminalOptions): { ok: boolean; message: string } {
+  const template = resolveTerminalTemplate(opts.terminal);
+  const spawnFn = opts.spawn ?? nodeSpawn;
+  const writeScript = opts.writeScript ?? defaultWriteScript;
+  try {
+    const scriptPath = writeScript(opts.label, opts.command);
+    const launch = applyTemplate(template, `sh ${scriptPath}`);
+    const child = spawnFn("sh", ["-c", launch], { detached: true, stdio: "ignore" });
+    child.on("error", (err: Error) => opts.log?.(`terminal launch failed: ${err.message}`));
+    child.unref();
+    opts.log?.(`opened terminal: ${opts.label}`);
+    return { ok: true, message: `Opening ${opts.label}…` };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    opts.log?.(`terminal launch failed: ${message}`);
+    return { ok: false, message: `Failed to open ${opts.label}: ${message}` };
+  }
+}
