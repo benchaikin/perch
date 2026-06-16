@@ -27,10 +27,44 @@ import { renderResult } from "./render.js";
 // rather than re-implementing a vscode-jsonrpc wrapper.
 export { PerchClient, DaemonUnavailableError } from "./client.js";
 
+/**
+ * Read all of stdin and parse it as a JSON object. Used by `--stdin-json` to
+ * forward a raw payload (e.g. a Claude Code hook event) as capability input.
+ * Returns `{}` for empty stdin; throws on non-JSON or a non-object payload.
+ */
+async function readStdinJson(): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  const text = Buffer.concat(chunks).toString("utf8").trim();
+  if (text.length === 0) return {};
+  const parsed: unknown = JSON.parse(text);
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("--stdin-json expects a JSON object on stdin");
+  }
+  return parsed as Record<string, unknown>;
+}
+
 /** Entry point: parse argv, connect to perchd, dispatch the command. */
 export async function run(argv: string[]): Promise<void> {
-  const { positionals, cli, input } = parseArgs(argv.slice(2));
+  const { positionals, cli, input: flagInput } = parseArgs(argv.slice(2));
   const socket = cli.socket ?? defaultSocketPath();
+
+  // `--stdin-json` reads a JSON object from stdin and merges it under the
+  // explicit `--key value` flags (flags win), so a hook can forward a raw event
+  // payload with one command. A parse failure is fatal (and reported), since the
+  // caller asked for it.
+  let input = flagInput;
+  if (cli.stdinJson) {
+    let stdinInput: Record<string, unknown>;
+    try {
+      stdinInput = await readStdinJson();
+    } catch (err) {
+      console.error(`perch: ${errorMessage(err)}`);
+      process.exitCode = 1;
+      return;
+    }
+    input = { ...stdinInput, ...(flagInput ?? {}) };
+  }
 
   // Built-in `daemon` command group — manages the daemon process itself, so it
   // is handled BEFORE the registry dispatch (which requires a running daemon).

@@ -37,3 +37,24 @@ test(
     assert.ok(bundle.includes("needs review"), "expected the `needs review` label in the bundle");
   },
 );
+
+test(
+  "renderer bundle carries the Dex tree/graph view toggle",
+  { skip: !existsSync(bundlePath) ? "bundle not built (run pnpm build first)" : false },
+  () => {
+    const bundle = readFileSync(bundlePath, "utf8");
+    // The view-mode toggle button class + both affordance labels.
+    assert.ok(
+      bundle.includes("dex-view-toggle"),
+      "expected the `dex-view-toggle` button class in the renderer bundle",
+    );
+    assert.ok(
+      bundle.includes("Switch to graph view"),
+      "expected the `Switch to graph view` label in the bundle",
+    );
+    assert.ok(
+      bundle.includes("Switch to tree view"),
+      "expected the `Switch to tree view` label in the bundle",
+    );
+  },
+);

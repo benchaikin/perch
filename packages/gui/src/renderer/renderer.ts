@@ -30,6 +30,7 @@ import {
   type WorktreeRepoGroup,
 } from "../worktrees-state.js";
 import type { LinkedWorktree } from "../worktree-task-link.js";
+import type { DexViewMode } from "../window-state.js";
 import type {
   ServiceAction,
   ServiceHealth,
@@ -107,6 +108,12 @@ let syncingRepos: string[] = [];
  * focus to PRs). Undefined until the first state arrives.
  */
 let activeTabId: string | undefined;
+/**
+ * How the Dex tab renders — `tree` (the hierarchical list) or `graph` (the
+ * dependency graph). Seeded from the persisted mode on first render (undefined
+ * until then), then the renderer owns the selection; mirrors {@link activeTabId}.
+ */
+let dexViewMode: DexViewMode | undefined;
 /** Collapsed dex epic ids (their descendants are hidden); preserved across re-renders. */
 const collapsedDexIds = new Set<string>();
 /** Collapsed worktree repo ids (their rows are hidden); preserved across re-renders. */
@@ -704,26 +711,76 @@ function dexDetailEl(row: DexRow): HTMLElement {
   return wrap;
 }
 
-/** Build the Dex section header: an expand/collapse-all toggle over the epics. */
-function dexHeaderEl(epicIds: string[]): HTMLElement {
-  const header = document.createElement("div");
-  header.className = "repo-header dex-header";
-  const allCollapsed = epicIds.every((id) => collapsedDexIds.has(id));
+/** The mode shown after toggling away from `mode` — the two-state flip. */
+function nextDexViewMode(mode: DexViewMode): DexViewMode {
+  return mode === "tree" ? "graph" : "tree";
+}
+
+/**
+ * Per-mode affordance for the view-mode toggle: the Font Awesome glyph for the
+ * CURRENT mode and a label naming what a click switches TO, so the button reads
+ * as "you're in tree view; click to see the graph" (and vice versa).
+ */
+const DEX_VIEW_MODE_BTN: Record<DexViewMode, { icon: string; switchLabel: string }> = {
+  tree: { icon: "sitemap", switchLabel: "Switch to graph view" },
+  graph: { icon: "diagram-project", switchLabel: "Switch to tree view" },
+};
+
+/**
+ * Build the view-mode toggle: an icon-only button reflecting the CURRENT mode
+ * (tree → sitemap, graph → diagram). Clicking flips the mode, persists it
+ * (mirroring tab selection), and re-renders the Dex section from the last state.
+ */
+function dexViewToggleEl(mode: DexViewMode): HTMLElement {
+  const { icon, switchLabel } = DEX_VIEW_MODE_BTN[mode];
   const btn = document.createElement("button");
-  // Icon-only, minimalist — reuse the header's subtle borderless icon-button style.
-  btn.className = "icon-btn dex-toggle-all";
-  const label = allCollapsed ? "Expand all" : "Collapse all";
-  btn.title = label;
-  btn.setAttribute("aria-label", label);
-  const icon = document.createElement("i");
-  icon.className = `fa-solid fa-${allCollapsed ? "angles-down" : "angles-up"}`;
-  btn.append(icon);
+  // Same subtle borderless icon-button style as the collapse-all control.
+  btn.className = "icon-btn dex-view-toggle";
+  btn.title = switchLabel;
+  btn.setAttribute("aria-label", switchLabel);
+  const i = document.createElement("i");
+  i.className = `fa-solid fa-${icon}`;
+  btn.append(i);
   btn.addEventListener("click", () => {
-    if (allCollapsed) collapsedDexIds.clear();
-    else for (const id of epicIds) collapsedDexIds.add(id);
+    const next = nextDexViewMode(mode);
+    dexViewMode = next;
+    window.perch.setDexViewMode(next); // persist so it's restored next open
     if (lastState) render(lastState);
   });
-  header.append(btn);
+  return btn;
+}
+
+/**
+ * Build the Dex section header: the tree/graph view-mode toggle plus, when
+ * there are epics, an expand/collapse-all toggle over them.
+ */
+function dexHeaderEl(epicIds: string[], mode: DexViewMode): HTMLElement {
+  const header = document.createElement("div");
+  header.className = "repo-header dex-header";
+
+  header.append(dexViewToggleEl(mode));
+
+  // Collapse-all only applies to the tree's epics — skip it in graph mode and
+  // when there are no epics to fold.
+  if (mode === "tree" && epicIds.length > 0) {
+    const allCollapsed = epicIds.every((id) => collapsedDexIds.has(id));
+    const btn = document.createElement("button");
+    // Icon-only, minimalist — reuse the header's subtle borderless icon-button style.
+    btn.className = "icon-btn dex-toggle-all";
+    const label = allCollapsed ? "Expand all" : "Collapse all";
+    btn.title = label;
+    btn.setAttribute("aria-label", label);
+    const icon = document.createElement("i");
+    icon.className = `fa-solid fa-${allCollapsed ? "angles-down" : "angles-up"}`;
+    btn.append(icon);
+    btn.addEventListener("click", () => {
+      if (allCollapsed) collapsedDexIds.clear();
+      else for (const id of epicIds) collapsedDexIds.add(id);
+      if (lastState) render(lastState);
+    });
+    header.append(btn);
+  }
+
   return header;
 }
 
@@ -733,7 +790,7 @@ function dexHeaderEl(epicIds: string[]): HTMLElement {
  * the pre-ordered rows, skipping any hidden beneath a collapsed ancestor.
  * Returns null when hidden (no dex plugin / no tasks).
  */
-function dexSectionEl(section: DexSection): HTMLElement | null {
+function dexSectionEl(section: DexSection, mode: DexViewMode): HTMLElement | null {
   if (!section.visible) return null;
   const el = document.createElement("section");
   el.className = "repo-section dex-section";
@@ -758,12 +815,25 @@ function dexSectionEl(section: DexSection): HTMLElement | null {
     return el;
   }
 
+  // The header carries the tree/graph toggle (always) plus, in tree mode, the
+  // collapse-all control over any epics.
   const epicIds = section.rows.filter((r) => r.isEpic).map((r) => r.id);
-  if (epicIds.length > 0) el.append(dexHeaderEl(epicIds));
+  el.append(dexHeaderEl(epicIds, mode));
 
-  // Pre-ordered rows: skip anything deeper than a collapsed ancestor. On a row
-  // at or above the collapse threshold, reset it, then re-arm if this row is a
-  // collapsed epic (handles nested collapses).
+  // TODO(dex-graph): when `mode === "graph"`, render the dependency graph here.
+  // The graph renderer is a separate, later subtask; until it lands, graph mode
+  // falls through to the existing tree rendering so the toggle still works.
+  dexTreeRows(el, section);
+  return el;
+}
+
+/**
+ * Append the dex task tree's rows to `el`: the pre-ordered rows, skipping
+ * anything deeper than a collapsed ancestor. On a row at or above the collapse
+ * threshold, reset it, then re-arm if this row is a collapsed epic (handles
+ * nested collapses).
+ */
+function dexTreeRows(el: HTMLElement, section: DexSection): void {
   let collapseDepth = Infinity;
   for (const row of section.rows) {
     if (row.depth > collapseDepth) continue;
@@ -771,7 +841,6 @@ function dexSectionEl(section: DexSection): HTMLElement | null {
     el.append(dexRowEl(row));
     if (row.isEpic && collapsedDexIds.has(row.id)) collapseDepth = row.depth;
   }
-  return el;
 }
 
 /**
@@ -1139,6 +1208,12 @@ function render(state: PanelState): void {
   const activeId = resolveActiveTab(state.tabs, activeTabId ?? state.savedActiveTab);
   activeTabId = activeId;
 
+  // Seed the Dex view mode from the persisted choice on first render (undefined
+  // until then), then the renderer owns it — same pattern as the active tab, so
+  // the saved mode shows immediately on open with no flash of the wrong view.
+  const dexMode = dexViewMode ?? state.savedDexViewMode ?? "tree";
+  dexViewMode = dexMode;
+
   // The tab strip (icon + name + badge per plugin) doubles as the panel header,
   // so it always renders — even a lone PRs tab labels the view.
   tabsEl.replaceChildren();
@@ -1153,7 +1228,7 @@ function render(state: PanelState): void {
     const services = servicesSectionEl(state.services, false);
     if (services) rowsEl.append(services);
   } else if (activeId === DEX_TASKS_ID) {
-    const dex = dexSectionEl(state.dex);
+    const dex = dexSectionEl(state.dex, dexMode);
     if (dex) rowsEl.append(dex);
   } else if (activeId === WORKTREES_LIST_ID) {
     const worktrees = worktreesSectionEl(state.worktrees);
