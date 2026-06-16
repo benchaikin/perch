@@ -15,7 +15,7 @@ import type {
   TabBadge,
 } from "../panel-state.js";
 import { SERVICES_TAB_ID } from "../panel-state.js";
-import { DEX_TASKS_ID, type DexRow, type DexSection, type DexStatus } from "../dex-state.js";
+import { DEX_TASKS_ID, dexHealth, type DexRow, type DexSection, type DexStatus } from "../dex-state.js";
 import { WORKTREES_LIST_ID, type WorktreeRow, type WorktreesSection } from "../worktrees-state.js";
 import type {
   ServiceAction,
@@ -677,6 +677,30 @@ function dexSectionEl(section: DexSection): HTMLElement | null {
   return el;
 }
 
+/**
+ * Build the chip annotating a worktree row with the dex task it was created for:
+ * `🗒 <id> · <name> · <status>`, toned by the task's status the same way the dex
+ * board's status chip is (`dexHealth` — blocked=red, in-progress/done/ready). The
+ * name is truncated with CSS ellipsis so a long title can't blow out the row.
+ * Non-interactive (clicking the row still opens the worktree dir).
+ */
+function worktreeTaskChipEl(task: { id: string; name: string; status: DexStatus }): HTMLElement {
+  const chip = document.createElement("span");
+  chip.className = `chip ${dexHealth(task.status)} worktree-task`;
+  chip.title = `${task.id} · ${task.name} — ${DEX_STATUS_LABEL[task.status]}`;
+  const id = document.createElement("span");
+  id.className = "worktree-task-id";
+  id.textContent = task.id;
+  const name = document.createElement("span");
+  name.className = "worktree-task-name";
+  name.textContent = task.name;
+  const status = document.createElement("span");
+  status.className = "worktree-task-status";
+  status.textContent = DEX_STATUS_LABEL[task.status];
+  chip.append("🗒 ", id, " · ", name, " · ", status);
+  return chip;
+}
+
 /** Build one worktree row: a health dot, branch/name (main tagged), and state chips. */
 function worktreeRowEl(row: WorktreeRow): HTMLElement {
   const el = document.createElement("div");
@@ -711,6 +735,8 @@ function worktreeRowEl(row: WorktreeRow): HTMLElement {
 
   const chips = document.createElement("span");
   chips.className = "chips";
+  // The linked dex task leads the chips so the row reads "what this is for".
+  if (row.task) chips.append(worktreeTaskChipEl(row.task));
   if (row.dirty) {
     const d = document.createElement("span");
     d.className = "chip warn";
