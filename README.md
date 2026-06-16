@@ -18,26 +18,26 @@ same capabilities are available to you and to your tools.
 
 ## Quick start (macOS)
 
-**Prerequisites:** Node ≥ 22, [pnpm](https://pnpm.io), the GitHub CLI
-authenticated (`gh auth status`), and the stack extension:
-
-```bash
-gh extension install github/gh-stack
-```
-
-**Easiest way to install & run** — build the self-contained app and open it:
+You need [**pnpm**](https://pnpm.io/installation) and **Node ≥ 22**. Then:
 
 ```bash
 git clone git@github.com:benchaikin/perch.git && cd perch
-pnpm install
-pnpm --filter @perch/gui dist        # builds everything + packages Perch.app (~a couple min)
-open packages/gui/release/mac-arm64/Perch.app    # Intel: release/mac/Perch.app
+pnpm run setup
 ```
 
-The app is **unsigned**, so the first time, **right-click → Open** to get past
-Gatekeeper. That's it — the `.app` **self-starts its own background daemon**, so
-there's nothing else to run. Look for the 🐦 in your menu bar; click it for the
-panel.
+That's the whole install. `pnpm run setup` checks your prerequisites, installs
+the [`gh-stack`](https://github.com/github/gh-stack) extension if it's missing,
+installs dependencies, **builds and packages the self-contained `Perch.app`**,
+clears the Gatekeeper quarantine flag (the app is unsigned), and opens it — no
+arch-specific paths and no right-click → Open dance. It takes a couple of minutes
+the first time (mostly packaging).
+
+> Perch reuses your **`gh auth token`** for PR data. If the GitHub CLI isn't
+> authenticated, setup warns you and keeps going — just run `gh auth login`
+> before (or after) opening the app.
+
+Once it's open, the `.app` **self-starts its own background daemon**, so there's
+nothing else to run. Look for the 🐦 in your menu bar; click it for the panel.
 
 **First run:** the panel will be empty until you tell it which repos to watch.
 Open the menu-bar menu → **Settings…** and add your local repo paths (each must be
@@ -47,12 +47,16 @@ a git repo with PRs you've opened). Your PRs appear within ~60s (or hit Refresh)
 
 ## Other ways to run
 
-**Dev launch** (no packaging; hot to iterate on):
+**Dev launch** (no packaging; hot to iterate on) — `setup --dev` does the
+prereq/install/build steps and then dev-launches instead of packaging:
 
 ```bash
+pnpm run setup --dev                 # or, by hand:
 pnpm --filter @perch/gui build       # tsc + esbuild (also builds the daemon bundle)
 pnpm --filter @perch/gui start       # launches the GUI; it self-starts the daemon
 ```
+
+`pnpm run setup --no-open` does everything but the final launch.
 
 **CLI** — put `perch` and `perchd` on your PATH (writes wrappers into
 `~/.local/bin`; opt-in, edits no shell profile; override with `--dir`/`PERCH_BIN_DIR`):
