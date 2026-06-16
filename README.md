@@ -110,10 +110,34 @@ Precedence: per-plugin key → `global.repos` → the daemon's working directory
 - **Desktop notifications** — native macOS banners when a PR changes status
   (CI pass/fail, approved, changes requested, conflict, needs rebase, opened/closed);
   click to open the PR. The daemon watches even when the panel is closed.
+- **Worktrees & Dex panels** — glance at every git worktree across your repos
+  (branch, dirty state, ahead/behind) and your open [dex](https://github.com/zeeg/dex)
+  tasks (epics → tasks → subtasks). When you run AI agents in parallel worktrees,
+  Perch **links each worktree to the dex task it's working** (see below).
 - **Settings window** — manage watched repos and per-plugin settings (e.g. stack
   order: base-at-top vs tip-at-top) through schema-driven controls.
 - **Everywhere** — the same capabilities are available from the CLI and, for the
   high-value reads, as MCP tools for AI agents.
+
+### Linking dex tasks to worktrees
+
+When you work a dex task in its own git worktree (handy when several AI agents run
+in parallel), Perch shows the association in both panels: the **Worktrees** panel
+tags the worktree row with its task (`🗒 <id> · <name> · <status>`), and the
+**Dex** panel shows the task's live worktree (branch + dirty/ahead-behind) with an
+**open-in-terminal** button.
+
+The link is by the worktree's **branch name** — name it `dex/<task-id>-<slug>`
+(e.g. `dex/abc12345-fix-login`) and Perch parses the id back out. Already on a
+differently-named branch? Set a worktree-local override instead:
+
+```bash
+git config extensions.worktreeConfig true   # once per repo
+git config --worktree perch.dexTask <task-id>
+```
+
+The easiest path is the bundled **`dex-worktree`** skill, which creates a
+correctly-named worktree for a dex task and launches an agent in it.
 
 ---
 
