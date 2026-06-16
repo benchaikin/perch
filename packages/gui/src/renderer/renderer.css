@@ -234,6 +234,48 @@ body {
   cursor: pointer;
 }
 
+/* Chip annotating a worktree row with its linked dex task (🗒 id · name ·
+   status). Tone comes from the shared .chip status classes; only the layout is
+   local — a flex line so the name can ellipsis-truncate without pushing the id
+   or status off-screen. The id stays monospace to match .dex-id. */
+.worktree-task {
+  display: inline-flex;
+  align-items: baseline;
+  max-width: 18em;
+}
+.worktree-task-id {
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, "Courier New", monospace;
+}
+.worktree-task-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The linked-worktree indicator on a dex task row: branch + git-health chips and
+   an open-in-terminal button, hugging the row's trailing edge. Reuses the shared
+   .chips / .chip markers; only the layout + compact open button are new. */
+.dex-worktree {
+  margin-left: auto;
+  align-items: center;
+}
+.dex-worktree-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Override .icon-btn's margin-left:auto — it already sits at the trailing edge,
+   right after the chips, and shouldn't push them apart. */
+.dex-worktree .dex-worktree-open {
+  margin-left: 0;
+  padding: 1px 4px;
+  font-size: 11px;
+}
+
 /* Collapsible worktree repo header button. Styled like a header but interactive:
    click toggles the repo's worktree rows. Resembles dex epic headers. */
 .worktree-repo-header-btn {

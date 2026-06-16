@@ -15,13 +15,20 @@ import type {
   TabBadge,
 } from "../panel-state.js";
 import { SERVICES_TAB_ID } from "../panel-state.js";
-import { DEX_TASKS_ID, type DexRow, type DexSection, type DexStatus } from "../dex-state.js";
+import {
+  DEX_TASKS_ID,
+  dexHealth,
+  type DexRow,
+  type DexSection,
+  type DexStatus,
+} from "../dex-state.js";
 import {
   WORKTREES_LIST_ID,
   type WorktreeRow,
   type WorktreesSection,
   type WorktreeRepoGroup,
 } from "../worktrees-state.js";
+import type { LinkedWorktree } from "../worktree-task-link.js";
 import type {
   ServiceAction,
   ServiceHealth,
@@ -530,6 +537,10 @@ function dexRowEl(row: DexRow): HTMLElement {
 
   if (row.blockedByCount > 0) el.append(dexBlockedChip(row.blockedByCount));
 
+  // When a live git worktree is linked to this task, surface it (branch + git
+  // health) with an open-in-terminal affordance.
+  if (row.worktree) el.append(dexWorktreeEl(row.worktree));
+
   el.addEventListener("click", () => {
     selectedDexId = row.id;
     if (lastState) render(lastState);
@@ -688,10 +699,7 @@ function dexSectionEl(section: DexSection): HTMLElement | null {
  * Build a collapsible worktree repo header: a chevron, health dot, count,
  * and optional dirty/conflict indicators. Clicking toggles the repo's children.
  */
-function worktreeRepoHeaderEl(
-  group: WorktreeRepoGroup,
-  collapsed: boolean,
-): HTMLElement {
+function worktreeRepoHeaderEl(group: WorktreeRepoGroup, collapsed: boolean): HTMLElement {
   const el = document.createElement("button");
   el.className = "worktree-repo-header-btn";
   const rowCount = group.count;
@@ -753,6 +761,102 @@ function worktreeRepoHeaderEl(
   return el;
 }
 
+/**
+ * Build the chip annotating a worktree row with the dex task it was created for:
+ * `🗒 <id> · <name> · <status>`, toned by the task's status the same way the dex
+ * board's status chip is (`dexHealth` — blocked=red, in-progress/done/ready). The
+ * name is truncated with CSS ellipsis so a long title can't blow out the row.
+ * Non-interactive (clicking the row still opens the worktree dir).
+ */
+function worktreeTaskChipEl(task: { id: string; name: string; status: DexStatus }): HTMLElement {
+  const chip = document.createElement("span");
+  chip.className = `chip ${dexHealth(task.status)} worktree-task`;
+  chip.title = `${task.id} · ${task.name} — ${DEX_STATUS_LABEL[task.status]}`;
+  const id = document.createElement("span");
+  id.className = "worktree-task-id";
+  id.textContent = task.id;
+  const name = document.createElement("span");
+  name.className = "worktree-task-name";
+  name.textContent = task.name;
+  const status = document.createElement("span");
+  status.className = "worktree-task-status";
+  status.textContent = DEX_STATUS_LABEL[task.status];
+  chip.append("🗒 ", id, " · ", name, " · ", status);
+  return chip;
+}
+
+/**
+ * The git-health facets a dex task's linked worktree carries — enough to render
+ * the dirty / ahead-behind markers exactly as the Worktrees panel does.
+ */
+interface WorktreeHealthFacet {
+  dirty: boolean;
+  dirtyCount: number;
+  ahead?: number;
+  behind?: number;
+}
+
+/**
+ * Append the dirty + ahead/behind health chips to `chips`, mirroring the markers
+ * `worktreeRowEl` draws. Used by the dex row's linked-worktree indicator so a
+ * task's worktree reads the same as it does in the Worktrees panel.
+ */
+function appendWorktreeHealthChips(chips: HTMLElement, w: WorktreeHealthFacet): void {
+  if (w.dirty) {
+    const d = document.createElement("span");
+    d.className = "chip warn";
+    d.title = `${w.dirtyCount} uncommitted change${w.dirtyCount === 1 ? "" : "s"}`;
+    d.textContent = `●${w.dirtyCount}`;
+    chips.append(d);
+  }
+  if ((w.ahead ?? 0) > 0 || (w.behind ?? 0) > 0) {
+    const ab = document.createElement("span");
+    ab.className = `chip ${(w.ahead ?? 0) > 0 && (w.behind ?? 0) > 0 ? "warn" : "muted"}`;
+    ab.title = `${w.ahead ?? 0} ahead, ${w.behind ?? 0} behind upstream`;
+    ab.textContent = `↑${w.ahead ?? 0} ↓${w.behind ?? 0}`;
+    chips.append(ab);
+  }
+}
+
+/**
+ * The linked-worktree indicator for a dex task row: the branch (prefixed with
+ * its repo when known) plus the shared dirty / ahead-behind health markers, and
+ * an "open terminal here" button that drops the user into the worktree via the
+ * same `worktrees.open` plumbing (`window.perch.worktreeOpen`) the Worktrees
+ * panel uses. Fire-and-forget; clicks don't bubble to the row's open-detail.
+ */
+function dexWorktreeEl(wt: LinkedWorktree): HTMLElement {
+  const wrap = document.createElement("span");
+  wrap.className = "chips dex-worktree";
+  const label =
+    wt.repo && wt.branch ? `${wt.repo}/${wt.branch}` : (wt.branch ?? wt.repo ?? wt.path);
+
+  const branch = document.createElement("span");
+  branch.className = "chip muted dex-worktree-branch";
+  branch.title = `Worktree: ${wt.path}`;
+  const bi = document.createElement("i");
+  bi.className = "fa-solid fa-code-branch";
+  branch.append(bi, ` ${label}`);
+  wrap.append(branch);
+
+  appendWorktreeHealthChips(wrap, wt);
+
+  const open = document.createElement("button");
+  open.className = "icon-btn dex-worktree-open";
+  open.title = "Open terminal here";
+  open.setAttribute("aria-label", "Open terminal in worktree");
+  const oi = document.createElement("i");
+  oi.className = "fa-solid fa-terminal";
+  open.append(oi);
+  open.addEventListener("click", (e) => {
+    // Don't open the task detail; just launch the terminal in the worktree.
+    e.stopPropagation();
+    window.perch.worktreeOpen(wt.path);
+  });
+  wrap.append(open);
+  return wrap;
+}
+
 /** Build one worktree row: a health dot, branch/name (main tagged), and state chips. */
 function worktreeRowEl(row: WorktreeRow): HTMLElement {
   const el = document.createElement("div");
@@ -787,6 +891,8 @@ function worktreeRowEl(row: WorktreeRow): HTMLElement {
 
   const chips = document.createElement("span");
   chips.className = "chips";
+  // The linked dex task leads the chips so the row reads "what this is for".
+  if (row.task) chips.append(worktreeTaskChipEl(row.task));
   if (row.dirty) {
     const d = document.createElement("span");
     d.className = "chip warn";
