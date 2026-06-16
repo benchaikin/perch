@@ -154,12 +154,19 @@ emitter, and plugin-supplied services (e.g. the stack `provider`).
 
   ```json
   {
+    "global":  { "repos": ["~/ashby", "~/perch"] },
     "plugins": { "stack": { "repos": ["ashby/main"] } },
     "layout":  { "widgets": [{ "id": "stack", "x": 0, "y": 0 }] }
   }
   ```
 
   Each plugin's section is validated against its `config` zod schema at load.
+- **Shared `global` section.** Cross-plugin settings live under `global`, handed
+  to every capability as `ctx.global`. `global.repos` is the shared list of local
+  repository paths the PRs, Worktrees, and Dex plugins watch; each plugin's own
+  repo key (`stack.repos`, `worktrees.repoRoot`, `dex.dirs`) still **overrides**
+  the shared list when set. Precedence: per-plugin key → `global.repos` →
+  cwd/empty fallback. (`global` also carries the shared terminal preference.)
 - **Plugin discovery:** loaded from the local `plugins/` dir (no registry/
   marketplace in v1).
 

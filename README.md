@@ -77,6 +77,26 @@ Config lives at `~/Library/Application Support/Perch/perch.json` (macOS) or
 on change, so edits from the Settings window, the `perch config` CLI, or by hand
 take effect live.
 
+**Shared repositories.** The repos Perch watches live in one place — `global.repos`,
+a list of local repo paths shared by the **My PRs**, **Worktrees**, and **Dex**
+panels (edit it on the Settings window's **General** tab, or by hand). Each plugin
+is enabled by its (possibly empty) entry under `plugins`; `global.repos` then tells
+all three which repos to watch:
+
+```json
+{
+  "plugins": { "stack": {}, "worktrees": {}, "dex": {} },
+  "global": {
+    "repos": ["/Users/you/work-app", "/Users/you/perch"]
+  }
+}
+```
+
+A plugin's own repo key still **overrides** the shared list when set
+(`plugins.stack.repos`, `plugins.worktrees.repoRoot`, `plugins.dex.dirs`) — so you
+can, say, watch one set of repos for PRs and a different set for worktrees.
+Precedence: per-plugin key → `global.repos` → the daemon's working directory.
+
 ---
 
 ## What it does
@@ -137,7 +157,7 @@ take effect live.
 | Language | TypeScript end to end |
 | GUI | Electron — menu-bar entry + pinned, always-on-top panel; packaged via electron-builder |
 | Daemon transport | JSON-RPC 2.0 over a Unix socket (`vscode-jsonrpc`) |
-| Config | a single `perch.json` (repos, per-plugin settings, GUI layout); hot-reloaded |
+| Config | a single `perch.json` — shared `global.repos`, per-plugin settings, GUI layout; hot-reloaded |
 | Credentials | reuses your `gh auth token` |
 | Plugins | loaded from the local `plugins/` dir (dev) / statically bundled (packaged app) |
 
