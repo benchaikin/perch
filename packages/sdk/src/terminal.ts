@@ -131,16 +131,17 @@ export function shellQuote(word: string): string {
  * Persist `command` to a small shell script in a Perch temp dir and return its
  * path. The launcher then interpolates only a quote-free `sh <path>`, so the
  * inner command's quoting lives in the script rather than nested into the
- * launcher template (which survives every preset). `exec` so the terminal's
- * shell becomes the command (clean Ctrl-C). One file per label (sanitized),
- * overwritten each time.
+ * launcher template (which survives every preset). The command is written
+ * verbatim — the caller controls `exec` (a single program prefixes `exec …` for
+ * clean Ctrl-C; a compound like `cd … && exec "$SHELL"` can't be exec'd whole).
+ * One file per label (sanitized), overwritten each time.
  */
 function defaultWriteScript(label: string, command: string): string {
   const dir = join(tmpdir(), "perch-terminal");
   mkdirSync(dir, { recursive: true });
   const safe = label.replace(/[^A-Za-z0-9._-]/g, "_") || "perch";
   const path = join(dir, `${safe}.sh`);
-  writeFileSync(path, `#!/bin/sh\nexec ${command}\n`);
+  writeFileSync(path, `#!/bin/sh\n${command}\n`);
   return path;
 }
 

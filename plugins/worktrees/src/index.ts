@@ -11,10 +11,18 @@
  */
 import type { spawn as nodeSpawn } from "node:child_process";
 
-import { action, definePlugin, read, validateSettingsDescriptor, z } from "@perch/sdk";
+import {
+  action,
+  definePlugin,
+  read,
+  spawnInTerminal,
+  terminalConfigOf,
+  validateSettingsDescriptor,
+  z,
+} from "@perch/sdk";
 
 import { buildWorktrees, parseStatus, parseWorktreeList, Worktrees, type WorktreeStatus } from "./parse.js";
-import { buildOpenCommand, DEFAULT_OPEN_COMMAND, spawnOpen } from "./open.js";
+import { buildShellInDir } from "./open.js";
 import { worktreeNotifications } from "./notify.js";
 import { WorktreesProvider, type Exec } from "./provider.js";
 
@@ -28,7 +36,7 @@ export {
   worktreeHealth,
 } from "./parse.js";
 export type { RawWorktree, WorktreeHealth, WorktreeStatus } from "./parse.js";
-export { buildOpenCommand, DEFAULT_OPEN_COMMAND, spawnOpen } from "./open.js";
+export { buildShellInDir } from "./open.js";
 export { worktreeNotifications } from "./notify.js";
 export { WorktreesProvider } from "./provider.js";
 export type { Exec } from "./provider.js";
@@ -39,11 +47,6 @@ const WorktreesConfig = z.object({
   repoRoot: z.string().optional(),
   /** Path to the `git` binary; defaults to `git` on PATH. */
   gitBin: z.string().optional(),
-  /**
-   * Command the "open" action runs, with `{path}` substituted by the worktree
-   * dir (e.g. `code {path}`, `cursor {path}`). Defaults to `open {path}` (macOS).
-   */
-  openCommand: z.string().optional(),
   /** Include the repo's main worktree in the list (default true). */
   showMain: z.boolean().optional(),
 });
@@ -80,15 +83,6 @@ export default definePlugin({
   name: "Worktrees",
   config: WorktreesConfig,
   settings: validateSettingsDescriptor([
-    {
-      key: "openCommand",
-      type: "string",
-      label: "Open command",
-      description:
-        "Command the Open action runs for a worktree. Use `{path}` for the " +
-        "directory, e.g. `code {path}` or `cursor {path}`. Defaults to the OS default.",
-      default: DEFAULT_OPEN_COMMAND,
-    },
     {
       key: "showMain",
       type: "boolean",
@@ -142,19 +136,23 @@ export default definePlugin({
     }),
 
     /**
-     * Open a worktree directory via the configured command (editor / terminal /
-     * file manager). Fire-and-forget; MCP-exposed so an agent can jump a human to
-     * a worktree. Returns a small {ok, message}.
+     * Open the user's terminal-of-choice (the global setting) cd'd into the
+     * worktree directory. Fire-and-forget; MCP-exposed so an agent can drop a
+     * human into a worktree. Returns a small {ok, message}.
      */
     open: action<z.infer<typeof OpenInput>, unknown, { ok: boolean; message: string }>({
-      summary: "Open a worktree directory in the configured editor/terminal",
+      summary: "Open a terminal in a worktree directory",
       input: OpenInput,
       expose: { mcp: true },
       run: ({ input, ctx }) => {
-        const cfg = configOf(ctx.config);
-        const command = buildOpenCommand(cfg.openCommand ?? DEFAULT_OPEN_COMMAND, input.path);
-        spawnOpen(command, { spawn: openSpawn });
-        return { ok: true, message: `Opening ${input.path}` };
+        const name = input.path.split("/").filter(Boolean).pop() ?? input.path;
+        return spawnInTerminal({
+          command: buildShellInDir(input.path),
+          terminal: terminalConfigOf(ctx.global),
+          label: `worktree ${name}`,
+          log: ctx.log,
+          spawn: openSpawn,
+        });
       },
     }),
   },

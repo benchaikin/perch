@@ -1,24 +1,16 @@
 /**
- * Unit tests for the open-command builder (pure; spawning is not exercised).
+ * Unit tests for the worktree "open" inner command (cd into the dir + exec a
+ * shell). The terminal launcher it feeds is shared + tested in @perch/sdk.
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { buildOpenCommand, DEFAULT_OPEN_COMMAND } from "./open.js";
+import { buildShellInDir } from "./open.js";
 
-test("buildOpenCommand substitutes {path}, shell-quoted", () => {
-  assert.equal(buildOpenCommand("code {path}", "/repo/wt"), "code '/repo/wt'");
-  assert.equal(buildOpenCommand(DEFAULT_OPEN_COMMAND, "/repo/wt"), "open '/repo/wt'");
+test("buildShellInDir: cd's into the shell-quoted path and execs $SHELL", () => {
+  assert.equal(buildShellInDir("/repo/wt"), `cd '/repo/wt' && exec "$SHELL"`);
 });
 
-test("buildOpenCommand appends the quoted path when {path} is absent", () => {
-  assert.equal(buildOpenCommand("cursor", "/repo/wt"), "cursor '/repo/wt'");
-});
-
-test("buildOpenCommand escapes single quotes in the path", () => {
-  assert.equal(buildOpenCommand("open {path}", "/has/it's/quote"), "open '/has/it'\\''s/quote'");
-});
-
-test("buildOpenCommand substitutes every {path} occurrence", () => {
-  assert.equal(buildOpenCommand("x {path} {path}", "/p"), "x '/p' '/p'");
+test("buildShellInDir: escapes single quotes in the path", () => {
+  assert.equal(buildShellInDir("/has/it's/quote"), `cd '/has/it'\\''s/quote' && exec "$SHELL"`);
 });

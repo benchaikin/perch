@@ -378,7 +378,8 @@ export default definePlugin({
           fromGlobal.terminalApp || fromGlobal.logTerminal
             ? fromGlobal
             : { terminalApp: cfg.terminalApp, logTerminal: cfg.logTerminal };
-        const command = buildLogsCommand(input.name, targetOf(cfg));
+        // `exec` so the terminal's shell becomes process-compose (clean Ctrl-C).
+        const command = `exec ${buildLogsCommand(input.name, targetOf(cfg))}`;
         return spawnInTerminal({
           command,
           terminal,
