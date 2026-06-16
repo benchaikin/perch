@@ -35,6 +35,7 @@ import {
   type WorktreesSection,
 } from "./worktrees-state.js";
 import { linkWorktreesAndTasks } from "./worktree-task-link.js";
+import { deriveLandableByTaskId, type LandableState } from "./landable.js";
 
 /** Canonical capability id of the cross-repo "My PRs" read the panel renders. */
 export const STACK_PRS_ID = "stack.prs";
@@ -253,6 +254,13 @@ export interface PanelState {
    * tab on first render, then owns the selection. Undefined when none is saved.
    */
   savedActiveTab?: string;
+  /**
+   * Each work-item's "landable" signal, keyed by dex task id — derived by
+   * joining the worktree↔task link to the PR overview by head branch (see
+   * `landable.ts`). The foundation for a later merge-queue view; nothing renders
+   * it yet. A task absent from the map has no matching PR (state `none`).
+   */
+  landableByTaskId: Map<string, LandableState>;
 }
 
 /** Inputs to {@link buildPanelState}. */
@@ -520,11 +528,18 @@ export function buildPanelState(input: BuildInput): PanelState {
   const worktreesList = daemonUp ? input.worktreesList : undefined;
   const link = linkWorktreesAndTasks(worktreesList, dexBoard);
 
+  // Join the worktree↔task link to the PR overview (by head branch) to derive
+  // each work-item's landable signal. Pure + tolerant: a missing overview / no
+  // matching PR yields an empty (or partial) map. Nothing renders it yet — it's
+  // computed here so a later merge-queue view can consume it off PanelState.
+  const landableByTaskId = deriveLandableByTaskId(link, daemonUp ? overview : undefined);
+
   // Sync progress, the transient toast, and the Services section ride along on
   // every state (the section is self-hiding when process-compose is absent).
   const live = {
     syncing: input.syncing ?? [],
     notice: input.notice,
+    landableByTaskId,
     services: buildServicesSection(
       daemonUp ? input.servicesList : undefined,
       input.servicesActing,
