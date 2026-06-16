@@ -689,7 +689,7 @@ function dexSectionEl(section: DexSection): HTMLElement | null {
  * and optional dirty/conflict indicators. Clicking toggles the repo's children.
  */
 function worktreeRepoHeaderEl(
-  group: Extract<WorktreesSection["repoGroups"][number]>,
+  group: WorktreeRepoGroup,
   collapsed: boolean,
 ): HTMLElement {
   const el = document.createElement("button");
