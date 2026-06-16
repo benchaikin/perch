@@ -44,6 +44,20 @@ test("a completed blocker no longer blocks (not in the active set)", () => {
   assert.equal(m.get("t")!.blockedByCount, 0);
 });
 
+test("exposes only the active blocker ids (completed blockers filtered out)", () => {
+  const tasks: RawDexTask[] = [
+    task({ id: "open1", name: "Open blocker 1" }),
+    task({ id: "open2", name: "Open blocker 2" }),
+    task({ id: "doneBlkr", name: "Completed blocker", completed: true }),
+    task({ id: "t", name: "Blocked", blockedBy: ["open1", "doneBlkr", "open2"] }),
+  ];
+  const t = byId(buildDexBoard([{ tasks }])).get("t")!;
+  // Only the still-active blockers survive; the completed one is dropped.
+  assert.deepEqual(t.blockedBy, ["open1", "open2"]);
+  // `blockedByCount` stays in lockstep with the active-id list.
+  assert.equal(t.blockedByCount, 2);
+});
+
 test("blocked outranks in-progress (a started+blocked task reads blocked)", () => {
   const tasks: RawDexTask[] = [
     task({ id: "b", name: "Blocker" }),

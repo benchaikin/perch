@@ -20,6 +20,7 @@ function board(...pairs: Array<[string, DexStatus]>): DexBoard {
       depth: 0,
       isEpic: false,
       blockedByCount: status === "blocked" ? 1 : 0,
+      blockedBy: status === "blocked" ? ["x"] : [],
     })),
   };
 }

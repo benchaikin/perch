@@ -36,8 +36,13 @@ export interface DexTask {
   parentId?: string;
   /** True when this task has children (render as a group header). */
   isEpic: boolean;
-  /** Count of still-active blockers. */
+  /** Count of still-active blockers; equals `blockedBy.length`. */
   blockedByCount: number;
+  /**
+   * Ids of the still-active blockers (the blocker edges). Carried through for a
+   * future dependency-graph view; the tree section ignores it.
+   */
+  blockedBy: string[];
   /** Source project label when multiple dex stores are monitored. */
   project?: string;
 }
@@ -68,6 +73,8 @@ export interface DexRow {
   depth: number;
   isEpic: boolean;
   blockedByCount: number;
+  /** Ids of the still-active blockers (the blocker edges); carried for a future graph view. */
+  blockedBy: string[];
   project?: string;
   /** Marker color: blocked=red(bad), in-progress=amber(warn), done=green(ok), ready=grey(muted). */
   health: DexHealth;
@@ -188,6 +195,7 @@ export function buildDexSection(
       depth: t.depth,
       isEpic: t.isEpic,
       blockedByCount: t.blockedByCount,
+      blockedBy: t.blockedBy,
       project: t.project,
       health: dexHealth(t.status),
       worktree: worktreeByTaskId?.get(t.id),

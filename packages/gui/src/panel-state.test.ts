@@ -460,6 +460,7 @@ test("Dex tab appears via the registry when the board is non-empty", () => {
           depth: 0,
           isEpic: true,
           blockedByCount: 0,
+          blockedBy: [],
         },
         {
           id: "a",
@@ -471,6 +472,7 @@ test("Dex tab appears via the registry when the board is non-empty", () => {
           depth: 1,
           isEpic: false,
           blockedByCount: 1,
+          blockedBy: ["e"],
         },
         {
           id: "b",
@@ -482,6 +484,7 @@ test("Dex tab appears via the registry when the board is non-empty", () => {
           depth: 1,
           isEpic: false,
           blockedByCount: 0,
+          blockedBy: [],
         },
       ],
     },
