@@ -6,9 +6,12 @@ import { test } from "node:test";
 
 import {
   buildDexSection,
+  deriveDexGraph,
   dexHealth,
   worstDexHealth,
   type DexBoard,
+  type DexGraphNode,
+  type DexRow,
   type DexTask,
 } from "./dex-state.js";
 
@@ -242,4 +245,121 @@ test("rows preserve tree order, depth, and isEpic from the board", () => {
   );
   assert.equal(section.rows[0]!.isEpic, true);
   assert.equal(section.rows[1]!.depth, 1);
+});
+
+// --- deriveDexGraph (dependency-graph view) ------------------------------------
+
+/** Build the rows the graph view consumes from a set of task overrides. */
+function graphRows(...tasks: DexTask[]): DexRow[] {
+  return buildDexSection(board(...tasks), true).rows;
+}
+
+/** A node's row id + its children's ids, for compact tree assertions. */
+function shape(node: DexGraphNode): { id: string; children: ReturnType<typeof shape>[] } {
+  return { id: node.row.id, children: node.children.map(shape) };
+}
+
+test("deriveDexGraph: roots are the unblocked tasks", () => {
+  const roots = deriveDexGraph(
+    graphRows(
+      task({ id: "a", status: "ready" }),
+      task({ id: "b", status: "blocked", blockedByCount: 1, blockedBy: ["a"] }),
+      task({ id: "c", status: "ready" }),
+    ),
+  );
+  // a and c are unblocked → roots; b nests under a, so it's not a root itself.
+  assert.deepEqual(
+    roots.map((r) => r.row.id),
+    ["a", "c"],
+  );
+});
+
+test("deriveDexGraph: a blocked task nests under its blocker", () => {
+  const roots = deriveDexGraph(
+    graphRows(
+      task({ id: "a", status: "ready" }),
+      task({ id: "b", status: "blocked", blockedByCount: 1, blockedBy: ["a"] }),
+    ),
+  );
+  assert.deepEqual(roots.map(shape), [{ id: "a", children: [{ id: "b", children: [] }] }]);
+  // The nested node keeps its blocked health, distinguishing it from the root.
+  assert.equal(roots[0]!.children[0]!.row.health, "bad");
+});
+
+test("deriveDexGraph: a task with multiple blockers appears under each", () => {
+  // Rule: nest under EVERY blocker, so all the edges a task waits on are visible.
+  const roots = deriveDexGraph(
+    graphRows(
+      task({ id: "a", status: "ready" }),
+      task({ id: "b", status: "ready" }),
+      task({ id: "c", status: "blocked", blockedByCount: 2, blockedBy: ["a", "b"] }),
+    ),
+  );
+  assert.deepEqual(roots.map(shape), [
+    { id: "a", children: [{ id: "c", children: [] }] },
+    { id: "b", children: [{ id: "c", children: [] }] },
+  ]);
+});
+
+test("deriveDexGraph: a cycle terminates instead of looping forever", () => {
+  // a blocks b, b blocks a. Neither is "unblocked", so there's no root from the
+  // blocker edges — the forest is empty, but the call returns rather than hangs.
+  const roots = deriveDexGraph(
+    graphRows(
+      task({ id: "a", status: "blocked", blockedByCount: 1, blockedBy: ["b"] }),
+      task({ id: "b", status: "blocked", blockedByCount: 1, blockedBy: ["a"] }),
+    ),
+  );
+  assert.deepEqual(roots, []);
+});
+
+test("deriveDexGraph: a cycle reachable from a root expands once, not forever", () => {
+  // root → a → b → a(cycle). The second visit to `a` is cut, so b has no child.
+  const roots = deriveDexGraph(
+    graphRows(
+      task({ id: "root", status: "ready" }),
+      task({ id: "a", status: "blocked", blockedByCount: 2, blockedBy: ["root", "b"] }),
+      task({ id: "b", status: "blocked", blockedByCount: 1, blockedBy: ["a"] }),
+    ),
+  );
+  assert.deepEqual(roots.map(shape), [
+    {
+      id: "root",
+      children: [{ id: "a", children: [{ id: "b", children: [] }] }],
+    },
+  ]);
+});
+
+test("deriveDexGraph: standalone tasks (no edges) are childless roots", () => {
+  const roots = deriveDexGraph(
+    graphRows(task({ id: "a", status: "ready" }), task({ id: "b", status: "in-progress" })),
+  );
+  assert.deepEqual(roots.map(shape), [
+    { id: "a", children: [] },
+    { id: "b", children: [] },
+  ]);
+});
+
+test("deriveDexGraph: a blocker id not in the set is ignored (task becomes a root)", () => {
+  const roots = deriveDexGraph(
+    graphRows(task({ id: "b", status: "blocked", blockedByCount: 1, blockedBy: ["missing"] })),
+  );
+  // The only blocker isn't present, so b can't nest under it → b is a root.
+  assert.deepEqual(roots.map(shape), [{ id: "b", children: [] }]);
+});
+
+test("deriveDexGraph: a task with one known and one unknown blocker still nests", () => {
+  const roots = deriveDexGraph(
+    graphRows(
+      task({ id: "a", status: "ready" }),
+      task({ id: "b", status: "blocked", blockedByCount: 2, blockedBy: ["a", "missing"] }),
+    ),
+  );
+  // The known blocker `a` parents b; the unknown id is simply dropped, and the
+  // present blocker keeps b out of the root set.
+  assert.deepEqual(roots.map(shape), [{ id: "a", children: [{ id: "b", children: [] }] }]);
+});
+
+test("deriveDexGraph: empty input yields an empty forest", () => {
+  assert.deepEqual(deriveDexGraph([]), []);
 });

@@ -58,3 +58,18 @@ test(
     );
   },
 );
+
+test(
+  "renderer bundle carries the Dex dependency-graph row render",
+  { skip: !existsSync(bundlePath) ? "bundle not built (run pnpm build first)" : false },
+  () => {
+    const bundle = readFileSync(bundlePath, "utf8");
+    // The graph-mode node row class — proof the graph branch renders (not the
+    // tree fallback). Paired with the pure `deriveDexGraph` unit tests, since the
+    // DOM build itself has no jsdom harness.
+    assert.ok(
+      bundle.includes("dex-graph-row"),
+      "expected the `dex-graph-row` class in the renderer bundle",
+    );
+  },
+);
