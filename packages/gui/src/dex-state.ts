@@ -80,9 +80,10 @@ export interface DexCounts {
 }
 
 /**
- * The rendered Dex section. `visible` is false only when there are no tasks (no
- * board yet, or an empty board) — so users without the dex plugin see the
- * unchanged panel. `rows` are pre-ordered (tree pre-order, depth-tagged);
+ * The rendered Dex section. `visible` tracks plugin *presence*, not task count:
+ * it's false only when the dex plugin isn't installed — so users without the
+ * plugin see the unchanged panel, while an installed-but-empty plugin still
+ * shows an empty state. `rows` are pre-ordered (tree pre-order, depth-tagged);
  * `counts` drives the tab badge.
  */
 export interface DexSection {
@@ -122,15 +123,16 @@ export function worstDexHealth(section: DexSection): DexHealth {
 }
 
 /**
- * Build the Dex section from the latest `dex.tasks` output. Hidden
- * (`visible: false`) only when the board is **absent** (the dex plugin isn't
- * installed, so the GUI never subscribed). When the plugin IS present but has no
- * open tasks, the section stays visible with empty `rows` (the renderer shows an
- * empty state) — finishing all your tasks shouldn't make the tab vanish. Pure.
+ * Build the Dex section from the latest `dex.tasks` output. Visibility is driven
+ * by `present` — whether the dex plugin is installed (its `dex.tasks` capability
+ * exists) — not by whether a board has arrived. So an installed plugin with no
+ * board yet (or an empty board) still shows an empty state, and finishing all
+ * your tasks doesn't make the tab vanish; only an uninstalled plugin hides the
+ * section. Pure.
  */
-export function buildDexSection(board: DexBoard | undefined): DexSection {
+export function buildDexSection(board: DexBoard | undefined, present: boolean): DexSection {
   if (!board) {
-    return { visible: false, rows: [], counts: { ...ZERO_COUNTS } };
+    return { visible: present, rows: [], counts: { ...ZERO_COUNTS } };
   }
   const activeAncestors = ancestorsWithActiveDescendant(board.tasks);
   const counts: DexCounts = { ...ZERO_COUNTS, total: board.tasks.length };
@@ -163,7 +165,7 @@ export function buildDexSection(board: DexBoard | undefined): DexSection {
       health: dexHealth(t.status),
     };
   });
-  return { visible: true, rows, counts };
+  return { visible: present, rows, counts };
 }
 
 /**

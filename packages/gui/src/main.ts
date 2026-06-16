@@ -290,6 +290,7 @@ async function connect(): Promise<void> {
     buildInput.syncAvailable = caps.some((c) => c.id === STACK_SYNC_ID);
     servicesPresent = caps.some((c) => c.id === SERVICES_LIST_ID);
     dexPresent = caps.some((c) => c.id === DEX_TASKS_ID);
+    buildInput.dexPresent = dexPresent;
     worktreesPresent = caps.some((c) => c.id === WORKTREES_LIST_ID);
   } catch {
     buildInput.syncAvailable = false;
@@ -374,7 +375,8 @@ async function reloadFromRegistry(): Promise<void> {
     // Same for dex: re-subscribe if present (a config edit like `showCompleted`
     // stops the poller + clears the cache, so re-subscribing re-runs the read
     // with the new config and applies it immediately), else clear so it hides.
-    if (caps.some((c) => c.id === DEX_TASKS_ID)) {
+    buildInput.dexPresent = caps.some((c) => c.id === DEX_TASKS_ID);
+    if (buildInput.dexPresent) {
       await subscribeDex();
     } else {
       buildInput.dexBoard = undefined;

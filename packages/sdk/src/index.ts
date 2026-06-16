@@ -175,6 +175,15 @@ export interface SettingsField {
   default?: unknown;
   /** Choices for an `"enum"` field; required when `type` is `"enum"`. */
   options?: SettingsFieldOption[];
+  /**
+   * Optional conditional-visibility rule: render this field only when the sibling
+   * field at `key` (within the same descriptor) currently equals `equals`. Lets a
+   * plugin reveal a dependent control (e.g. a free-text "Custom" command) only when
+   * a controlling enum is set to a particular value. Generic — any plugin can use
+   * it. The compared value is the controlling field's resolved current value (its
+   * `default` when unset).
+   */
+  showWhen?: { key: string; equals: string };
 }
 
 /** An ordered list of {@link SettingsField}s a plugin exposes for editing. */

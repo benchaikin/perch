@@ -37,12 +37,20 @@ test("dexHealth maps each status to a marker color", () => {
   assert.equal(dexHealth("ready"), "muted");
 });
 
-test("buildDexSection hides only when the board is absent (plugin not installed)", () => {
-  // No board → plugin absent → hidden.
-  assert.equal(buildDexSection(undefined).visible, false);
-  // Board present but empty (all tasks completed) → stays visible with no rows,
-  // so finishing your tasks doesn't make the tab disappear.
-  const empty = buildDexSection({ tasks: [] });
+test("buildDexSection visibility tracks plugin presence, not board arrival", () => {
+  // Plugin absent → hidden, regardless of board.
+  assert.equal(buildDexSection(undefined, false).visible, false);
+  assert.equal(buildDexSection({ tasks: [] }, false).visible, false);
+  // Plugin present but no board yet (zero tasks, subscription seeded nothing) →
+  // visible with an empty state, so the tab doesn't conflate "not installed"
+  // with "installed, nothing open yet".
+  const noBoard = buildDexSection(undefined, true);
+  assert.equal(noBoard.visible, true);
+  assert.equal(noBoard.rows.length, 0);
+  assert.equal(noBoard.counts.total, 0);
+  // Plugin present with an empty board (all tasks completed) → stays visible
+  // with no rows, so finishing your tasks doesn't make the tab disappear.
+  const empty = buildDexSection({ tasks: [] }, true);
   assert.equal(empty.visible, true);
   assert.equal(empty.rows.length, 0);
 });
@@ -56,6 +64,7 @@ test("buildDexSection tallies counts and maps row health", () => {
       task({ id: "d", status: "done" }),
       task({ id: "e", status: "ready" }),
     ),
+    true,
   );
   assert.equal(section.visible, true);
   assert.deepEqual(section.counts, { ready: 2, blocked: 1, inProgress: 1, done: 1, total: 5 });
@@ -69,6 +78,7 @@ test("worstDexHealth: blocked > ready > in-progress > muted", () => {
     worstDexHealth(
       buildDexSection(
         board(task({ id: "x", status: "in-progress" }), task({ id: "y", status: "blocked" })),
+        true,
       ),
     ),
     "bad",
@@ -78,17 +88,19 @@ test("worstDexHealth: blocked > ready > in-progress > muted", () => {
     worstDexHealth(
       buildDexSection(
         board(task({ id: "x", status: "in-progress" }), task({ id: "y", status: "ready" })),
+        true,
       ),
     ),
     "warn",
   );
   // Only in-progress → ok (all work claimed, nothing waiting).
   assert.equal(
-    worstDexHealth(buildDexSection(board(task({ id: "x", status: "in-progress" })))),
+    worstDexHealth(buildDexSection(board(task({ id: "x", status: "in-progress" })), true)),
     "ok",
   );
-  // Empty/hidden → muted.
-  assert.equal(worstDexHealth(buildDexSection(undefined)), "muted");
+  // Present but empty → muted (nothing notable). Same as plugin absent.
+  assert.equal(worstDexHealth(buildDexSection({ tasks: [] }, true)), "muted");
+  assert.equal(worstDexHealth(buildDexSection(undefined, false)), "muted");
 });
 
 test("displayStatus rolls an epic up to in-progress when a descendant is active", () => {
@@ -97,6 +109,7 @@ test("displayStatus rolls an epic up to in-progress when a descendant is active"
       task({ id: "epic", status: "ready", isEpic: true, depth: 0 }),
       task({ id: "child", status: "in-progress", depth: 1, parentId: "epic" }),
     ),
+    true,
   );
   // The epic's own status is untouched; only its display (icon) status rolls up.
   assert.equal(section.rows[0]!.status, "ready");
@@ -111,6 +124,7 @@ test("displayStatus equals status when no descendant is in progress", () => {
       task({ id: "epic", status: "ready", isEpic: true, depth: 0 }),
       task({ id: "child", status: "done", depth: 1, parentId: "epic" }),
     ),
+    true,
   );
   assert.equal(section.rows[0]!.displayStatus, "ready");
   assert.equal(section.rows[1]!.displayStatus, "done");
@@ -122,6 +136,7 @@ test("a blocked epic keeps reading as blocked even with an in-progress child", (
       task({ id: "epic", status: "blocked", isEpic: true, depth: 0 }),
       task({ id: "child", status: "in-progress", depth: 1, parentId: "epic" }),
     ),
+    true,
   );
   // Blocked outranks the in-progress rollup (mirrors worstDexHealth precedence).
   assert.equal(section.rows[0]!.displayStatus, "blocked");
@@ -134,6 +149,7 @@ test("the rollup spans grandchildren, not just direct children", () => {
       task({ id: "mid", status: "ready", isEpic: true, depth: 1, parentId: "epic" }),
       task({ id: "leaf", status: "in-progress", depth: 2, parentId: "mid" }),
     ),
+    true,
   );
   // Both ancestors of the active leaf roll up.
   assert.equal(section.rows[0]!.displayStatus, "in-progress");
@@ -142,7 +158,7 @@ test("the rollup spans grandchildren, not just direct children", () => {
 });
 
 test("a non-epic leaf never rolls up (only its own status drives display)", () => {
-  const section = buildDexSection(board(task({ id: "leaf", status: "ready" })));
+  const section = buildDexSection(board(task({ id: "leaf", status: "ready" })), true);
   assert.equal(section.rows[0]!.displayStatus, "ready");
 });
 
@@ -152,6 +168,7 @@ test("rows preserve tree order, depth, and isEpic from the board", () => {
       task({ id: "epic", status: "ready", isEpic: true, depth: 0 }),
       task({ id: "child", status: "in-progress", depth: 1, parentId: "epic" }),
     ),
+    true,
   );
   assert.deepEqual(
     section.rows.map((r) => r.id),

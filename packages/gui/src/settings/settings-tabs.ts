@@ -24,7 +24,7 @@
  * The transforms here are pure (no DOM, no Electron) so they unit-test without a
  * display.
  */
-import type { PluginSettingsDescription } from "@perch/core";
+import type { PluginSettingsDescription, SettingsFieldState } from "@perch/core";
 
 /**
  * Reserved descriptor id for the cross-plugin "General" tab. A renderer-safe
@@ -95,6 +95,27 @@ export function buildSettingsTabs(plugins: PluginSettingsDescription[]): Setting
   }
 
   return tabs;
+}
+
+/**
+ * Filter a descriptor's fields down to the ones that should currently render,
+ * applying each field's optional `showWhen` conditional-visibility rule. A field
+ * with no `showWhen` always shows; one with a `showWhen` shows only when the
+ * sibling field at `showWhen.key` has a current `value` equal to `showWhen.equals`
+ * (compared as strings, matching how enum controls store their value). A field
+ * whose controlling sibling is missing is hidden — a `showWhen` that can never be
+ * satisfied stays out of the form rather than rendering unconditionally.
+ *
+ * Pure (no DOM): `value`s already carry the resolved current value (the field's
+ * `default` when unset), so the filter needs nothing beyond the fields themselves.
+ */
+export function visibleFields(fields: SettingsFieldState[]): SettingsFieldState[] {
+  const valueByKey = new Map(fields.map((f) => [f.key, f.value]));
+  return fields.filter((field) => {
+    if (!field.showWhen) return true;
+    const current = valueByKey.get(field.showWhen.key);
+    return current != null && String(current) === field.showWhen.equals;
+  });
 }
 
 /**
