@@ -15,7 +15,8 @@ export type Exec = (cmd: string, args: string[], opts?: { cwd?: string }) => Pro
 
 type ExecError = Error & { stdout?: string; stderr?: string };
 
-const defaultExec: Exec = (cmd, args, opts) =>
+/** The real `execFile`-backed runner, shared by the provider and the spawn action. */
+export const defaultExec: Exec = (cmd, args, opts) =>
   new Promise((resolve, reject) => {
     execFile(
       cmd,

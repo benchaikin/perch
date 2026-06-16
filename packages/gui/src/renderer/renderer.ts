@@ -610,6 +610,31 @@ function dexBlockedChip(count: number): HTMLElement {
 }
 
 /**
+ * The task id as a monospace reference chip (for `dex show`, commit messages,
+ * etc.). Click to copy it to the clipboard with a brief inline confirmation;
+ * `stopPropagation` so copying never opens the row's detail view.
+ */
+function dexIdChipEl(id: string): HTMLElement {
+  const chip = document.createElement("span");
+  chip.className = "chip muted dex-id";
+  chip.title = "Copy task id";
+  chip.textContent = id;
+  chip.addEventListener("click", (e) => {
+    e.stopPropagation();
+    window.perch.copyText(id);
+    // Brief inline confirmation; reverts after a moment (a re-render would also
+    // recreate the chip, which is fine — this closure just no-ops on the stale el).
+    chip.textContent = "copied ✓";
+    chip.classList.add("copied");
+    setTimeout(() => {
+      chip.textContent = id;
+      chip.classList.remove("copied");
+    }, 1000);
+  });
+  return chip;
+}
+
+/**
  * Build one dex task row: an expand/collapse chevron (epics) or aligning spacer
  * (leaves), a status-shaped marker, the name, and an optional blocker chip.
  * Clicking the row body opens the task's detail; clicking an epic's chevron
@@ -655,6 +680,9 @@ function dexRowEl(row: DexRow): HTMLElement {
   name.className = "branch";
   name.textContent = row.name;
   el.append(name);
+
+  // The task id as a click-to-copy chip, matching the detail view.
+  el.append(dexIdChipEl(row.id));
 
   if (row.blockedByCount > 0) el.append(dexBlockedChip(row.blockedByCount));
 
@@ -718,22 +746,7 @@ function dexDetailEl(row: DexRow): HTMLElement {
   meta.className = "dex-detail-meta";
   // The task id leads the meta row as a monospace reference (for `dex show`,
   // commit messages, etc.). Click to copy it to the clipboard.
-  const idChip = document.createElement("span");
-  idChip.className = "chip muted dex-id";
-  idChip.title = "Copy task id";
-  idChip.textContent = row.id;
-  idChip.addEventListener("click", () => {
-    window.perch.copyText(row.id);
-    // Brief inline confirmation; reverts after a moment (a re-render would also
-    // recreate the chip, which is fine — this closure just no-ops on the stale el).
-    idChip.textContent = "copied ✓";
-    idChip.classList.add("copied");
-    setTimeout(() => {
-      idChip.textContent = row.id;
-      idChip.classList.remove("copied");
-    }, 1000);
-  });
-  meta.append(idChip);
+  meta.append(dexIdChipEl(row.id));
   const status = document.createElement("span");
   status.className = `chip ${row.health}`;
   status.textContent = DEX_STATUS_LABEL[row.status];
@@ -924,6 +937,9 @@ function dexGraphRowEl(row: DexRow, depth: number): HTMLElement {
   name.className = "branch";
   name.textContent = row.name;
   el.append(name);
+
+  // The task id as a click-to-copy chip, matching the detail view.
+  el.append(dexIdChipEl(row.id));
 
   if (row.blockedByCount > 0) el.append(dexBlockedChip(row.blockedByCount));
   if (row.landable) {

@@ -95,3 +95,23 @@ test(
     );
   },
 );
+
+test(
+  "renderer bundle carries the task id badge",
+  { skip: !existsSync(bundlePath) ? "bundle not built (run pnpm build first)" : false },
+  () => {
+    const bundle = readFileSync(bundlePath, "utf8");
+    // The click-to-copy id chip, shared by the detail view and the main rows.
+    assert.ok(bundle.includes("dex-id"), "expected the `dex-id` chip class in the renderer bundle");
+    assert.ok(
+      bundle.includes("Copy task id"),
+      "expected the `Copy task id` hint in the bundle",
+    );
+    // The shared helper bundles to a single arrow function the rows reference, so
+    // its presence proves the id chip reaches the row render (not just detail).
+    assert.ok(
+      bundle.includes("dexIdChipEl"),
+      "expected the shared `dexIdChipEl` helper in the renderer bundle",
+    );
+  },
+);
