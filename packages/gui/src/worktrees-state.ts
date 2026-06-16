@@ -21,6 +21,8 @@ export type WorktreeHealth = "ok" | "warn" | "bad" | "muted";
 export interface Worktree {
   path: string;
   name: string;
+  /** Source repo (basename of its root) when several repos are enumerated; undefined for a single repo. */
+  repo?: string;
   branch?: string;
   detached: boolean;
   /** The repository's main worktree. */
@@ -53,12 +55,15 @@ export interface WorktreeCounts {
 /**
  * The rendered Worktrees section. `visible` is false only when there are no
  * worktrees to show (no list yet, or an empty list) — so users without the
- * plugin see the unchanged panel. `rows` are main-first.
+ * plugin see the unchanged panel. `rows` are grouped per repo (each repo's rows
+ * main-first), in the order the repos were enumerated. `multiRepo` is true when
+ * rows span more than one repo, so the renderer draws a header per repo group.
  */
 export interface WorktreesSection {
   visible: boolean;
   rows: WorktreeRow[];
   counts: WorktreeCounts;
+  multiRepo: boolean;
 }
 
 const ZERO_COUNTS: WorktreeCounts = { total: 0, dirty: 0, conflict: 0 };
@@ -80,16 +85,20 @@ export function worstWorktreeHealth(section: WorktreesSection): WorktreeHealth {
 
 /**
  * Build the Worktrees section from the latest `worktrees.list` output. Hidden
- * when the list is absent or empty. Pure: same input → same output.
+ * when the list is absent or empty. `multiRepo` is set when the rows carry more
+ * than one distinct `repo` tag, so the renderer groups them under per-repo
+ * headers. Pure: same input → same output.
  */
 export function buildWorktreesSection(list: WorktreeList | undefined): WorktreesSection {
   if (!list || list.worktrees.length === 0) {
-    return { visible: false, rows: [], counts: { ...ZERO_COUNTS } };
+    return { visible: false, rows: [], counts: { ...ZERO_COUNTS }, multiRepo: false };
   }
   const counts: WorktreeCounts = { ...ZERO_COUNTS, total: list.worktrees.length };
+  const repos = new Set<string>();
   for (const w of list.worktrees) {
     if (w.dirty) counts.dirty += 1;
     if (w.conflict) counts.conflict += 1;
+    if (w.repo) repos.add(w.repo);
   }
-  return { visible: true, rows: list.worktrees, counts };
+  return { visible: true, rows: list.worktrees, counts, multiRepo: repos.size > 1 };
 }

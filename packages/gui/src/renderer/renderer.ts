@@ -753,7 +753,19 @@ function worktreesSectionEl(section: WorktreesSection): HTMLElement | null {
   if (!section.visible) return null;
   const el = document.createElement("section");
   el.className = "repo-section worktrees-section";
-  for (const row of section.rows) el.append(worktreeRowEl(row));
+  // With multiple repos, group rows under a per-repo header (rows arrive grouped
+  // by repo); a single repo renders the flat list unchanged.
+  let lastRepo: string | undefined;
+  for (const row of section.rows) {
+    if (section.multiRepo && row.repo !== lastRepo) {
+      const header = document.createElement("div");
+      header.className = "repo-header worktrees-repo-header";
+      header.textContent = row.repo ?? "(unknown repo)";
+      el.append(header);
+      lastRepo = row.repo;
+    }
+    el.append(worktreeRowEl(row));
+  }
   return el;
 }
 

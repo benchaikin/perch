@@ -7,8 +7,8 @@ import plugin from "./index.js";
 import { ReposResult } from "./repos.js";
 
 /** Minimal `CapabilityContext` for invoking a capability's `run` directly. */
-function ctx(config: unknown): CapabilityContext {
-  return { config, log: () => {} };
+function ctx(config: unknown, global?: unknown): CapabilityContext {
+  return { config, global, log: () => {} };
 }
 
 test("stack.repos returns the configured repos + default, validated by its schema", async () => {
@@ -33,6 +33,54 @@ test("stack.repos returns the configured repos + default, validated by its schem
 
 test("stack.repos is empty (no default) when no repos are configured", async () => {
   const out = await plugin.capabilities.repos!.run({ input: undefined, ctx: ctx({}) });
+  assert.deepEqual(ReposResult.parse(out), { repos: [], default: undefined });
+});
+
+test("stack.repos falls back to shared global.repos when plugins.stack.repos is unset", async () => {
+  // Precedence step 2: no plugin-local override → the shared `global.repos`.
+  const out = await plugin.capabilities.repos!.run({
+    input: undefined,
+    ctx: ctx({}, { repos: ["/g/main", "/g/infra"] }),
+  });
+  assert.deepEqual(ReposResult.parse(out), {
+    repos: [
+      { name: "main", path: "/g/main" },
+      { name: "infra", path: "/g/infra" },
+    ],
+    default: "main",
+  });
+});
+
+test("stack.repos: plugins.stack.repos overrides the shared global.repos", async () => {
+  // Precedence step 1: a non-empty plugin-local list wins over the shared one.
+  const out = await plugin.capabilities.repos!.run({
+    input: undefined,
+    ctx: ctx({ repos: ["/local/app"] }, { repos: ["/g/main", "/g/infra"] }),
+  });
+  assert.deepEqual(ReposResult.parse(out), {
+    repos: [{ name: "app", path: "/local/app" }],
+    default: "app",
+  });
+});
+
+test("stack.repos: an empty plugins.stack.repos falls through to shared global.repos", async () => {
+  // An explicitly empty override is treated as "unset" → the shared list.
+  const out = await plugin.capabilities.repos!.run({
+    input: undefined,
+    ctx: ctx({ repos: [] }, { repos: ["/g/main"] }),
+  });
+  assert.deepEqual(ReposResult.parse(out), {
+    repos: [{ name: "main", path: "/g/main" }],
+    default: "main",
+  });
+});
+
+test("stack.repos is empty when neither plugins.stack.repos nor global.repos is set", async () => {
+  // Precedence step 3: nothing configured → empty (the cwd back-compat fallback).
+  const out = await plugin.capabilities.repos!.run({
+    input: undefined,
+    ctx: ctx({}, { repos: [] }),
+  });
   assert.deepEqual(ReposResult.parse(out), { repos: [], default: undefined });
 });
 

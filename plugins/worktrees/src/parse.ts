@@ -46,6 +46,12 @@ export const Worktree = z.object({
   path: z.string(),
   /** Basename of the path (the display label). */
   name: z.string(),
+  /**
+   * The source repo this worktree belongs to (basename of its repo root), so the
+   * panel can group/label worktrees when several repos are enumerated. Undefined
+   * when the source root is unknown (the daemon-cwd default).
+   */
+  repo: z.string().optional(),
   branch: z.string().optional(),
   detached: z.boolean(),
   /** The repository's main worktree (listed first by git). */
@@ -153,6 +159,7 @@ export function buildWorktree(
   raw: RawWorktree,
   status: WorktreeStatus | undefined,
   main: boolean,
+  repo?: string,
 ): Worktree {
   const dirtyCount = status?.dirtyCount ?? 0;
   const conflict = status?.conflict ?? false;
@@ -162,6 +169,7 @@ export function buildWorktree(
   return {
     path: raw.path,
     name,
+    repo,
     branch: raw.branch,
     detached: raw.detached,
     main,
@@ -177,15 +185,29 @@ export function buildWorktree(
 }
 
 /**
- * Build the full {@link Worktrees} board from the worktree list + a per-path
- * status map. Skips bare worktrees (no working tree to report on). The first
- * (non-bare) record is the repo's main worktree.
+ * Build the {@link Worktrees} board for a single repo root: its worktree list +
+ * a per-path status map. Skips bare worktrees (no working tree to report on).
+ * The first (non-bare) record is that repo's main worktree. `repo` (the root's
+ * basename) tags each row so callers can group/label multiple repos; pass
+ * undefined for the daemon-cwd default (a single, unlabeled repo).
  */
 export function buildWorktrees(
   raws: RawWorktree[],
   statusByPath: ReadonlyMap<string, WorktreeStatus>,
+  repo?: string,
 ): Worktrees {
   const visible = raws.filter((r) => !r.bare);
-  const worktrees = visible.map((raw, i) => buildWorktree(raw, statusByPath.get(raw.path), i === 0));
+  const worktrees = visible.map((raw, i) =>
+    buildWorktree(raw, statusByPath.get(raw.path), i === 0, repo),
+  );
   return { worktrees };
+}
+
+/**
+ * Merge per-repo boards into one, concatenating rows in repo order. Each board
+ * already carries its own main-first ordering + `repo` tag, so the GUI can group
+ * by `repo`; the overall list preserves the order the roots were enumerated.
+ */
+export function mergeWorktrees(boards: Worktrees[]): Worktrees {
+  return { worktrees: boards.flatMap((b) => b.worktrees) };
 }

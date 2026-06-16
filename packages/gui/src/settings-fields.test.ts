@@ -7,7 +7,12 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildConfigPatch, coerceFieldValue } from "./settings-fields.js";
+import {
+  buildConfigPatch,
+  buildGlobalConfigPatch,
+  coerceFieldValue,
+  coerceListValue,
+} from "./settings-fields.js";
 
 test("coerceFieldValue: boolean passes a real boolean through", () => {
   assert.equal(coerceFieldValue("boolean", true), true);
@@ -40,6 +45,27 @@ test("coerceFieldValue: enum/string stringify the value", () => {
   assert.equal(coerceFieldValue("string", 12), "12");
   assert.equal(coerceFieldValue("string", null), "");
   assert.equal(coerceFieldValue("enum", undefined), "");
+});
+
+test("coerceFieldValue: list trims entries and drops blanks", () => {
+  assert.deepEqual(coerceFieldValue("list", ["/a", "  /b  ", "", "   "]), ["/a", "/b"]);
+});
+
+test("coerceFieldValue: list on a non-array (or unset) yields []", () => {
+  assert.deepEqual(coerceFieldValue("list", undefined), []);
+  assert.deepEqual(coerceFieldValue("list", "nope"), []);
+});
+
+test("coerceListValue: stringifies entries, trims, and drops blanks", () => {
+  assert.deepEqual(coerceListValue(["/a", "  /b  ", 12, null, "  "]), ["/a", "/b", "12"]);
+  assert.deepEqual(coerceListValue([]), []);
+  assert.deepEqual(coerceListValue("nope"), []);
+});
+
+test("buildGlobalConfigPatch: sets an array value at global.{key}", () => {
+  assert.deepEqual(buildGlobalConfigPatch("repos", ["/a", "/b"]), {
+    global: { repos: ["/a", "/b"] },
+  });
 });
 
 test("buildConfigPatch: a flat key nests under plugins[pluginId]", () => {

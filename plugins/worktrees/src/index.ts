@@ -8,20 +8,35 @@
  * `git status --porcelain=v2 --branch` (dirty count, conflicts, ahead/behind).
  * The read never throws: a non-git directory or git failure degrades to an empty
  * list, so the section simply hides.
+ *
+ * Repo roots are resolved by precedence: the per-plugin `repoRoot` override (a
+ * single root, back-compat) wins; else the shared `global.repos` list (enumerate
+ * worktrees across every repo); else the daemon's cwd (the original default). A
+ * failing root contributes nothing rather than failing the whole list, and each
+ * row is tagged with its source repo so the panel can group by it.
  */
+import { basename } from "node:path";
 import type { spawn as nodeSpawn } from "node:child_process";
 
 import {
   action,
   definePlugin,
   read,
+  reposOf,
   spawnInTerminal,
   terminalConfigOf,
   validateSettingsDescriptor,
   z,
 } from "@perch/sdk";
 
-import { buildWorktrees, parseStatus, parseWorktreeList, Worktrees, type WorktreeStatus } from "./parse.js";
+import {
+  buildWorktrees,
+  mergeWorktrees,
+  parseStatus,
+  parseWorktreeList,
+  Worktrees,
+  type WorktreeStatus,
+} from "./parse.js";
 import { buildShellInDir } from "./open.js";
 import { worktreeNotifications } from "./notify.js";
 import { WorktreesProvider, type Exec } from "./provider.js";
@@ -29,6 +44,7 @@ import { WorktreesProvider, type Exec } from "./provider.js";
 export {
   buildWorktree,
   buildWorktrees,
+  mergeWorktrees,
   parseStatus,
   parseWorktreeList,
   Worktree,
@@ -43,7 +59,12 @@ export type { Exec } from "./provider.js";
 
 /** Per-plugin config (`plugins.worktrees`). All optional. */
 const WorktreesConfig = z.object({
-  /** Repo root to enumerate worktrees from; defaults to the daemon's cwd. */
+  /**
+   * Single repo root to enumerate worktrees from — an override that, when set,
+   * pins the list to this one repo (back-compat). When unset, the plugin uses
+   * the shared `global.repos` list (all repos), or the daemon's cwd if that's
+   * empty too.
+   */
   repoRoot: z.string().optional(),
   /** Path to the `git` binary; defaults to `git` on PATH. */
   gitBin: z.string().optional(),
@@ -56,6 +77,27 @@ export type WorktreesConfig = z.infer<typeof WorktreesConfig>;
 function configOf(config: unknown): WorktreesConfig {
   const parsed = WorktreesConfig.safeParse(config);
   return parsed.success ? parsed.data : {};
+}
+
+/** A repo root to enumerate, paired with its display tag (basename, or undefined for cwd). */
+export interface RepoRoot {
+  /** The directory to run `git worktree list` in; `undefined` means the daemon cwd. */
+  root: string | undefined;
+  /** The `repo` tag for that root's rows (basename); `undefined` for the cwd default. */
+  tag: string | undefined;
+}
+
+/**
+ * Resolve the effective repo roots, by precedence:
+ *   1. `cfg.repoRoot` (the override) → that single root, untagged (one repo).
+ *   2. else `global.repos` (shared list) → every repo, each tagged by basename.
+ *   3. else the daemon cwd → a single, untagged root (the original default).
+ */
+export function resolveRepoRoots(cfg: WorktreesConfig, global: unknown): RepoRoot[] {
+  if (cfg.repoRoot) return [{ root: cfg.repoRoot, tag: undefined }];
+  const repos = reposOf(global);
+  if (repos.length > 0) return repos.map((root) => ({ root, tag: basename(root) }));
+  return [{ root: undefined, tag: undefined }];
 }
 
 /**
@@ -107,25 +149,33 @@ export default definePlugin({
       run: async ({ ctx }): Promise<Worktrees> => {
         const cfg = configOf(ctx.config);
         const provider = new WorktreesProvider(cfg.gitBin ?? "git", { exec: execOverride });
-        let listing: string;
-        try {
-          listing = await provider.listRaw(cfg.repoRoot);
-        } catch (err) {
-          ctx.log(`worktrees.list: git worktree list failed: ${String(err)}`);
-          return { worktrees: [] };
-        }
-        const raws = parseWorktreeList(listing);
-        // Per-worktree status, bounded by the worktree count (typically a handful).
-        const statusByPath = new Map<string, WorktreeStatus>();
-        await Promise.all(
-          raws
-            .filter((r) => !r.bare)
-            .map(async (r) => {
-              statusByPath.set(r.path, parseStatus(await provider.statusRaw(r.path)));
-            }),
-        );
-        const board = buildWorktrees(raws, statusByPath);
-        // Optionally hide the main worktree (the dir the daemon runs from).
+        const roots = resolveRepoRoots(cfg, ctx.global);
+
+        // Build one board per repo root; a non-git / failing root contributes
+        // nothing (logged + skipped) rather than failing the whole list.
+        const boardFor = async ({ root, tag }: RepoRoot): Promise<Worktrees> => {
+          let listing: string;
+          try {
+            listing = await provider.listRaw(root);
+          } catch (err) {
+            ctx.log(`worktrees.list: git worktree list failed for ${root ?? "cwd"}: ${String(err)}`);
+            return { worktrees: [] };
+          }
+          const raws = parseWorktreeList(listing);
+          // Per-worktree status, bounded by the worktree count (typically a handful).
+          const statusByPath = new Map<string, WorktreeStatus>();
+          await Promise.all(
+            raws
+              .filter((r) => !r.bare)
+              .map(async (r) => {
+                statusByPath.set(r.path, parseStatus(await provider.statusRaw(r.path)));
+              }),
+          );
+          return buildWorktrees(raws, statusByPath, tag);
+        };
+
+        const board = mergeWorktrees(await Promise.all(roots.map(boardFor)));
+        // Optionally hide each repo's main worktree (the dir its daemon runs from).
         if (cfg.showMain === false) {
           return { worktrees: board.worktrees.filter((w) => !w.main) };
         }

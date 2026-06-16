@@ -12,8 +12,9 @@
  *   - Any other plugin that declares a descriptor gets its own tab.
  *
  * Per-plugin content is descriptor-driven: each field renders a control by type
- * (enum→select, boolean→checkbox, string→text, number→number); changing one
- * writes back via `config.update` and re-reads the descriptors. No
+ * (enum→select, boolean→checkbox, string→text, number→number, list→an editable
+ * stack of removable rows + an add row); changing one writes back via
+ * `config.update` and re-reads the descriptors. No
  * plugin-specific UI code lives here — only the well-known tab grouping (which
  * tab owns the repos list) does. Bundled to plain browser JS by esbuild.
  */
@@ -376,7 +377,10 @@ function fieldControlEl(pluginId: string, field: SettingsFieldState): HTMLElemen
   labelText.textContent = field.label;
 
   const control = buildControl(pluginId, field);
-  control.classList.add("field-control");
+  // A `list` is its own multi-input block (rows + add row), so it styles its
+  // children itself and isn't a single labelable control; every scalar control is
+  // a `.field-control` wrapped in a `<label>`.
+  if (field.type !== "list") control.classList.add("field-control");
 
   // Checkbox reads better inline with its label; other controls stack above it.
   if (field.type === "boolean") {
@@ -384,6 +388,9 @@ function fieldControlEl(pluginId: string, field: SettingsFieldState): HTMLElemen
     inline.className = "field-inline";
     inline.append(control, labelText);
     row.append(inline);
+  } else if (field.type === "list") {
+    // Not a single focusable control, so a heading div (not a wrapping label).
+    row.append(labelText, control);
   } else {
     const label = document.createElement("label");
     label.className = "field-stacked";
@@ -437,7 +444,94 @@ function buildControl(pluginId: string, field: SettingsFieldState): HTMLElement 
       input.addEventListener("change", () => persistField(pluginId, field, input.value));
       return input;
     }
+    case "list":
+      return buildListControl(pluginId, field);
   }
+}
+
+/** Read a field's current value as a `string[]` (its empty when unset/non-array). */
+function listValue(field: SettingsFieldState): string[] {
+  return Array.isArray(field.value) ? field.value.map((entry) => String(entry)) : [];
+}
+
+/**
+ * Build the control for a `list` field: one removable row per current entry plus
+ * an add-row input. Every edit persists the WHOLE array (via `persistField`),
+ * which re-describes + re-renders — so add/remove flow back through the bridge
+ * rather than mutating local state. The add input keeps focus-by-rebuild simple
+ * by committing on Enter or button click.
+ */
+function buildListControl(pluginId: string, field: SettingsFieldState): HTMLElement {
+  const entries = listValue(field);
+
+  const wrap = document.createElement("div");
+  wrap.className = "list-field";
+
+  const rows = document.createElement("div");
+  rows.className = "list-rows";
+  entries.forEach((entry, index) => {
+    const row = document.createElement("div");
+    row.className = "list-row";
+
+    const text = document.createElement("input");
+    text.type = "text";
+    text.className = "field-control list-row-input";
+    text.value = entry;
+    // Editing a row persists the array with that index replaced.
+    text.addEventListener("change", () => {
+      const next = entries.slice();
+      next[index] = text.value;
+      persistField(pluginId, field, next);
+    });
+    row.append(text);
+
+    const remove = document.createElement("button");
+    remove.className = "btn btn-sm";
+    remove.type = "button";
+    remove.textContent = "Remove";
+    remove.addEventListener("click", () => {
+      const next = entries.slice();
+      next.splice(index, 1);
+      persistField(pluginId, field, next);
+    });
+    row.append(remove);
+
+    rows.append(row);
+  });
+  wrap.append(rows);
+
+  // Add row: a text input + Add button. Committing appends the trimmed value and
+  // persists; blank input is a no-op (so Enter on an empty field does nothing).
+  const addRow = document.createElement("div");
+  addRow.className = "list-row";
+
+  const addInput = document.createElement("input");
+  addInput.type = "text";
+  addInput.className = "field-control list-row-input";
+  addInput.placeholder = "Add…";
+  addRow.append(addInput);
+
+  const commitAdd = () => {
+    const value = addInput.value.trim();
+    if (!value) return;
+    persistField(pluginId, field, [...entries, value]);
+  };
+  addInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      commitAdd();
+    }
+  });
+
+  const add = document.createElement("button");
+  add.className = "btn btn-sm";
+  add.type = "button";
+  add.textContent = "Add";
+  add.addEventListener("click", commitAdd);
+  addRow.append(add);
+
+  wrap.append(addRow);
+  return wrap;
 }
 
 /** Build the descriptor-driven fields block for a plugin (header + fields). */

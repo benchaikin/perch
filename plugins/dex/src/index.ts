@@ -5,16 +5,17 @@
  *
  * Data source: the `dex` CLI (`dex list --json`). dex stores tasks per-project
  * in `<root>/.dex/tasks.jsonl`, resolved from cwd by walking up (no global task
- * store). By default this plugin monitors the daemon's resolved project store;
- * set `dirs` to a list of project roots to aggregate several stores (each tagged
- * with its directory name as a `project`).
+ * store). Monitored roots resolve in precedence: `plugins.dex.dirs` (override)
+ * → the shared `global.repos` list → else the daemon's own resolved store
+ * (cwd-relative). Each explicit root is read via `--storage-path <root>/.dex`
+ * and tagged with its directory name as a `project`.
  *
  * The read never throws: a missing `dex` binary or unreadable store degrades to
  * an empty board, so polling stays alive and the panel simply hides the section.
  */
 import { basename, join } from "node:path";
 
-import { definePlugin, read, validateSettingsDescriptor, z } from "@perch/sdk";
+import { definePlugin, read, reposOf, validateSettingsDescriptor, z } from "@perch/sdk";
 
 import { buildDexBoard, DexBoard, type DexGroup, parseRawTasks } from "./normalize.js";
 import { dexNotifications } from "./notify.js";
@@ -32,10 +33,12 @@ export type { Exec, ListOptions } from "./provider.js";
  */
 const DexConfig = z.object({
   /**
-   * Project roots to monitor (each must contain a `.dex/` store). When unset or
-   * empty, the daemon's own resolved store is used (cwd-relative). When set,
-   * each store is read via `--storage-path <dir>/.dex` and tagged with the
-   * directory's basename.
+   * Project roots to monitor (each must contain a `.dex/` store) — an override
+   * for the shared `global.repos` list. When set and non-empty, only these roots
+   * are monitored; when unset/empty the plugin falls back to `global.repos`, and
+   * only when *both* are empty does it use the daemon's own resolved store
+   * (cwd-relative). Each explicit root is read via `--storage-path <dir>/.dex`
+   * and tagged with the directory's basename.
    */
   dirs: z.array(z.string()).optional(),
   /** Path to the `dex` binary; defaults to `dex` on PATH. */
@@ -70,6 +73,16 @@ export function __setExec(exec: Exec | undefined): void {
  */
 function storagePathOf(dir: string): string {
   return join(dir, ".dex");
+}
+
+/**
+ * The project roots to monitor, in precedence order: `plugins.dex.dirs` when set
+ * and non-empty (an explicit override), else the shared `global.repos` list, else
+ * `[]` — which the caller reads as "use the daemon's own cwd-resolved store". A
+ * `global.repos` root with no `.dex/` degrades to an empty group (see `fetchGroup`).
+ */
+export function effectiveDirs(dirs: string[], global: unknown): string[] {
+  return dirs.length > 0 ? dirs : reposOf(global);
 }
 
 export default definePlugin({
@@ -114,7 +127,9 @@ export default definePlugin({
         const cfg = configOf(ctx.config);
         const provider = new DexProvider(cfg.dexBin ?? "dex", { exec: execOverride });
         const showCompleted = cfg.showCompleted ?? false;
-        const dirs = cfg.dirs ?? [];
+        // `dirs` overrides the shared `global.repos`; falls back to it, then to
+        // the daemon's cwd-resolved store when both are empty.
+        const dirs = effectiveDirs(cfg.dirs ?? [], ctx.global);
 
         // One group per monitored store; an unreadable store contributes nothing
         // rather than failing the whole poll.
