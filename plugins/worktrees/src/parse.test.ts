@@ -6,6 +6,7 @@ import { test } from "node:test";
 
 import {
   buildWorktrees,
+  mergeWorktrees,
   parseStatus,
   parseWorktreeList,
   worktreeHealth,
@@ -111,4 +112,34 @@ branch refs/heads/main
   assert.equal(worktrees.length, 1);
   assert.equal(worktrees[0]!.name, "real");
   assert.equal(worktrees[0]!.main, true);
+});
+
+test("buildWorktrees tags every row with its repo; undefined when omitted", () => {
+  const raws = parseWorktreeList(LIST);
+  const tagged = buildWorktrees(raws, new Map(), "alpha").worktrees;
+  assert.deepEqual(
+    tagged.map((w) => w.repo),
+    ["alpha", "alpha", "alpha"],
+  );
+  const untagged = buildWorktrees(raws, new Map()).worktrees;
+  assert.equal(untagged[0]!.repo, undefined);
+});
+
+test("mergeWorktrees concatenates per-repo boards, each main-first, in order", () => {
+  const a = buildWorktrees(parseWorktreeList(LIST), new Map(), "alpha");
+  const b = buildWorktrees(
+    parseWorktreeList(`worktree /beta\nHEAD eeee\nbranch refs/heads/main\n`),
+    new Map(),
+    "beta",
+  );
+  const { worktrees } = mergeWorktrees([a, b]);
+  assert.equal(worktrees.length, 4);
+  assert.deepEqual(
+    worktrees.map((w) => w.repo),
+    ["alpha", "alpha", "alpha", "beta"],
+  );
+  // Each board keeps its own main-first ordering: row 0 (alpha) and the beta row.
+  assert.equal(worktrees[0]!.main, true);
+  assert.equal(worktrees[3]!.main, true);
+  assert.equal(worktrees[1]!.main, false);
 });

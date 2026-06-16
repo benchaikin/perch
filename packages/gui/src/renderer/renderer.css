@@ -234,6 +234,16 @@ body {
   cursor: pointer;
 }
 
+/* Per-repo group header (only shown when worktrees span >1 repo); a little top
+   space separates each repo's group, but not the first. */
+.worktrees-repo-header {
+  margin-top: 10px;
+}
+
+.worktrees-repo-header:first-child {
+  margin-top: 0;
+}
+
 .repo-error {
   color: var(--bad);
   font-size: 11px;

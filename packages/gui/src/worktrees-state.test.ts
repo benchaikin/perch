@@ -50,6 +50,26 @@ test("buildWorktreesSection tallies total / dirty / conflict and passes rows mai
   assert.equal(section.rows[0]!.name, "main");
 });
 
+test("buildWorktreesSection sets multiRepo only when rows span >1 repo", () => {
+  // No repo tags (single, unlabeled repo) → not multi-repo.
+  assert.equal(buildWorktreesSection(list(wt({ name: "a", health: "muted" }))).multiRepo, false);
+  // One distinct repo tag → still a single repo.
+  assert.equal(
+    buildWorktreesSection(list(wt({ name: "a", repo: "alpha", health: "muted" }))).multiRepo,
+    false,
+  );
+  // Two distinct repos → multi-repo (renderer draws per-repo headers).
+  assert.equal(
+    buildWorktreesSection(
+      list(
+        wt({ name: "a", repo: "alpha", health: "muted" }),
+        wt({ name: "b", repo: "beta", health: "muted" }),
+      ),
+    ).multiRepo,
+    true,
+  );
+});
+
 test("worstWorktreeHealth: bad > warn > muted", () => {
   // A conflict (bad) dominates.
   assert.equal(
