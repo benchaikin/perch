@@ -101,6 +101,27 @@ export function writeActiveTab(file: string, activeTab: string): void {
   writeFileSync(file, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
 }
 
+/** How the Dex tab renders its tasks: a list/tree or a dependency graph. */
+export type DexViewMode = "tree" | "graph";
+
+/** The Dex view mode used when none is saved (or a saved value is invalid). */
+export const DEFAULT_DEX_VIEW_MODE: DexViewMode = "tree";
+
+/**
+ * Read the saved Dex view mode from `file`, falling back to
+ * {@link DEFAULT_DEX_VIEW_MODE} when absent or not a recognized mode.
+ */
+export function readDexViewMode(file: string): DexViewMode {
+  const mode = readObject(file).dexViewMode;
+  return mode === "tree" || mode === "graph" ? mode : DEFAULT_DEX_VIEW_MODE;
+}
+
+/** Persist the Dex view `mode` to `file`, preserving any other saved keys. */
+export function writeDexViewMode(file: string, mode: DexViewMode): void {
+  const merged = { ...readObject(file), dexViewMode: mode };
+  writeFileSync(file, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
+}
+
 /** A display work area (logical pixels), matching Electron's `Display.workArea`. */
 export interface WorkArea {
   x: number;

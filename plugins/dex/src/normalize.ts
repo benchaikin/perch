@@ -65,8 +65,15 @@ export const DexTaskView = z.object({
   parentId: z.string().optional(),
   /** True when this task has children in the fetched set (render as a group). */
   isEpic: z.boolean(),
-  /** Count of still-active blockers (>0 ⇒ status "blocked"). */
+  /** Count of still-active blockers (>0 ⇒ status "blocked"); equals `blockedBy.length`. */
   blockedByCount: z.number(),
+  /**
+   * Ids of the still-ACTIVE blockers (completed blockers are filtered out, same
+   * as for status derivation). The blocker EDGES, kept so a future
+   * dependency-graph view can be built; tree mode ignores this and reads
+   * `blockedByCount`.
+   */
+  blockedBy: z.array(z.string()),
   /** Source project label when monitoring multiple dex stores. */
   project: z.string().optional(),
 });
@@ -131,6 +138,10 @@ function buildGroup(tasks: RawDexTask[], project: string | undefined): DexTaskVi
   const out: DexTaskView[] = [];
   const visit = (task: RawDexTask, depth: number): void => {
     const kids = (childrenOf.get(task.id) ?? []).slice().sort(compareTasks);
+    // Keep only blockers still active (drop completed ones, as status does).
+    const activeBlockers = (task.blockedBy ?? [])
+      .map(blockerId)
+      .filter((id) => activeIds.has(id));
     out.push({
       id: task.id,
       name: task.name,
@@ -141,9 +152,8 @@ function buildGroup(tasks: RawDexTask[], project: string | undefined): DexTaskVi
       depth,
       parentId: task.parent_id ?? undefined,
       isEpic: kids.length > 0,
-      blockedByCount: (task.blockedBy ?? [])
-        .map(blockerId)
-        .filter((id) => activeIds.has(id)).length,
+      blockedBy: activeBlockers,
+      blockedByCount: activeBlockers.length,
       project,
     });
     for (const kid of kids) visit(kid, depth + 1);

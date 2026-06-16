@@ -11,11 +11,14 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
   centeredPosition,
+  DEFAULT_DEX_VIEW_MODE,
   DEFAULT_WINDOW_SIZE,
   MIN_WINDOW_SIZE,
   readActiveTab,
+  readDexViewMode,
   readWindowSize,
   writeActiveTab,
+  writeDexViewMode,
   writeWindowSize,
 } from "./window-state.js";
 
@@ -114,6 +117,38 @@ test("size and active-tab writers preserve each other (no clobbering)", () => {
     // ...and writing a new size keeps the tab.
     writeWindowSize(file, { width: 500, height: 400 });
     assert.equal(readActiveTab(file), "services.list");
+    assert.deepEqual(readWindowSize(file), { width: 500, height: 400 });
+  });
+});
+
+test("readDexViewMode returns the default when absent / invalid, else the saved mode", () => {
+  withTempDir((dir) => {
+    const file = join(dir, "window-state.json");
+    assert.equal(readDexViewMode(join(dir, "absent.json")), DEFAULT_DEX_VIEW_MODE);
+    assert.equal(DEFAULT_DEX_VIEW_MODE, "tree");
+    writeFileSync(file, JSON.stringify({ width: 320, height: 320 }), "utf8");
+    assert.equal(readDexViewMode(file), "tree"); // no dexViewMode key → default
+    writeFileSync(file, JSON.stringify({ dexViewMode: "sideways" }), "utf8");
+    assert.equal(readDexViewMode(file), "tree"); // unrecognized value → default
+    writeDexViewMode(file, "graph");
+    assert.equal(readDexViewMode(file), "graph");
+  });
+});
+
+test("dex-view-mode writer preserves size + active tab (no clobbering)", () => {
+  withTempDir((dir) => {
+    const file = join(dir, "window-state.json");
+    writeWindowSize(file, { width: 480, height: 360 });
+    writeActiveTab(file, "dex.tasks");
+    writeDexViewMode(file, "graph");
+    // Writing the mode kept the size + tab...
+    assert.deepEqual(readWindowSize(file), { width: 480, height: 360 });
+    assert.equal(readActiveTab(file), "dex.tasks");
+    assert.equal(readDexViewMode(file), "graph");
+    // ...and writing a new size keeps the mode (and the tab).
+    writeWindowSize(file, { width: 500, height: 400 });
+    assert.equal(readDexViewMode(file), "graph");
+    assert.equal(readActiveTab(file), "dex.tasks");
     assert.deepEqual(readWindowSize(file), { width: 500, height: 400 });
   });
 });

@@ -22,6 +22,7 @@ function task(over: Partial<DexTask> & { id: string; status: DexTask["status"] }
     depth: 0,
     isEpic: false,
     blockedByCount: 0,
+    blockedBy: [],
     ...over,
   };
 }
@@ -70,6 +71,18 @@ test("buildDexSection tallies counts and maps row health", () => {
   assert.deepEqual(section.counts, { ready: 2, blocked: 1, inProgress: 1, done: 1, total: 5 });
   assert.equal(section.rows[1]!.health, "bad");
   assert.equal(section.rows[1]!.blockedByCount, 2);
+});
+
+test("buildDexSection carries the active blocker ids (edges) onto rows", () => {
+  const section = buildDexSection(
+    board(
+      task({ id: "blkr", status: "ready" }),
+      task({ id: "blocked", status: "blocked", blockedByCount: 1, blockedBy: ["blkr"] }),
+    ),
+    true,
+  );
+  assert.deepEqual(section.rows[0]!.blockedBy, []);
+  assert.deepEqual(section.rows[1]!.blockedBy, ["blkr"]);
 });
 
 test("buildDexSection annotates rows from the worktree map (and only those)", () => {

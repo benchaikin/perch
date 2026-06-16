@@ -64,9 +64,12 @@ import {
   centeredPosition,
   MIN_WINDOW_SIZE,
   readActiveTab,
+  readDexViewMode,
   readWindowSize,
   writeActiveTab,
+  writeDexViewMode,
   writeWindowSize,
+  type DexViewMode,
 } from "./window-state.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -106,10 +109,17 @@ let worktreesKey: string | undefined;
  * + restarts). Loaded lazily (not at module init) since it reads a userData path.
  */
 let savedActiveTab: string | undefined;
+/**
+ * The persisted Dex view mode (tree/graph), loaded from GUI-local state when the
+ * panel is created and updated when the renderer reports a toggle. Attached to
+ * every pushed state so the renderer can seed its Dex view (sticky across panel
+ * opens + restarts). Loaded lazily (not at module init) since it reads userData.
+ */
+let savedDexViewMode: DexViewMode | undefined;
 
 /** Recompute the panel state from current inputs and push it to the renderer. */
 function pushState(): void {
-  const state: PanelState = { ...buildPanelState(buildInput), savedActiveTab };
+  const state: PanelState = { ...buildPanelState(buildInput), savedActiveTab, savedDexViewMode };
   panel?.webContents.send(Channels.stateFromMain, state);
   updateTrayBadge(state);
 }
@@ -628,10 +638,11 @@ function saveCurrentSize(win: BrowserWindow): void {
 
 /** Create the frameless, always-on-top, non-activating panel window (hidden). */
 function createPanel(): BrowserWindow {
-  // Restore the user's last size (or the default), clamped to the minimum, and
-  // the last-selected tab (seeded into the first pushed state).
+  // Restore the user's last size (or the default), clamped to the minimum, the
+  // last-selected tab, and the Dex view mode (all seeded into the first pushed state).
   const { width, height } = readWindowSize(windowStatePath());
   savedActiveTab = readActiveTab(windowStatePath());
+  savedDexViewMode = readDexViewMode(windowStatePath());
   const win = new BrowserWindow({
     width,
     height,
@@ -1070,6 +1081,16 @@ function registerIpc(): void {
       writeActiveTab(windowStatePath(), id);
     } catch (err) {
       console.error(`[window-state] save active tab failed: ${errorMessage(err)}`);
+    }
+  });
+  // Persist the renderer's Dex view mode so it's restored on the next open.
+  ipcMain.on(Channels.setDexViewMode, (_event, mode: DexViewMode) => {
+    if ((mode !== "tree" && mode !== "graph") || mode === savedDexViewMode) return;
+    savedDexViewMode = mode;
+    try {
+      writeDexViewMode(windowStatePath(), mode);
+    } catch (err) {
+      console.error(`[window-state] save dex view mode failed: ${errorMessage(err)}`);
     }
   });
 

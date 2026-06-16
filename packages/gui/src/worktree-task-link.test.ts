@@ -36,6 +36,7 @@ function task(over: Partial<DexTask> & { id: string }): DexTask {
     depth: 0,
     isEpic: false,
     blockedByCount: 0,
+    blockedBy: [],
     ...over,
   };
 }
