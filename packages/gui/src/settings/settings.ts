@@ -22,7 +22,12 @@ import type { Proc } from "../procs.js";
 import type { RepoEntry } from "../repos.js";
 import type { PluginSettingsResult, ServicesResult, SettingsResult } from "../settings-ipc.js";
 import { coerceFieldValue } from "../settings-fields.js";
-import { buildSettingsTabs, resolveActiveTab, type SettingsTab } from "./settings-tabs.js";
+import {
+  buildSettingsTabs,
+  resolveActiveTab,
+  visibleFields,
+  type SettingsTab,
+} from "./settings-tabs.js";
 
 const tabsEl = byId("tabs");
 const paneEl = byId("pane");
@@ -452,12 +457,17 @@ function pluginFieldsEl(plugin: PluginSettingsDescription, heading: string): HTM
   rule.className = "rule";
   section.append(rule);
 
-  if (plugin.fields.length === 0) {
+  // Apply each field's `showWhen` rule against the current values so dependent
+  // controls (e.g. the Custom terminal command) only appear when relevant. A
+  // persisted edit re-describes + re-renders, so toggling the controlling field
+  // reveals or hides the dependent one on the next render with no extra wiring.
+  const shown = visibleFields(plugin.fields);
+  if (shown.length === 0) {
     section.append(emptyEl("No settings for this plugin."));
   } else {
     const fields = document.createElement("div");
     fields.className = "fields";
-    for (const field of plugin.fields) fields.append(fieldControlEl(plugin.pluginId, field));
+    for (const field of shown) fields.append(fieldControlEl(plugin.pluginId, field));
     section.append(fields);
   }
 

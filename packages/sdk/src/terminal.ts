@@ -86,8 +86,10 @@ export const TERMINAL_SETTINGS_FIELDS: SettingsField[] = [
     key: "terminal.logTerminal",
     type: "string",
     label: "Custom terminal command",
-    description: "Only used when Terminal is Custom: a command template. Use {cmd} where the command to run should go.",
+    description:
+      "Only used when Terminal is Custom: a command template. Use {cmd} where the command to run should go.",
     default: DEFAULT_TERMINAL,
+    showWhen: { key: "terminal.terminalApp", equals: "Custom" },
   },
 ];
 

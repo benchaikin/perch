@@ -8,9 +8,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { PluginSettingsDescription } from "@perch/core";
+import type { SettingsFieldState } from "@perch/core";
 import {
   buildSettingsTabs,
   resolveActiveTab,
+  visibleFields,
   GENERAL_TAB_ID,
   PRS_TAB_ID,
   SERVICES_TAB_ID,
@@ -104,4 +106,80 @@ test("resolveActiveTab: falls back to the first tab (General) when the selection
 
 test("resolveActiveTab: returns undefined when there are no tabs", () => {
   assert.equal(resolveActiveTab([], "x"), undefined);
+});
+
+/** A controlling enum + a dependent field gated on it, mirroring the terminal fields. */
+function terminalFields(terminalApp: unknown): SettingsFieldState[] {
+  return [
+    { key: "terminal.terminalApp", type: "enum", label: "Terminal", value: terminalApp },
+    {
+      key: "terminal.logTerminal",
+      type: "string",
+      label: "Custom terminal command",
+      value: "cmd",
+      showWhen: { key: "terminal.terminalApp", equals: "Custom" },
+    },
+  ];
+}
+
+test("visibleFields: a field with no showWhen always renders", () => {
+  const fields: SettingsFieldState[] = [
+    { key: "a", type: "string", label: "A", value: "x" },
+    { key: "b", type: "boolean", label: "B", value: true },
+  ];
+  assert.deepEqual(
+    visibleFields(fields).map((f) => f.key),
+    ["a", "b"],
+  );
+});
+
+test("visibleFields: hides a showWhen field when the controlling value differs", () => {
+  assert.deepEqual(
+    visibleFields(terminalFields("Terminal")).map((f) => f.key),
+    ["terminal.terminalApp"],
+  );
+});
+
+test("visibleFields: reveals a showWhen field when the controlling value matches", () => {
+  assert.deepEqual(
+    visibleFields(terminalFields("Custom")).map((f) => f.key),
+    ["terminal.terminalApp", "terminal.logTerminal"],
+  );
+});
+
+test("visibleFields: hides a showWhen field when the controlling value is unset", () => {
+  assert.deepEqual(
+    visibleFields(terminalFields(undefined)).map((f) => f.key),
+    ["terminal.terminalApp"],
+  );
+});
+
+test("visibleFields: hides a showWhen field whose controlling sibling is absent", () => {
+  const fields: SettingsFieldState[] = [
+    {
+      key: "dependent",
+      type: "string",
+      label: "Dependent",
+      value: "x",
+      showWhen: { key: "missing", equals: "Custom" },
+    },
+  ];
+  assert.deepEqual(visibleFields(fields), []);
+});
+
+test("visibleFields: compares the controlling value as a string", () => {
+  const fields: SettingsFieldState[] = [
+    { key: "n", type: "number", label: "N", value: 1 },
+    {
+      key: "dependent",
+      type: "string",
+      label: "Dependent",
+      value: "x",
+      showWhen: { key: "n", equals: "1" },
+    },
+  ];
+  assert.deepEqual(
+    visibleFields(fields).map((f) => f.key),
+    ["n", "dependent"],
+  );
 });
