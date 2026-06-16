@@ -598,6 +598,7 @@ export function buildPanelState(input: BuildInput): PanelState {
       daemonUp && !!input.dexPresent,
       link.worktreeByTaskId,
       landableByTaskId,
+      agentByTaskId,
     ),
     worktrees: buildWorktreesSection(worktreesList, link.taskByWorktreePath),
   };

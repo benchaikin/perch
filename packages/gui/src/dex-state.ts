@@ -14,6 +14,7 @@
 
 import type { LinkedWorktree } from "./worktree-task-link.js";
 import type { LandableState } from "./landable.js";
+import type { AgentSummary } from "./agents-state.js";
 
 /** Canonical capability id of the dex task board read the section renders. */
 export const DEX_TASKS_ID = "dex.tasks";
@@ -94,6 +95,15 @@ export interface DexRow {
    * landable state added upstream renders rather than crashes.
    */
   landable?: LandableState;
+  /**
+   * The live Claude Code session (agent) working this task, when one matches —
+   * joined in by `buildPanelState` from `deriveAgentByTaskId`. Absent when no
+   * session is attributed to this task's worktree; the renderer surfaces its
+   * lifecycle state (running / blocked / done / error) as a compact marker so the
+   * task list reads as a fleet at-a-glance. Display-only — the agent state never
+   * feeds the dex counts or tab badge (Vibe Island owns agent attention).
+   */
+  agent?: AgentSummary;
 }
 
 /** Tallies per status, for the tab badge + any header summary. */
@@ -156,14 +166,16 @@ export function worstDexHealth(section: DexSection): DexHealth {
  * your tasks doesn't make the tab vanish; only an uninstalled plugin hides the
  * section. `worktreeByTaskId` (from `linkWorktreesAndTasks`) annotates each task
  * row with its live worktree; `landableByTaskId` (from `deriveLandableByTaskId`)
- * annotates it with its PR's landable state. Pass an empty map (or omit either)
- * for no annotation. Pure.
+ * annotates it with its PR's landable state; `agentByTaskId` (from
+ * `deriveAgentByTaskId`) annotates it with its live agent session. Pass an empty
+ * map (or omit any) for no annotation. Pure.
  */
 export function buildDexSection(
   board: DexBoard | undefined,
   present: boolean,
   worktreeByTaskId?: ReadonlyMap<string, LinkedWorktree>,
   landableByTaskId?: ReadonlyMap<string, LandableState>,
+  agentByTaskId?: ReadonlyMap<string, AgentSummary>,
 ): DexSection {
   if (!board) {
     return { visible: present, rows: [], counts: { ...ZERO_COUNTS } };
@@ -200,6 +212,7 @@ export function buildDexSection(
       health: dexHealth(t.status),
       worktree: worktreeByTaskId?.get(t.id),
       landable: landableByTaskId?.get(t.id),
+      agent: agentByTaskId?.get(t.id),
     };
   });
   return { visible: present, rows, counts };

@@ -25,6 +25,7 @@ import {
   type DexStatus,
 } from "../dex-state.js";
 import type { LandableState } from "../landable.js";
+import type { AgentState, AgentSummary } from "../agents-state.js";
 import {
   WORKTREES_LIST_ID,
   type WorktreeRow,
@@ -556,6 +557,49 @@ function dexLandableChipEl(state: LandableState): HTMLElement | null {
   return chip;
 }
 
+/**
+ * Glanceable spec for each live-agent lifecycle state, so a task row reads as a
+ * fleet at-a-glance. Each carries a distinct Font Awesome *shape* (a non-color
+ * cue — the state reads without relying on hue a colorblind viewer can't
+ * separate) plus a `.chip` tone: `blocked` is the attention state (warn), `error`
+ * is bad, `running` reads accent-blue ("actively working"), `idle`/`ended` are
+ * muted. `running` spins. Sits alongside the landable chip on the same row, but
+ * deliberately stays OUT of the tray-badge semantics — Vibe Island owns agent
+ * attention; this is render-only.
+ */
+const AGENT_MARKER: Record<
+  AgentState,
+  { label: string; tone: string; icon: string; spin?: boolean; hint: string }
+> = {
+  running: { label: "running", tone: "dex-active", icon: "play", spin: true, hint: "Agent running" },
+  blocked: {
+    label: "blocked",
+    tone: "warn",
+    icon: "hand",
+    hint: "Agent blocked — awaiting input",
+  },
+  idle: { label: "idle", tone: "muted", icon: "pause", hint: "Agent idle" },
+  ended: { label: "done", tone: "muted", icon: "check", hint: "Agent session ended" },
+  error: { label: "error", tone: "bad", icon: "triangle-exclamation", hint: "Agent errored" },
+};
+
+/**
+ * Build the live-agent marker for a dex task row from its session's lifecycle
+ * state: a compact `.chip` with a state-shaped icon (see {@link AGENT_MARKER}).
+ * The agent's `message` (the latest notification, when present) enriches the
+ * tooltip. Non-interactive — glanceable only; clicking the row still opens detail.
+ */
+function dexAgentMarkerEl(agent: AgentSummary): HTMLElement {
+  const spec = AGENT_MARKER[agent.state];
+  const chip = document.createElement("span");
+  chip.className = `chip ${spec.tone} dex-agent`;
+  chip.title = agent.message ? `${spec.hint}: ${agent.message}` : spec.hint;
+  const icon = document.createElement("i");
+  icon.className = `fa-solid fa-${spec.icon}${spec.spin ? " fa-spin" : ""}`;
+  chip.append(icon, ` ${spec.label}`);
+  return chip;
+}
+
 /** A small blocker-count chip ("blocked ×N"). */
 function dexBlockedChip(count: number): HTMLElement {
   const badge = document.createElement("span");
@@ -620,6 +664,10 @@ function dexRowEl(row: DexRow): HTMLElement {
     const landable = dexLandableChipEl(row.landable);
     if (landable) el.append(landable);
   }
+
+  // When a live Claude Code session is on this task, surface its lifecycle state
+  // (running / blocked / done / error) so the list reads as a fleet at-a-glance.
+  if (row.agent) el.append(dexAgentMarkerEl(row.agent));
 
   // When a live git worktree is linked to this task, surface it (branch + git
   // health) with an open-in-terminal affordance.
@@ -701,6 +749,7 @@ function dexDetailEl(row: DexRow): HTMLElement {
     const landable = dexLandableChipEl(row.landable);
     if (landable) meta.append(landable);
   }
+  if (row.agent) meta.append(dexAgentMarkerEl(row.agent));
   wrap.append(meta);
 
   if (row.description) wrap.append(dexBodyEl(row.description));
@@ -881,6 +930,7 @@ function dexGraphRowEl(row: DexRow, depth: number): HTMLElement {
     const landable = dexLandableChipEl(row.landable);
     if (landable) el.append(landable);
   }
+  if (row.agent) el.append(dexAgentMarkerEl(row.agent));
   if (row.worktree) el.append(dexWorktreeEl(row.worktree));
 
   el.addEventListener("click", () => {

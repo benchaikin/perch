@@ -141,6 +141,30 @@ test("buildDexSection threads the landable state onto rows (and only those)", ()
   );
 });
 
+test("buildDexSection threads the live agent onto rows (and only those)", () => {
+  const agent = {
+    sessionId: "s1",
+    state: "running" as const,
+    cwd: "/wt/a",
+    lastActivity: 1,
+  };
+  const section = buildDexSection(
+    board(task({ id: "t1", status: "in-progress" }), task({ id: "t2", status: "in-progress" })),
+    true,
+    undefined,
+    undefined,
+    new Map([["t1", agent]]),
+  );
+  // The matched task carries its agent summary; an unmatched one is bare.
+  assert.deepEqual(section.rows[0]!.agent, agent);
+  assert.equal(section.rows[1]!.agent, undefined);
+  // An omitted agent map leaves every row bare.
+  assert.equal(
+    buildDexSection(board(task({ id: "x", status: "ready" })), true).rows[0]!.agent,
+    undefined,
+  );
+});
+
 test("worstDexHealth: blocked > ready > in-progress > muted", () => {
   // A blocked task dominates.
   assert.equal(

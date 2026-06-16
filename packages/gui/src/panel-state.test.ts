@@ -558,3 +558,81 @@ test("buildPanelState: no PRs → PRs tab with a bare muted badge", () => {
   assert.equal(empty.status, "empty");
   assert.equal(empty.tabs[0]!.badge?.tone, "muted");
 });
+
+test("buildPanelState joins the agent fleet onto the matching dex row", () => {
+  // A dex task with a live worktree (matched by taskId) plus an agent session on
+  // that task — the full join → the row carries the agent and the map is keyed.
+  const state = buildPanelState({
+    overview: twoPrOverview,
+    daemonUp: true,
+    syncAvailable: true,
+    dexPresent: true,
+    dexBoard: {
+      tasks: [
+        {
+          id: "t1",
+          name: "Wire the fleet view",
+          description: "",
+          result: null,
+          status: "in-progress",
+          priority: 0,
+          depth: 0,
+          isEpic: false,
+          blockedByCount: 0,
+          blockedBy: [],
+        },
+      ],
+    },
+    worktreesList: {
+      worktrees: [
+        {
+          path: "/wt/t1",
+          name: "t1",
+          branch: "dex/t1-fleet",
+          detached: false,
+          main: false,
+          dirty: false,
+          dirtyCount: 0,
+          conflict: false,
+          locked: false,
+          prunable: false,
+          health: "ok",
+          taskId: "t1",
+        },
+      ],
+    },
+    agentFleet: {
+      agents: [{ sessionId: "s1", state: "blocked", taskId: "t1", lastActivity: 42 }],
+    },
+  });
+  // Surfaced on the cross-reference map…
+  assert.equal(state.agentByTaskId.get("t1")?.state, "blocked");
+  // …and threaded onto the rendered dex row (display-only).
+  const row = state.dex.rows.find((r) => r.id === "t1")!;
+  assert.equal(row.agent?.state, "blocked");
+  assert.equal(row.agent?.sessionId, "s1");
+  // A task with no matching session stays bare.
+  const bare = buildPanelState({
+    overview: twoPrOverview,
+    daemonUp: true,
+    syncAvailable: true,
+    dexPresent: true,
+    dexBoard: {
+      tasks: [
+        {
+          id: "t2",
+          name: "No agent",
+          description: "",
+          result: null,
+          status: "ready",
+          priority: 0,
+          depth: 0,
+          isEpic: false,
+          blockedByCount: 0,
+          blockedBy: [],
+        },
+      ],
+    },
+  });
+  assert.equal(bare.dex.rows[0]!.agent, undefined);
+});

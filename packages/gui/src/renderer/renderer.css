@@ -261,6 +261,16 @@ body {
   gap: 4px;
 }
 
+/* The live-agent marker on a dex task row / detail: a shared .chip toned by the
+   session's lifecycle state, with a leading state-shaped icon (a non-color cue).
+   Sits alongside the landable chip — together they make the row a fleet surface.
+   Reuses the .chip tone colors; only the icon gap is new. */
+.dex-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 /* The linked-worktree indicator on a dex task row: branch + git-health chips and
    an open-in-terminal button, hugging the row's trailing edge. Reuses the shared
    .chips / .chip markers; only the layout + compact open button are new. */
@@ -733,6 +743,11 @@ body {
 }
 .chip.muted {
   color: var(--muted);
+}
+/* Accent tone for a "running" agent chip — reads actively-working blue, matching
+   the in-progress task marker (.dot.dex-active) rather than an amber warn tone. */
+.chip.dex-active {
+  color: var(--accent);
 }
 
 .badge {
