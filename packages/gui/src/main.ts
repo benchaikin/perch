@@ -60,6 +60,7 @@ import {
 import { SERVICES_LIST_ID, type ServiceList, type ServicesBulkAction } from "./services-state.js";
 import { DEX_TASKS_ID, type DexBoard } from "./dex-state.js";
 import { WORKTREES_LIST_ID, type WorktreeList } from "./worktrees-state.js";
+import { AGENTS_LIST_ID, type AgentFleet } from "./agents-state.js";
 import {
   centeredPosition,
   MIN_WINDOW_SIZE,
@@ -102,6 +103,8 @@ let servicesKey: string | undefined;
 let dexKey: string | undefined;
 /** Subscription key echoed on `worktrees.list` `capability.update` notifications. */
 let worktreesKey: string | undefined;
+/** Subscription key echoed on `agents.list` `capability.update` notifications. */
+let agentsKey: string | undefined;
 /**
  * The last-selected tab id, loaded from GUI-local state when the panel is
  * created and updated when the renderer reports a tab change. Attached to every
@@ -185,6 +188,19 @@ async function subscribeWorktrees(): Promise<void> {
   const sub = await client.subscribe({ id: WORKTREES_LIST_ID });
   worktreesKey = sub.inputKey;
   if (sub.current !== undefined) buildInput.worktreesList = sub.current as WorktreeList;
+}
+
+/**
+ * (Re)subscribe to `agents.list` and seed the fleet from the subscription's
+ * current value. Mirrors {@link subscribeWorktrees}; gated by the registry — the
+ * agents plugin may be disabled, in which case this isn't called and no agent
+ * state joins the work-item.
+ */
+async function subscribeAgents(): Promise<void> {
+  if (!client) return;
+  const sub = await client.subscribe({ id: AGENTS_LIST_ID });
+  agentsKey = sub.inputKey;
+  if (sub.current !== undefined) buildInput.agentFleet = sub.current as AgentFleet;
 }
 
 /**
@@ -289,6 +305,9 @@ async function connect(): Promise<void> {
     } else if (note.id === WORKTREES_LIST_ID && note.inputKey === worktreesKey) {
       buildInput.worktreesList = note.data as WorktreeList;
       pushState();
+    } else if (note.id === AGENTS_LIST_ID && note.inputKey === agentsKey) {
+      buildInput.agentFleet = note.data as AgentFleet;
+      pushState();
     }
   });
 
@@ -309,6 +328,7 @@ async function connect(): Promise<void> {
   let servicesPresent = false;
   let dexPresent = false;
   let worktreesPresent = false;
+  let agentsPresent = false;
   try {
     const caps = await client.registryList();
     buildInput.syncAvailable = caps.some((c) => c.id === STACK_SYNC_ID);
@@ -316,6 +336,7 @@ async function connect(): Promise<void> {
     dexPresent = caps.some((c) => c.id === DEX_TASKS_ID);
     buildInput.dexPresent = dexPresent;
     worktreesPresent = caps.some((c) => c.id === WORKTREES_LIST_ID);
+    agentsPresent = caps.some((c) => c.id === AGENTS_LIST_ID);
   } catch {
     buildInput.syncAvailable = false;
   }
@@ -352,6 +373,16 @@ async function connect(): Promise<void> {
       await subscribeWorktrees();
     } catch (err) {
       console.error(`[worktrees] subscribe failed: ${errorMessage(err)}`);
+    }
+  }
+
+  // Subscribe to the agent fleet only when the plugin is installed. Non-fatal —
+  // its absence just means no agent state joins the work-item.
+  if (agentsPresent) {
+    try {
+      await subscribeAgents();
+    } catch (err) {
+      console.error(`[agents] subscribe failed: ${errorMessage(err)}`);
     }
   }
   pushState();
@@ -412,6 +443,14 @@ async function reloadFromRegistry(): Promise<void> {
     } else {
       buildInput.worktreesList = undefined;
       worktreesKey = undefined;
+    }
+    // Same for the agent fleet: re-subscribe if present, else clear so no agent
+    // state joins the work-item.
+    if (caps.some((c) => c.id === AGENTS_LIST_ID)) {
+      await subscribeAgents();
+    } else {
+      buildInput.agentFleet = undefined;
+      agentsKey = undefined;
     }
   } catch (err) {
     buildInput.error = `registry: ${errorMessage(err)}`;

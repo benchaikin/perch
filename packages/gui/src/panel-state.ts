@@ -36,6 +36,7 @@ import {
 } from "./worktrees-state.js";
 import { linkWorktreesAndTasks } from "./worktree-task-link.js";
 import { deriveLandableByTaskId, type LandableState } from "./landable.js";
+import { deriveAgentByTaskId, type AgentFleet, type AgentSummary } from "./agents-state.js";
 import type { DexViewMode } from "./window-state.js";
 
 /** Canonical capability id of the cross-repo "My PRs" read the panel renders. */
@@ -268,6 +269,15 @@ export interface PanelState {
    * it yet. A task absent from the map has no matching PR (state `none`).
    */
   landableByTaskId: Map<string, LandableState>;
+  /**
+   * Each work-item's live agent (Claude Code session), keyed by dex task id —
+   * derived by joining the worktree↔task link to the `agents.list` fleet (see
+   * `agents-state.ts`). Matched by `agent.taskId` primarily, falling back to
+   * `cwd === worktree.path`; the most-recent session wins a tie. The data
+   * foundation for a later fleet view; nothing renders it yet. A task absent from
+   * the map has no matching session.
+   */
+  agentByTaskId: Map<string, AgentSummary>;
 }
 
 /** Inputs to {@link buildPanelState}. */
@@ -296,6 +306,8 @@ export interface BuildInput {
   dexPresent?: boolean;
   /** The latest `worktrees.list` data, or `undefined` if none has arrived yet. */
   worktreesList?: WorktreeList;
+  /** The latest `agents.list` fleet, or `undefined` if none has arrived yet. */
+  agentFleet?: AgentFleet;
   /** Service names with an in-flight start/stop/restart — their buttons spin. */
   servicesActing?: string[];
   /** The whole-stack action in flight (Start/Stop/Restart all), if any. */
@@ -562,12 +574,20 @@ export function buildPanelState(input: BuildInput): PanelState {
   // computed here so a later merge-queue view can consume it off PanelState.
   const landableByTaskId = deriveLandableByTaskId(link, daemonUp ? overview : undefined);
 
+  // Join the worktree↔task link to the agent fleet to attach each work-item's
+  // live Claude Code session, keyed by task id. Pure + tolerant: a missing/empty
+  // fleet (e.g. the agents plugin disabled) or no matching session yields an
+  // empty (or partial) map. Nothing renders it yet — it's computed here so a
+  // later fleet view can consume it off PanelState.
+  const agentByTaskId = deriveAgentByTaskId(link, daemonUp ? input.agentFleet : undefined);
+
   // Sync progress, the transient toast, and the Services section ride along on
   // every state (the section is self-hiding when process-compose is absent).
   const live = {
     syncing: input.syncing ?? [],
     notice: input.notice,
     landableByTaskId,
+    agentByTaskId,
     services: buildServicesSection(
       daemonUp ? input.servicesList : undefined,
       input.servicesActing,
