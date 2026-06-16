@@ -9,6 +9,7 @@
     { "path": "plugins/stack" },
     { "path": "plugins/services" },
     { "path": "plugins/dex" },
-    { "path": "plugins/worktrees" }
+    { "path": "plugins/worktrees" },
+    { "path": "plugins/agents" }
   ]
 }

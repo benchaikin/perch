@@ -21,6 +21,13 @@ export interface CliFlags {
   json: boolean;
   watch: boolean;
   socket?: string;
+  /**
+   * Read a JSON object from stdin and merge it into the capability input (with
+   * explicit `--key value` flags taking precedence). Lets a single command
+   * forward a raw payload — e.g. a Claude Code hook piping its event JSON to
+   * `perch agents report --stdin-json`.
+   */
+  stdinJson: boolean;
 }
 
 /** Result of parsing argv (after the `perch` program name). */
@@ -33,7 +40,7 @@ export interface ParsedArgs {
   input: Record<string, unknown> | undefined;
 }
 
-const RESERVED = new Set(["json", "watch", "socket"]);
+const RESERVED = new Set(["json", "watch", "socket", "stdin-json"]);
 
 /** Coerce a raw string flag value into a number, boolean, or string. */
 function coerce(raw: string): unknown {
@@ -51,7 +58,7 @@ function coerce(raw: string): unknown {
  */
 export function parseArgs(tokens: string[]): ParsedArgs {
   const positionals: string[] = [];
-  const cli: CliFlags = { json: false, watch: false };
+  const cli: CliFlags = { json: false, watch: false, stdinJson: false };
   const input: Record<string, unknown> = {};
   let hadInput = false;
 
@@ -70,6 +77,7 @@ export function parseArgs(tokens: string[]): ParsedArgs {
     if (RESERVED.has(key)) {
       if (key === "json") cli.json = true;
       else if (key === "watch") cli.watch = true;
+      else if (key === "stdin-json") cli.stdinJson = true;
       else {
         // --socket requires a value (inline or next token).
         const value = inlineValue ?? tokens[++i];

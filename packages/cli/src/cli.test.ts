@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import { after, test } from "node:test";
 import { definePlugin, read, action, z, type Capability } from "@perch/sdk";
 import { startDaemon, type RunningDaemon } from "@perch/core";
@@ -151,6 +152,41 @@ test("action invocation prints ok", async () => {
   const d = await daemonForTest();
   const { out } = await capture(() => run(argv("demo", "noop", "--socket", d.socketPath)));
   assert.match(out, /ok/);
+});
+
+test("--stdin-json reads a JSON object from stdin and forwards it as input", async () => {
+  const d = await daemonForTest();
+  // Replace stdin with a Readable that yields the payload, mimicking a hook pipe.
+  const origStdin = Object.getOwnPropertyDescriptor(process, "stdin")!;
+  Object.defineProperty(process, "stdin", {
+    configurable: true,
+    value: Readable.from([Buffer.from(JSON.stringify({ name: "fromStdin" }))]),
+  });
+  try {
+    const { out } = await capture(() =>
+      run(argv("demo", "greet", "--stdin-json", "--json", "--socket", d.socketPath)),
+    );
+    assert.deepEqual(JSON.parse(out), { message: "hello fromStdin" });
+  } finally {
+    Object.defineProperty(process, "stdin", origStdin);
+  }
+});
+
+test("explicit --flags override --stdin-json fields", async () => {
+  const d = await daemonForTest();
+  const origStdin = Object.getOwnPropertyDescriptor(process, "stdin")!;
+  Object.defineProperty(process, "stdin", {
+    configurable: true,
+    value: Readable.from([Buffer.from(JSON.stringify({ name: "fromStdin" }))]),
+  });
+  try {
+    const { out } = await capture(() =>
+      run(argv("demo", "greet", "--stdin-json", "--name", "fromFlag", "--json", "--socket", d.socketPath)),
+    );
+    assert.deepEqual(JSON.parse(out), { message: "hello fromFlag" });
+  } finally {
+    Object.defineProperty(process, "stdin", origStdin);
+  }
 });
 
 test("--watch streams the current value and at least one update", async () => {
