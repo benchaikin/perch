@@ -33,12 +33,13 @@ import {
   socketPath as defaultSocketPath,
   type NotificationPayload,
 } from "@perch/core";
+import { GENERAL_TAB_ID } from "./settings/settings-tabs.js";
 import { DaemonUnavailableError, PerchClient } from "@perch/cli";
 import { shouldShowNotification, toNotifyOptions } from "./notify.js";
 import { Channels, type ServiceActionRequest } from "./ipc.js";
 import { addProc, procsFromConfig, removeProc, type Proc } from "./procs.js";
 import { addRepo, removeRepo, reposFromConfig, setDefault, toEntries } from "./repos.js";
-import { buildConfigPatch } from "./settings-fields.js";
+import { buildConfigPatch, buildGlobalConfigPatch } from "./settings-fields.js";
 import {
   SettingsChannels,
   type PluginSettingsResult,
@@ -904,7 +905,12 @@ async function setFieldFlow(
   c: PerchClient,
   request: SetFieldRequest,
 ): Promise<PluginSettingsResult> {
-  const patch = buildConfigPatch(request.pluginId, request.key, request.value);
+  // The reserved "General" descriptor writes to the top-level `global` section;
+  // every real plugin writes under `plugins[id]`.
+  const patch =
+    request.pluginId === GENERAL_TAB_ID
+      ? buildGlobalConfigPatch(request.key, request.value)
+      : buildConfigPatch(request.pluginId, request.key, request.value);
   await c.configUpdate({ patch });
   const plugins = await c.settingsDescribe();
   return { plugins, daemonUp: true };

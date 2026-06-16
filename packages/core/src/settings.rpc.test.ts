@@ -82,12 +82,17 @@ test("integration: settings.describe merges descriptors with current config valu
 
   await t.test("returns only plugins that declare a descriptor, with id + name", async () => {
     const result = (await client.sendRequest(Methods.settingsDescribe)) as SettingsDescribeResult;
-    assert.equal(result.length, 1);
+    // The stack plugin descriptor, plus the always-appended "General" descriptor.
+    assert.equal(result.length, 2);
     const [entry] = result;
     assert.ok(entry);
     assert.equal(entry.pluginId, "stack");
     assert.equal(entry.name, "Stack");
     assert.equal(entry.fields.length, 2);
+    // The General (global) descriptor is last and carries the terminal fields.
+    const general = result.at(-1);
+    assert.equal(general?.pluginId, "__global__");
+    assert.ok(general?.fields.some((f) => f.key === "terminal.terminalApp"));
   });
 
   await t.test("set value overrides default; unset value falls back to default", async () => {
@@ -133,7 +138,8 @@ test("integration: settings.describe falls back to plugin id when no name is dec
   });
 
   const result = (await client.sendRequest(Methods.settingsDescribe)) as SettingsDescribeResult;
-  assert.equal(result.length, 1);
+  // The widgets plugin descriptor, plus the always-appended "General" descriptor.
+  assert.equal(result.length, 2);
   const [entry] = result;
   assert.ok(entry);
   assert.equal(entry.pluginId, "widgets");

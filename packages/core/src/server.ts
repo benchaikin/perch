@@ -18,6 +18,7 @@ import {
 import { Cache, inputKey } from "./cache.js";
 import { getConfig, updateConfig, validateRepoPath } from "./config-store.js";
 import type { EventBus } from "./event-bus.js";
+import { GLOBAL_SETTINGS_ID, GLOBAL_SETTINGS_NAME, globalSettingsFields } from "./global-settings.js";
 import { invokeCapability, type InvokerDeps } from "./invoker.js";
 import { Registry, type RegisteredCapability } from "./registry.js";
 import type { DeliveredNotification } from "./notifications.js";
@@ -243,7 +244,7 @@ class ClientConnection {
     this.#conn.onRequest(Methods.settingsDescribe, async (): Promise<SettingsDescribeResult> => {
       const config = await getConfig(this.#deps.configPath);
       const plugins = (config.plugins ?? {}) as Record<string, unknown>;
-      return this.#deps.registry.settingsDescriptors().map((plugin) => {
+      const descriptors = this.#deps.registry.settingsDescriptors().map((plugin) => {
         const pluginConfig = plugins[plugin.pluginId];
         const fields: SettingsFieldState[] = plugin.fields.map((field) => {
           const current = readConfigPath(pluginConfig, field.key);
@@ -251,6 +252,16 @@ class ClientConnection {
         });
         return { pluginId: plugin.pluginId, name: plugin.name, fields };
       });
+      // Append the cross-plugin "General" descriptor — its fields read from the
+      // top-level `global` section (not any `plugins[id]`). Always present so the
+      // General tab is discoverable even before anything is set.
+      const globalConfig = (config.global ?? {}) as Record<string, unknown>;
+      const globalFields: SettingsFieldState[] = globalSettingsFields().map((field) => {
+        const current = readConfigPath(globalConfig, field.key);
+        return { ...field, value: current === undefined ? field.default : current };
+      });
+      descriptors.push({ pluginId: GLOBAL_SETTINGS_ID, name: GLOBAL_SETTINGS_NAME, fields: globalFields });
+      return descriptors;
     });
 
     this.#conn.onClose(() => this.#cleanup());

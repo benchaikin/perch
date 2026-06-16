@@ -37,6 +37,7 @@ export { socketPath } from "./paths.js";
 export { loadPlugins, buildContext } from "./loader.js";
 export type { CoreContext } from "./loader.js";
 export { loadConfig, pluginsFromConfig, defaultConfig, configSchema } from "./config.js";
+export { GLOBAL_SETTINGS_ID, GLOBAL_SETTINGS_NAME, globalSettingsFields } from "./global-settings.js";
 export type { PerchConfig } from "./config.js";
 export { configPath, pidPath } from "./paths.js";
 export { readPidFile, writePidFile, removePidFile, isProcessAlive } from "./pidfile.js";

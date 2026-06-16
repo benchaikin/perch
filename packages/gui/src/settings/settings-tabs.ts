@@ -26,13 +26,23 @@
  */
 import type { PluginSettingsDescription } from "@perch/core";
 
+/**
+ * Reserved descriptor id for the cross-plugin "General" tab. A renderer-safe
+ * local copy of `@perch/core`'s GLOBAL_SETTINGS_ID — importing the value from
+ * core would pull the daemon's node built-ins into the browser bundle. Keep in
+ * sync with core (a frozen protocol constant).
+ */
+export const GENERAL_TAB_ID = "__global__";
+
 /** The plugin id whose tab owns the Repositories list (the "Pull Requests" tab). */
 export const PRS_TAB_ID = "stack";
 /** The plugin id whose tab owns the services config (the "Services" tab). */
 export const SERVICES_TAB_ID = "services";
 
-/** The two well-known tabs, in display order, with their friendly labels. */
+/** The well-known tabs, in display order, with their friendly labels. The
+ * cross-plugin "General" tab leads; the per-plugin pinned tabs follow. */
 const PINNED_TABS: ReadonlyArray<{ id: string; label: string }> = [
+  { id: GENERAL_TAB_ID, label: "General" },
   { id: PRS_TAB_ID, label: "Pull Requests" },
   { id: SERVICES_TAB_ID, label: "Services" },
 ];

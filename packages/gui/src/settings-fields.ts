@@ -69,3 +69,20 @@ export function buildConfigPatch(
 
   return { plugins: { [pluginId]: nested as Record<string, unknown> } };
 }
+
+/**
+ * Like {@link buildConfigPatch} but for the cross-plugin "General" tab: sets
+ * `value` at `global.{key}` (dotted `key` expands to nested objects). Example:
+ * `buildGlobalConfigPatch("terminal.terminalApp", "iTerm2")` →
+ * `{ global: { terminal: { terminalApp: "iTerm2" } } }`.
+ */
+export function buildGlobalConfigPatch(
+  key: string,
+  value: unknown,
+): { global: Record<string, unknown> } {
+  const segments = key.split(".").filter((s) => s.length > 0);
+  if (segments.length === 0) throw new Error("global settings field key must be non-empty");
+  let nested: unknown = value;
+  for (let i = segments.length - 1; i >= 0; i--) nested = { [segments[i]!]: nested };
+  return { global: nested as Record<string, unknown> };
+}
