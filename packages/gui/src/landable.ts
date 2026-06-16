@@ -20,8 +20,8 @@ import type { WorktreeTaskLink } from "./worktree-task-link.js";
  * within the unfinished states, with the two terminal-ish states at the ends:
  *
  * - `none`              — no matching PR (or no boards/overview). Nothing to land.
- * - `needs-review`      — CI green but not yet approved (review still required).
- * - `ci-running`        — CI is in progress (or only partially reported).
+ * - `needs-review`      — CI green (or absent) but not yet approved (review still required).
+ * - `ci-running`        — CI is in progress.
  * - `ci-failed`         — CI failed.
  * - `changes-requested` — a reviewer requested changes.
  * - `ready`             — CI green AND approved: safe to land.
@@ -49,8 +49,16 @@ export type LandableState =
  *    merge outright, where requested changes are a review-loop signal.
  *  - `ci-running` outranks `needs-review`: you can't land (or meaningfully
  *    re-review) until CI settles, so "wait for CI" is the live signal.
- *  - `needs-review` (CI green, not yet approved) outranks the happy path.
- *  - `ready` (CI green AND approved) is the only "go" state.
+ *  - `needs-review` (CI satisfied, not yet approved) outranks the happy path.
+ *  - `ready` (CI satisfied AND approved) is the only "go" state.
+ *
+ * No-CI repos: a `ciStatus` of `"none"` (or absent) means the repo reports NO CI
+ * checks at all — distinct from `"pending"` (checks exist but haven't settled).
+ * With no CI, there's nothing to wait on, so we treat CI as satisfied and let
+ * review be the sole gate (approved → `ready`, otherwise → `needs-review`). The
+ * "it builds" guarantee for these repos is enforced at land time by the
+ * `land-dex` skill's build gate, not here. Only a genuine `"pending"` maps to
+ * `ci-running`.
  *
  * Note: `stack.prs` only lists OPEN PRs, so in practice `merged` won't arrive on
  * the overview today; it's modeled for completeness and so a future read that
@@ -65,14 +73,16 @@ export function deriveLandable(pr: PrInfo): LandableState {
 
   if (pr.reviewDecision === "CHANGES_REQUESTED") return "changes-requested";
 
-  // CI not yet conclusive (running, or no checks reported yet) — wait on it
-  // before review can land the PR.
-  if (ci === "pending" || ci === "none") return "ci-running";
+  // Only a genuine `"pending"` is CI-in-flight — wait on it before review can
+  // land. `"none"` means the repo has NO CI: nothing to wait on, so CI is
+  // treated as satisfied and review becomes the gate (the build is enforced at
+  // land time by the land-dex skill, not here).
+  if (ci === "pending") return "ci-running";
 
-  // CI is green (`pass`) past this point.
+  // CI is satisfied past this point — green (`pass`) or absent (`none`).
   if (pr.reviewDecision === "APPROVED") return "ready";
 
-  // Green CI but not approved (REVIEW_REQUIRED or no decision yet).
+  // CI satisfied but not approved (REVIEW_REQUIRED or no decision yet).
   return "needs-review";
 }
 

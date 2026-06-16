@@ -64,8 +64,30 @@ test("CI running → ci-running (even if approved)", () => {
   );
 });
 
-test("no CI reported → ci-running", () => {
-  assert.equal(deriveLandable(pr({ headRefName: "b", ciStatus: "none" })), "ci-running");
+// ---- no-CI repos: CI absent (not pending) → review is the gate ----
+
+test("no CI + approved → ready (review is the gate)", () => {
+  assert.equal(deriveLandable(pr({ headRefName: "b", ciStatus: "none", reviewDecision: "APPROVED" })), "ready");
+});
+
+test("no CI + review required → needs-review", () => {
+  assert.equal(
+    deriveLandable(pr({ headRefName: "b", ciStatus: "none", reviewDecision: "REVIEW_REQUIRED" })),
+    "needs-review",
+  );
+});
+
+test("no CI + no review decision → needs-review", () => {
+  assert.equal(deriveLandable(pr({ headRefName: "b", ciStatus: "none", reviewDecision: undefined })), "needs-review");
+});
+
+test("absent ciStatus (undefined) is treated as no CI → review is the gate", () => {
+  assert.equal(deriveLandable(pr({ headRefName: "b", ciStatus: undefined, reviewDecision: "APPROVED" })), "ready");
+});
+
+test("distinction: no CI (none) + approved → ready, but pending + approved → ci-running", () => {
+  assert.equal(deriveLandable(pr({ headRefName: "b", ciStatus: "none", reviewDecision: "APPROVED" })), "ready");
+  assert.equal(deriveLandable(pr({ headRefName: "b", ciStatus: "pending", reviewDecision: "APPROVED" })), "ci-running");
 });
 
 test("CI failed → ci-failed", () => {
