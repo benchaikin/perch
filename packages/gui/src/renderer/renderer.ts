@@ -16,7 +16,12 @@ import type {
 } from "../panel-state.js";
 import { SERVICES_TAB_ID } from "../panel-state.js";
 import { DEX_TASKS_ID, type DexRow, type DexSection, type DexStatus } from "../dex-state.js";
-import { WORKTREES_LIST_ID, type WorktreeRow, type WorktreesSection } from "../worktrees-state.js";
+import {
+  WORKTREES_LIST_ID,
+  type WorktreeRow,
+  type WorktreesSection,
+  type WorktreeRepoGroup,
+} from "../worktrees-state.js";
 import type {
   ServiceAction,
   ServiceHealth,
@@ -96,6 +101,8 @@ let syncingRepos: string[] = [];
 let activeTabId: string | undefined;
 /** Collapsed dex epic ids (their descendants are hidden); preserved across re-renders. */
 const collapsedDexIds = new Set<string>();
+/** Collapsed worktree repo ids (their rows are hidden); preserved across re-renders. */
+const collapsedWorktreeRepos = new Set<string>();
 /** The dex task whose detail view is open, if any (else the task list shows). */
 let selectedDexId: string | undefined;
 /** The last rendered state, replayed when the active tab changes (a click). */
@@ -677,6 +684,75 @@ function dexSectionEl(section: DexSection): HTMLElement | null {
   return el;
 }
 
+/**
+ * Build a collapsible worktree repo header: a chevron, health dot, count,
+ * and optional dirty/conflict indicators. Clicking toggles the repo's children.
+ */
+function worktreeRepoHeaderEl(
+  group: Extract<WorktreesSection["repoGroups"][number]>,
+  collapsed: boolean,
+): HTMLElement {
+  const el = document.createElement("button");
+  el.className = "worktree-repo-header-btn";
+  const rowCount = group.count;
+  const detail = [
+    `${rowCount} worktree${rowCount !== 1 ? "s" : ""}`,
+    group.dirtyCount > 0 ? `${group.dirtyCount} dirty` : "",
+    group.hasConflict ? "conflict" : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  el.title = `${group.repo} — ${detail}`;
+
+  const chevron = document.createElement("i");
+  chevron.className = `fa-solid fa-chevron-${collapsed ? "right" : "down"}`;
+  el.append(chevron);
+
+  const dot = document.createElement("i");
+  dot.className = `dot ${group.health} fa-solid fa-code-branch`;
+  el.append(dot);
+
+  const name = document.createElement("span");
+  name.className = "branch worktree-repo-name";
+  name.textContent = group.repo;
+  el.append(name);
+
+  const indicators = document.createElement("span");
+  indicators.className = "worktree-repo-indicators";
+
+  const count = document.createElement("span");
+  count.className = "chip muted worktree-repo-count";
+  count.textContent = String(rowCount);
+  indicators.append(count);
+
+  if (group.dirtyCount > 0) {
+    const dirty = document.createElement("span");
+    dirty.className = "chip warn";
+    dirty.title = `${group.dirtyCount} uncommitted change${group.dirtyCount === 1 ? "" : "s"}`;
+    dirty.textContent = `●${group.dirtyCount}`;
+    indicators.append(dirty);
+  }
+
+  if (group.hasConflict) {
+    const conflict = document.createElement("span");
+    conflict.className = "chip bad";
+    conflict.textContent = "conflict";
+    indicators.append(conflict);
+  }
+
+  el.append(indicators);
+
+  el.addEventListener("click", (e) => {
+    // Toggle the repo's children without propagating.
+    e.stopPropagation();
+    if (collapsed) collapsedWorktreeRepos.delete(group.repo);
+    else collapsedWorktreeRepos.add(group.repo);
+    if (lastState) render(lastState);
+  });
+
+  return el;
+}
+
 /** Build one worktree row: a health dot, branch/name (main tagged), and state chips. */
 function worktreeRowEl(row: WorktreeRow): HTMLElement {
   const el = document.createElement("div");
@@ -746,26 +822,34 @@ function worktreeRowEl(row: WorktreeRow): HTMLElement {
 
 /**
  * Build the "Worktrees" section: one row per worktree (main first). Returns null
- * when hidden (no worktrees plugin / none). No section title — the active
- * "Worktrees" tab already names it.
+ * when hidden (no worktrees plugin / none). When multiRepo is true, rows are
+ * grouped under collapsible repo headers with aggregate indicators; otherwise
+ * a flat list of rows. No section title — the active "Worktrees" tab already
+ * names it.
  */
 function worktreesSectionEl(section: WorktreesSection): HTMLElement | null {
   if (!section.visible) return null;
   const el = document.createElement("section");
   el.className = "repo-section worktrees-section";
-  // With multiple repos, group rows under a per-repo header (rows arrive grouped
-  // by repo); a single repo renders the flat list unchanged.
-  let lastRepo: string | undefined;
-  for (const row of section.rows) {
-    if (section.multiRepo && row.repo !== lastRepo) {
-      const header = document.createElement("div");
-      header.className = "repo-header worktrees-repo-header";
-      header.textContent = row.repo ?? "(unknown repo)";
-      el.append(header);
-      lastRepo = row.repo;
+
+  if (section.multiRepo && section.repoGroups.length > 0) {
+    // Grouped render: collapsible per-repo sections with aggregate indicators.
+    for (const group of section.repoGroups) {
+      const collapsed = collapsedWorktreeRepos.has(group.repo);
+      el.append(worktreeRepoHeaderEl(group, collapsed));
+      if (!collapsed) {
+        for (const row of group.rows) {
+          el.append(worktreeRowEl(row));
+        }
+      }
     }
-    el.append(worktreeRowEl(row));
+  } else {
+    // Flat render: single repo or empty group list.
+    for (const row of section.rows) {
+      el.append(worktreeRowEl(row));
+    }
   }
+
   return el;
 }
 
