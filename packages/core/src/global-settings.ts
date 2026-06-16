@@ -18,5 +18,14 @@ export const GLOBAL_SETTINGS_NAME = "General";
 
 /** The ordered fields shown on the General tab (keyed under `global.*`). */
 export function globalSettingsFields(): SettingsField[] {
-  return [...TERMINAL_SETTINGS_FIELDS];
+  return [
+    {
+      key: "repos",
+      type: "list",
+      label: "Repositories",
+      description:
+        "Local repo directories Perch watches (shared by the PRs, Worktrees, and Dex panels).",
+    },
+    ...TERMINAL_SETTINGS_FIELDS,
+  ];
 }

@@ -26,6 +26,8 @@ import type { SettingsFieldType } from "@perch/sdk";
  *   - `number`  → a finite number; a blank/invalid input yields `undefined` so the
  *     caller can skip the write rather than persist `NaN`.
  *   - `enum`/`string` → the value as a string.
+ *   - `list` → a `string[]`: an array is trimmed of blank entries (the control
+ *     persists the whole array at once, not one row at a time).
  */
 export function coerceFieldValue(type: SettingsFieldType, raw: unknown): unknown {
   switch (type) {
@@ -35,10 +37,24 @@ export function coerceFieldValue(type: SettingsFieldType, raw: unknown): unknown
       const n = typeof raw === "number" ? raw : Number(String(raw).trim());
       return String(raw).trim() === "" || !Number.isFinite(n) ? undefined : n;
     }
+    case "list":
+      return coerceListValue(raw);
     case "enum":
     case "string":
       return raw == null ? "" : String(raw);
   }
+}
+
+/**
+ * Coerce a raw `list` control value into the `string[]` to persist: each entry is
+ * stringified and trimmed, and blank entries are dropped. A non-array `raw`
+ * yields `[]` (the control always hands us the full array, but this keeps the
+ * helper total). The whole array is written at once, so this never returns
+ * `undefined` — an emptied list persists as `[]`.
+ */
+export function coerceListValue(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((entry) => (entry == null ? "" : String(entry).trim())).filter((s) => s.length > 0);
 }
 
 /**

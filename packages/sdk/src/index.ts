@@ -142,9 +142,10 @@ export function action<I = void, Cfg = unknown, R = void>(
 /**
  * The kinds of user-facing setting a plugin can declare. Starts small; widen as
  * surfaces learn to render more controls. Each maps to a primitive the GUI knows
- * how to edit (a select, a checkbox, a text input, a number input).
+ * how to edit (a select, a checkbox, a text input, a number input, or — for
+ * `"list"` — an editable list of text rows whose value is a `string[]`).
  */
-export type SettingsFieldType = "enum" | "boolean" | "string" | "number";
+export type SettingsFieldType = "enum" | "boolean" | "string" | "number" | "list";
 
 /** One selectable choice for an `"enum"` field: the stored `value` + its `label`. */
 export interface SettingsFieldOption {

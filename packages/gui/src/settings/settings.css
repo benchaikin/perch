@@ -189,6 +189,30 @@ input[type="checkbox"].field-control {
   font-size: 12px;
 }
 
+/* A `list` field: a stack of editable rows (text + Remove) above an add row. */
+.list-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.list-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.list-row-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .repo {
   display: flex;
   align-items: center;
