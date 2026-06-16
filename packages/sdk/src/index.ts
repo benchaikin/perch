@@ -306,6 +306,9 @@ export function parseRefreshInterval(every: string): number {
 /** Re-exported so plugin authors don't depend on zod directly. */
 export { z };
 
+/** Shared repo list + the cross-plugin `global.repos` setting. */
+export { GlobalReposConfig, reposOf } from "./repos.js";
+
 /** Shared terminal launcher + the cross-plugin terminal setting. */
 export {
   applyTemplate,
