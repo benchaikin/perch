@@ -234,6 +234,24 @@ body {
   cursor: pointer;
 }
 
+/* Chip annotating a worktree row with its linked dex task (🗒 id · name ·
+   status). Tone comes from the shared .chip status classes; only the layout is
+   local — a flex line so the name can ellipsis-truncate without pushing the id
+   or status off-screen. The id stays monospace to match .dex-id. */
+.worktree-task {
+  display: inline-flex;
+  align-items: baseline;
+  max-width: 18em;
+}
+.worktree-task-id {
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, "Courier New", monospace;
+}
+.worktree-task-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Per-repo group header (only shown when worktrees span >1 repo); a little top
    space separates each repo's group, but not the first. */
 .worktrees-repo-header {
