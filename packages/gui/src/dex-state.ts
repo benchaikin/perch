@@ -123,11 +123,13 @@ export function worstDexHealth(section: DexSection): DexHealth {
 
 /**
  * Build the Dex section from the latest `dex.tasks` output. Hidden
- * (`visible: false`) when the board is absent or has no tasks. Pure: same input
- * → same output.
+ * (`visible: false`) only when the board is **absent** (the dex plugin isn't
+ * installed, so the GUI never subscribed). When the plugin IS present but has no
+ * open tasks, the section stays visible with empty `rows` (the renderer shows an
+ * empty state) — finishing all your tasks shouldn't make the tab vanish. Pure.
  */
 export function buildDexSection(board: DexBoard | undefined): DexSection {
-  if (!board || board.tasks.length === 0) {
+  if (!board) {
     return { visible: false, rows: [], counts: { ...ZERO_COUNTS } };
   }
   const activeAncestors = ancestorsWithActiveDescendant(board.tasks);

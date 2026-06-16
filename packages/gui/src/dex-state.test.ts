@@ -37,9 +37,14 @@ test("dexHealth maps each status to a marker color", () => {
   assert.equal(dexHealth("ready"), "muted");
 });
 
-test("buildDexSection hides when no board / empty board", () => {
+test("buildDexSection hides only when the board is absent (plugin not installed)", () => {
+  // No board → plugin absent → hidden.
   assert.equal(buildDexSection(undefined).visible, false);
-  assert.equal(buildDexSection({ tasks: [] }).visible, false);
+  // Board present but empty (all tasks completed) → stays visible with no rows,
+  // so finishing your tasks doesn't make the tab disappear.
+  const empty = buildDexSection({ tasks: [] });
+  assert.equal(empty.visible, true);
+  assert.equal(empty.rows.length, 0);
 });
 
 test("buildDexSection tallies counts and maps row health", () => {

@@ -651,6 +651,16 @@ function dexSectionEl(section: DexSection): HTMLElement | null {
     selectedDexId = undefined; // selection went away (task completed/removed)
   }
 
+  // Plugin present but nothing open (e.g. everything's completed) — show an
+  // empty state rather than a blank pane, so the tab still reads as "Dex".
+  if (section.rows.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "message";
+    empty.textContent = "No open tasks";
+    el.append(empty);
+    return el;
+  }
+
   const epicIds = section.rows.filter((r) => r.isEpic).map((r) => r.id);
   if (epicIds.length > 0) el.append(dexHeaderEl(epicIds));
 
