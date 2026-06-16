@@ -145,15 +145,19 @@ test("buildWorktreesSection has empty repoGroups when multiRepo=false", () => {
   assert.equal(section.repoGroups.length, 0);
 });
 
-test("repoGroups rows are independent of main-first ordering (already maintained by input)", () => {
+test("repoGroups rows preserve main-first ordering within each repo group", () => {
   const section = buildWorktreesSection(
     list(
-      wt({ name: "a", repo: "r", main: true, health: "muted" }),
-      wt({ name: "b", repo: "r", main: false, health: "muted" }),
+      wt({ name: "a", repo: "r1", main: true, health: "muted" }),
+      wt({ name: "b", repo: "r1", main: false, health: "muted" }),
+      wt({ name: "c", repo: "r2", main: true, health: "muted" }),
+      wt({ name: "d", repo: "r2", main: false, health: "muted" }),
     ),
   );
 
-  // Rows in group preserve order from buildWorktreesSection input (main first).
+  // Rows in each group preserve order from buildWorktreesSection input (main first).
   assert.equal(section.repoGroups[0]!.rows[0]!.main, true);
   assert.equal(section.repoGroups[0]!.rows[1]!.main, false);
+  assert.equal(section.repoGroups[1]!.rows[0]!.main, true);
+  assert.equal(section.repoGroups[1]!.rows[1]!.main, false);
 });
