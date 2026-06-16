@@ -17,6 +17,8 @@ export type PluginConfigs = Record<string, unknown>;
 export interface InvokerDeps {
   cache: Cache;
   configs: PluginConfigs;
+  /** Cross-plugin global settings (perch.json `global`), surfaced as `ctx.global`. */
+  global?: unknown;
   /** Plugins by id (for config-schema validation, future use). */
   plugins: Map<string, PluginDef>;
   /** Aborted on daemon shutdown. */
@@ -40,6 +42,7 @@ export async function invokeCapability(
   const ctx = buildContext({
     pluginId: entry.pluginId,
     config: deps.configs[entry.pluginId],
+    globalConfig: deps.global,
     signal: deps.signal,
   });
 

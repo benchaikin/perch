@@ -70,7 +70,8 @@ test("updateConfig: null deletes a key", async () => {
 test("updateConfig: creates the file (and parent dir) when absent, with defaults as base", async () => {
   const path = join(tempDir(), "fresh", "perch.json");
   const next = await updateConfig({ plugins: { stack: { repos: ["/r"] } } }, path);
-  assert.deepEqual(next, { plugins: { stack: { repos: ["/r"] } } });
+  // defaultConfig() is the base, so the empty `global` section rides along.
+  assert.deepEqual(next, { plugins: { stack: { repos: ["/r"] } }, global: {} });
   // File exists, is valid JSON, and round-trips.
   assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), next);
 });

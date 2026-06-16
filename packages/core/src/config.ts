@@ -30,6 +30,11 @@ export const configSchema = z.object({
    * (opaque-to-core) config object, validated later against the plugin schema.
    */
   plugins: z.record(z.string(), z.unknown()).optional(),
+  /**
+   * Cross-plugin "global" settings (e.g. the shared terminal preference). Opaque
+   * to core; handed to every capability as `ctx.global` for plugins that opt in.
+   */
+  global: z.record(z.string(), z.unknown()).optional(),
   /** Reserved GUI widget layout; passed through untouched in v1. */
   layout: z.unknown().optional(),
 });
@@ -37,9 +42,9 @@ export const configSchema = z.object({
 /** Parsed, validated `perch.json` contents. */
 export type PerchConfig = z.infer<typeof configSchema>;
 
-/** Default config used when `perch.json` is absent: no plugins, no layout. */
+/** Default config used when `perch.json` is absent: no plugins, no global, no layout. */
 export function defaultConfig(): PerchConfig {
-  return { plugins: {} };
+  return { plugins: {}, global: {} };
 }
 
 /**

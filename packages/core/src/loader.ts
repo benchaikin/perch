@@ -30,10 +30,12 @@ export function buildContext<Cfg>(args: {
   config: Cfg;
   signal: AbortSignal;
   log?: (message: string) => void;
+  /** Cross-plugin global settings, surfaced as `ctx.global`. */
+  globalConfig?: unknown;
 }): CoreContext<Cfg> {
-  const { pluginId, config, signal } = args;
+  const { pluginId, config, signal, globalConfig } = args;
   const log = args.log ?? ((message: string) => console.error(`[${pluginId}] ${message}`));
-  return { config, log, signal };
+  return { config, log, signal, global: globalConfig };
 }
 
 /**

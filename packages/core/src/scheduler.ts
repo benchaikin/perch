@@ -231,6 +231,7 @@ export class Scheduler {
       const ctx = buildContext({
         pluginId: entry.pluginId,
         config: this.deps.configs[entry.pluginId],
+        globalConfig: this.deps.global,
         signal: this.deps.signal,
       });
       const items = await read.notify({ prev, next, ctx });

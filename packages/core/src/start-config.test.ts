@@ -32,6 +32,22 @@ function echoPlugin() {
   });
 }
 
+/** A plugin whose `global` read echoes `ctx.global` (the cross-plugin settings). */
+function globalEchoPlugin() {
+  return definePlugin({
+    id: "gecho",
+    capabilities: {
+      global: asCap(
+        read({
+          summary: "echo ctx.global",
+          output: z.unknown(),
+          run: ({ ctx }) => (ctx as { global?: unknown }).global ?? null,
+        }),
+      ),
+    },
+  });
+}
+
 function tempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
 }
@@ -81,6 +97,32 @@ test("explicit configs option overrides the config file (resolved config wins)",
   conns.push(conn);
   const result = await conn.sendRequest(Methods.capabilityInvoke, { id: "echo.config" });
   assert.deepEqual(result, { from: "explicit" });
+});
+
+test("global settings are threaded to capabilities as ctx.global", async () => {
+  const dir = tempDir("perch-start-global-");
+  const socketPath = join(dir, "perchd.sock");
+
+  await boot({
+    pluginDefs: [globalEchoPlugin()],
+    global: { terminal: { terminalApp: "iTerm2" } },
+    socketPath,
+  });
+
+  const conn = await connectClient(socketPath);
+  conns.push(conn);
+  const result = await conn.sendRequest(Methods.capabilityInvoke, { id: "gecho.global" });
+  assert.deepEqual(result, { terminal: { terminalApp: "iTerm2" } });
+});
+
+test("ctx.global is undefined (echoed null) when no global settings are set", async () => {
+  const dir = tempDir("perch-start-global-none-");
+  const socketPath = join(dir, "perchd.sock");
+  await boot({ pluginDefs: [globalEchoPlugin()], socketPath });
+  const conn = await connectClient(socketPath);
+  conns.push(conn);
+  const result = await conn.sendRequest(Methods.capabilityInvoke, { id: "gecho.global" });
+  assert.equal(result, null);
 });
 
 test("injected pluginDefs (test mode) write no pidfile and default configs to {}", async () => {

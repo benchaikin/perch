@@ -126,6 +126,12 @@ export interface StartDaemonOptions {
   /** Debounce window (ms) for coalescing rapid config writes. Default 200. */
   reloadDebounceMs?: number;
   /**
+   * Initial cross-plugin global settings (perch.json `global`), surfaced to
+   * capabilities as `ctx.global`. Mainly for test mode (`pluginDefs`); the real
+   * daemon reads it from the config file and hot-reloads it.
+   */
+  global?: unknown;
+  /**
    * Loader used by live reloads to resolve newly-enabled plugins by id. Defaults
    * to {@link loadPluginsByIds} (workspace discovery). Injectable so tests can
    * supply pre-built {@link PluginDef}s without dynamic import.
@@ -175,18 +181,25 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Run
   // When tests inject `pluginDefs`, skip the config file entirely.
   let defs: PluginDef[];
   let configs: PluginConfigs;
+  // Cross-plugin global settings, surfaced to capabilities as `ctx.global`.
+  let global: unknown;
   if (options.pluginDefs !== undefined) {
     defs = options.pluginDefs;
     configs = options.configs ?? {};
+    global = options.global;
   } else if (options.plugins !== undefined) {
     // Explicit package-id override (argv). Still allow config-file configs.
+    const loaded = await loadConfig(options.configPath);
     defs = await loadPlugins(options.plugins);
-    configs = options.configs ?? pluginsFromConfig(await loadConfig(options.configPath)).configs;
+    configs = options.configs ?? pluginsFromConfig(loaded).configs;
+    global = options.global ?? loaded.global;
   } else {
-    // Derive both enabled plugins and their configs from `perch.json`.
-    const { ids, configs: fromConfig } = pluginsFromConfig(await loadConfig(options.configPath));
+    // Derive enabled plugins, their configs, and global settings from `perch.json`.
+    const loaded = await loadConfig(options.configPath);
+    const { ids, configs: fromConfig } = pluginsFromConfig(loaded);
     defs = await loadPluginsByIds(ids);
     configs = options.configs ?? fromConfig;
+    global = options.global ?? loaded.global;
   }
 
   const registry = new Registry();
@@ -199,7 +212,7 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Run
   const cache = new Cache();
   const bus = createEventBus();
   const controller = new AbortController();
-  const invoker: InvokerDeps = { cache, configs, plugins, signal: controller.signal };
+  const invoker: InvokerDeps = { cache, configs, global, plugins, signal: controller.signal };
 
   // Notification subsystem (on by default). The scheduler runs reads' `notify`
   // hooks and emits into the service; the RPC sink (wired after the server is
@@ -259,15 +272,21 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Run
   };
 
   async function runReload(): Promise<void> {
-    let parsed;
+    let loaded;
     try {
-      parsed = pluginsFromConfig(await loadConfig(reloadConfigPath));
+      loaded = await loadConfig(reloadConfigPath);
     } catch (err) {
       // Invalid JSON/schema: keep running with the current config.
       console.error(`perchd: reload skipped, config invalid: ${errorMessage(err)}`);
       return;
     }
+    // Live-update global settings on every reload, even when the plugin set is
+    // unchanged — a global-only edit (e.g. the terminal preference) must reach
+    // the next action invocation. `invoker` is shared by reference with the
+    // scheduler + server, so mutating it propagates everywhere.
+    invoker.global = loaded.global;
 
+    const parsed = pluginsFromConfig(loaded);
     const diff = diffConfigs({
       desiredIds: parsed.ids,
       desiredConfigs: parsed.configs,
