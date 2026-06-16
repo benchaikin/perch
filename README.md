@@ -139,6 +139,32 @@ git config --worktree perch.dexTask <task-id>
 The easiest path is the bundled **`dex-worktree`** skill, which creates a
 correctly-named worktree for a dex task and launches an agent in it.
 
+### The agent loop: a merge queue + a janitor
+
+Once an agent finishes a task on its `dex/<id>` branch and opens a PR (via the
+`create-pr` skill), Perch turns that into a glanceable **merge queue** and cleans
+up after you merge — so running a fleet of agents doesn't bury you in
+worktree bookkeeping.
+
+- **Merge queue.** Each dex task whose worktree has a PR shows a **landable**
+  chip — `needs review` → `CI failed` / `changes requested` → `ready to merge` →
+  `merged` — derived from the PR's CI + review state (Perch already reads both).
+  "Green" means **CI passing _and_ approved**. The menu-bar icon carries a
+  **badge** counting the items that need *your* decision (awaiting your review +
+  ready to merge).
+- **You merge.** Perch never auto-merges — it just tells you what's ready; you
+  merge in GitHub as usual.
+- **The janitor.** After a PR merges, the **`land-dex`** skill reaps its
+  worktree: it's **guarded** — only a worktree whose PR is truly merged and whose
+  tree is clean gets its worktree + branch removed and its dex task completed
+  (with the PR title/URL/merge-SHA as evidence). Anything unmerged or with
+  uncommitted changes is **flagged, never deleted**. Run it for one task or let it
+  sweep all merged dex worktrees.
+- **No-CI repos.** Where a repo has no CI, the gate falls back to a local
+  build — "if it builds, ship it." `land-dex` infers the build command from the
+  toolchain (`pnpm -r build`, `npm run build`, `make`, `cargo build`, `go build`,
+  …) and only reaps if it passes.
+
 ---
 
 ## Core ideas
