@@ -9,6 +9,7 @@
  * an injected `FetchJson` lives in `provider.test.ts`.)
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { type AddressInfo } from "node:net";
 import { test } from "node:test";
@@ -282,17 +283,47 @@ test("services.logs is a CLI-only action that spawns the templated logs command"
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   }) as any);
   try {
+    // The global terminal setting (here a Custom template) drives the launcher.
     const result = cap.run({
       input: { name: "api" },
-      ctx: { config: { socket: "/tmp/pc.sock", logTerminal: "OPEN {cmd}" }, log: () => {} },
+      ctx: {
+        config: { socket: "/tmp/pc.sock" },
+        global: { terminal: { logTerminal: "OPEN {cmd}" } },
+        log: () => {},
+      },
     }) as { ok: boolean; message: string };
     assert.equal(result.ok, true);
     assert.equal(calls.length, 1);
     assert.equal(calls[0]!.command, "sh");
-    assert.deepEqual(calls[0]!.args, [
-      "-c",
-      "OPEN process-compose process logs 'api' -f --use-uds --unix-socket '/tmp/pc.sock'",
-    ]);
+    // The launcher interpolates a quote-free `sh <script>`; the inner logs
+    // command lives in the temp script (read it back to confirm).
+    const launched = calls[0]!.args[1] as string;
+    const m = /OPEN sh (\/\S+\.sh)/.exec(launched);
+    assert.ok(m, `expected 'OPEN sh <script>', got: ${launched}`);
+    assert.match(
+      readFileSync(m[1]!, "utf8"),
+      /process-compose process logs 'api' -f --use-uds --unix-socket '\/tmp\/pc\.sock'/,
+    );
+  } finally {
+    __setLogsSpawn(undefined);
+  }
+});
+
+test("services.logs falls back to the legacy per-services terminal when no global is set", () => {
+  const calls: Array<{ args: readonly string[] }> = [];
+  __setLogsSpawn(((_command: string, args: readonly string[]) => {
+    calls.push({ args });
+    return { on: () => {}, unref: () => {} };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }) as any);
+  try {
+    const result = plugin.capabilities.logs!.run({
+      input: { name: "db" },
+      // No ctx.global → honor the legacy plugins.services.logTerminal.
+      ctx: { config: { socket: "/s.sock", logTerminal: "LEGACY {cmd}" }, log: () => {} },
+    }) as { ok: boolean };
+    assert.equal(result.ok, true);
+    assert.match(calls[0]!.args[1] as string, /^LEGACY sh \/\S+\.sh$/);
   } finally {
     __setLogsSpawn(undefined);
   }

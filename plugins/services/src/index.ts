@@ -10,10 +10,10 @@
  */
 import type { spawn as nodeSpawn } from "node:child_process";
 
-import { action, definePlugin, read, validateSettingsDescriptor, z } from "@perch/sdk";
+import { action, definePlugin, read, spawnInTerminal, terminalConfigOf, z } from "@perch/sdk";
 
 import { syncCompose, type Proc } from "./compose.js";
-import { DEFAULT_LOG_TERMINAL, spawnLogsTerminal, type SpawnLogsOptions } from "./logs.js";
+import { buildLogsCommand } from "./logs.js";
 import { crashNotifications } from "./notify.js";
 import { buildServiceList, mapStatus, ServiceList, type ServiceStatus } from "./services.js";
 import { ServicesProvider, type ServerTarget } from "./provider.js";
@@ -22,12 +22,7 @@ export type { FetchJson, ProcessState, ServerTarget } from "./provider.js";
 export { defaultFetchJson, DEFAULT_ADDRESS, ServicesProvider } from "./provider.js";
 export { buildServiceList, mapStatus, Service, ServiceList, ServiceStatus } from "./services.js";
 export { crashNotifications } from "./notify.js";
-export {
-  applyLogTerminalTemplate,
-  buildLogsCommand,
-  DEFAULT_LOG_TERMINAL,
-  spawnLogsTerminal,
-} from "./logs.js";
+export { buildLogsCommand } from "./logs.js";
 export {
   buildComposeDoc,
   generatedComposePath,
@@ -102,19 +97,13 @@ const ServicesConfig = z.object({
   /** Spawn `process-compose up -D` when the server is unreachable. */
   autostart: z.boolean().optional(),
   /**
-   * Which terminal app the `services.logs` button opens, picking a built-in
-   * launcher preset (Terminal.app | iTerm2 | kitty | WezTerm | Ghostty | tmux).
-   * Lower precedence than {@link logTerminal} — choose `Custom` and set
-   * `logTerminal` for anything not listed. Defaults to Terminal.app.
+   * @deprecated The terminal preference moved to the global `General` settings
+   * (`global.terminal`). Kept here only as a back-compat fallback: when no global
+   * terminal is set, `services.logs` still honors a legacy `terminalApp` /
+   * `logTerminal` under `plugins.services`. No longer shown in the Services tab.
    */
   terminalApp: z.string().optional(),
-  /**
-   * Terminal launcher template for the `services.logs` jump-to-logs action: a
-   * shell command with a `{cmd}` placeholder Perch substitutes with the
-   * `process-compose process logs <name> -f` command. The **Custom** escape
-   * hatch — when set it overrides {@link terminalApp}. Defaults (with no
-   * `terminalApp` either) to {@link DEFAULT_LOG_TERMINAL} (Terminal.app).
-   */
+  /** @deprecated See {@link terminalApp} — legacy fallback for the global terminal. */
   logTerminal: z.string().optional(),
 });
 export type ServicesConfig = z.infer<typeof ServicesConfig>;
@@ -195,39 +184,8 @@ export default definePlugin({
   id: "services",
   name: "Services",
   config: ServicesConfig,
-  // User-facing settings rendered by the generic settings panel. Maps onto
-  // `plugins.services.logTerminal`; surfaces the M3 jump-to-logs launcher
-  // template so users on a non-Terminal.app setup can point it at their terminal.
-  settings: validateSettingsDescriptor([
-    {
-      key: "terminalApp",
-      type: "enum",
-      label: "Logs terminal app",
-      description:
-        "Which terminal the Logs button opens to tail a process. Pick your app, " +
-        "or choose Custom and set the command template below.",
-      default: "Terminal",
-      options: [
-        { value: "Terminal", label: "Terminal.app" },
-        { value: "iTerm2", label: "iTerm2" },
-        { value: "kitty", label: "kitty" },
-        { value: "WezTerm", label: "WezTerm" },
-        { value: "Ghostty", label: "Ghostty" },
-        { value: "tmux", label: "tmux" },
-        { value: "Custom", label: "Custom (use the command below)" },
-      ],
-    },
-    {
-      key: "logTerminal",
-      type: "string",
-      label: "Custom logs terminal command",
-      description:
-        "Only used when the app above is Custom: a command template the Logs " +
-        "button runs. Use `{cmd}` where the `process-compose process logs` " +
-        "command should go.",
-      default: DEFAULT_LOG_TERMINAL,
-    },
-  ]),
+  // No per-plugin settings: the terminal preference moved to the global
+  // "General" tab (`global.terminal`), consumed by `services.logs` below.
   capabilities: {
     /**
      * The live process list from process-compose. Subscribable + polled (5s) and
@@ -413,16 +371,21 @@ export default definePlugin({
       input: ServiceActionInput,
       run: ({ input, ctx }) => {
         const cfg = configOf(ctx.config);
-        const options: SpawnLogsOptions = {
-          name: input.name,
-          socket: cfg.socket,
-          address: cfg.address,
-          terminalApp: cfg.terminalApp,
-          logTerminal: cfg.logTerminal,
+        // Prefer the global terminal setting; fall back to the legacy
+        // per-services terminalApp/logTerminal until the user sets the global one.
+        const fromGlobal = terminalConfigOf(ctx.global);
+        const terminal =
+          fromGlobal.terminalApp || fromGlobal.logTerminal
+            ? fromGlobal
+            : { terminalApp: cfg.terminalApp, logTerminal: cfg.logTerminal };
+        const command = buildLogsCommand(input.name, targetOf(cfg));
+        return spawnInTerminal({
+          command,
+          terminal,
+          label: `logs ${input.name}`,
           log: ctx.log,
           spawn: logsSpawn,
-        };
-        return spawnLogsTerminal(options);
+        });
       },
     }),
   },
