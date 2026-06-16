@@ -5,6 +5,7 @@
  */
 import type { PanelState } from "./panel-state.js";
 import type { ServiceAction, ServicesBulkAction } from "./services-state.js";
+import type { DexViewMode } from "./window-state.js";
 
 /** Renderer → main payload for a service lifecycle action (M2). */
 export interface ServiceActionRequest {
@@ -43,6 +44,8 @@ export const Channels = {
   copyText: "perch:copy-text",
   /** Renderer → main: persist the selected tab id (payload: the tab id). */
   setActiveTab: "perch:set-active-tab",
+  /** Renderer → main: persist the Dex view mode (payload: a {@link DexViewMode}). */
+  setDexViewMode: "perch:set-dex-view-mode",
   /** Renderer → main: open a worktree dir (payload: the path). Main runs `worktrees.open`. */
   worktreeOpen: "perch:worktree-open",
 } as const;
@@ -70,6 +73,8 @@ export interface PerchBridge {
   copyText(text: string): void;
   /** Tell the main process which tab is now selected, so it persists across opens. */
   setActiveTab(id: string): void;
+  /** Tell the main process the Dex view mode, so it persists across opens. */
+  setDexViewMode(mode: DexViewMode): void;
   /** Ask the main process to open a worktree directory (by path). */
   worktreeOpen(path: string): void;
 }

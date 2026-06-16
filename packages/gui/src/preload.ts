@@ -38,6 +38,9 @@ const bridge: PerchBridge = {
   setActiveTab(id) {
     ipcRenderer.send(Channels.setActiveTab, id);
   },
+  setDexViewMode(mode) {
+    ipcRenderer.send(Channels.setDexViewMode, mode);
+  },
   worktreeOpen(path) {
     ipcRenderer.send(Channels.worktreeOpen, path);
   },

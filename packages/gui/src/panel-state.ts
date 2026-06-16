@@ -36,6 +36,7 @@ import {
 } from "./worktrees-state.js";
 import { linkWorktreesAndTasks } from "./worktree-task-link.js";
 import { deriveLandableByTaskId, type LandableState } from "./landable.js";
+import type { DexViewMode } from "./window-state.js";
 
 /** Canonical capability id of the cross-repo "My PRs" read the panel renders. */
 export const STACK_PRS_ID = "stack.prs";
@@ -254,6 +255,12 @@ export interface PanelState {
    * tab on first render, then owns the selection. Undefined when none is saved.
    */
   savedActiveTab?: string;
+  /**
+   * The persisted Dex view mode (tree/graph), restored across panel opens/restarts.
+   * Attached by the main process (not derived here); the renderer uses it to seed
+   * the Dex view on first render, then owns the selection. Undefined when none is saved.
+   */
+  savedDexViewMode?: DexViewMode;
   /**
    * Each work-item's "landable" signal, keyed by dex task id — derived by
    * joining the worktree↔task link to the PR overview by head branch (see
