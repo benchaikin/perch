@@ -5,7 +5,7 @@
  * the action wrappers (sync, submit, push, add, merge, checkout, link,
  * unstack); M7 adds the cross-machine + base-ref fallback provider.
  */
-import { action, definePlugin, read, validateSettingsDescriptor, z } from "@perch/sdk";
+import { action, definePlugin, read, reposOf, validateSettingsDescriptor, z } from "@perch/sdk";
 
 import { ghStackProvider } from "./gh-provider.js";
 import { StackGraph } from "./graph.js";
@@ -65,6 +65,27 @@ function configRepos(config: unknown): string[] | undefined {
     return (config as StackConfig).repos;
   }
   return undefined;
+}
+
+/**
+ * Resolve the **effective** repo list with cross-plugin precedence, given a
+ * capability's `ctx.config` + `ctx.global`:
+ *
+ * 1. `plugins.stack.repos` if set and non-empty → the plugin-local **override**.
+ * 2. else the shared `global.repos` list (via {@link reposOf}) if non-empty.
+ * 3. else `undefined` → the `process.cwd()` single-repo back-compat fallback.
+ *
+ * Computed here (where `ctx` is in hand) and threaded down to the pure helpers
+ * (`resolveRepoCwd`/`reposResult`/`buildPrOverview`), so those stay pure and the
+ * `stack.repos` read reflects the same list the actions target.
+ */
+function effectiveRepos(config: unknown, global: unknown): string[] | undefined {
+  const override = configRepos(config);
+  if (override && override.length > 0) {
+    return override;
+  }
+  const shared = reposOf(global);
+  return shared.length > 0 ? shared : undefined;
 }
 
 /**
@@ -143,7 +164,7 @@ export default definePlugin({
       // open-PR base refs when gh-stack has no view (cross-machine / untracked).
       run: ({ input, ctx }) =>
         resolveStackView({
-          cwd: resolveRepoCwd(configRepos(ctx.config), input?.repo),
+          cwd: resolveRepoCwd(effectiveRepos(ctx.config, ctx.global), input?.repo),
           log: ctx.log,
         }),
     }),
@@ -157,7 +178,7 @@ export default definePlugin({
       summary: "The configured stack repos and which one is the default",
       output: ReposResult,
       expose: { mcp: false },
-      run: ({ ctx }) => reposResult(configRepos(ctx.config)),
+      run: ({ ctx }) => reposResult(effectiveRepos(ctx.config, ctx.global)),
     }),
 
     /**
@@ -179,7 +200,7 @@ export default definePlugin({
       expose: { mcp: true },
       run: ({ ctx }) =>
         buildPrOverview({
-          repos: configRepos(ctx.config),
+          repos: effectiveRepos(ctx.config, ctx.global),
           stackDirection: configStackDirection(ctx.config),
           reviewBotIgnore: configReviewBotIgnore(ctx.config),
           log: ctx.log,
@@ -219,7 +240,7 @@ export default definePlugin({
       input: z.object({ repo: z.string().optional() }).default({}),
       view: { kind: "custom", title: "Sync" },
       run: async ({ input, ctx }) => {
-        const cwd = resolveRepoCwd(configRepos(ctx.config), input?.repo);
+        const cwd = resolveRepoCwd(effectiveRepos(ctx.config, ctx.global), input?.repo);
         const result = await ghStackProvider({ cwd }).sync();
         if (result.conflict) {
           const where = result.needsResolution?.length
@@ -239,30 +260,36 @@ export default definePlugin({
       summary: "Push the stack and create/link its PRs (gh stack submit)",
       input: z.object({ repo: z.string().optional() }).default({}),
       run: ({ input, ctx }) =>
-        ghStackProvider({ cwd: resolveRepoCwd(configRepos(ctx.config), input?.repo) }).submit(),
+        ghStackProvider({
+          cwd: resolveRepoCwd(effectiveRepos(ctx.config, ctx.global), input?.repo),
+        }).submit(),
     }),
 
     push: action({
       summary: "Push the stack's branches (lighter than submit; gh stack push)",
       input: z.object({ repo: z.string().optional() }).default({}),
       run: ({ input, ctx }) =>
-        ghStackProvider({ cwd: resolveRepoCwd(configRepos(ctx.config), input?.repo) }).push(),
+        ghStackProvider({
+          cwd: resolveRepoCwd(effectiveRepos(ctx.config, ctx.global), input?.repo),
+        }).push(),
     }),
 
     add: action({
       summary: "Add a new top layer to the stack (gh stack add)",
       input: z.object({ branch: z.string().optional() }).default({}),
       run: ({ input, ctx }) =>
-        ghStackProvider({ cwd: resolveRepoCwd(configRepos(ctx.config), undefined) }).add(
-          input?.branch,
-        ),
+        ghStackProvider({
+          cwd: resolveRepoCwd(effectiveRepos(ctx.config, ctx.global), undefined),
+        }).add(input?.branch),
     }),
 
     merge: action({
       summary: "Merge the stack bottom-up while CI is green (gh stack merge)",
       input: z.object({ repo: z.string().optional() }).default({}),
       run: ({ input, ctx }) =>
-        ghStackProvider({ cwd: resolveRepoCwd(configRepos(ctx.config), input?.repo) }).merge({}),
+        ghStackProvider({
+          cwd: resolveRepoCwd(effectiveRepos(ctx.config, ctx.global), input?.repo),
+        }).merge({}),
     }),
 
     checkout: action({
@@ -270,9 +297,9 @@ export default definePlugin({
       // Required: the branch name or PR number to check out.
       input: z.object({ ref: z.union([z.string(), z.number().int()]) }),
       run: ({ input, ctx }) =>
-        ghStackProvider({ cwd: resolveRepoCwd(configRepos(ctx.config), undefined) }).checkout(
-          input.ref,
-        ),
+        ghStackProvider({
+          cwd: resolveRepoCwd(effectiveRepos(ctx.config, ctx.global), undefined),
+        }).checkout(input.ref),
     }),
 
     link: action({
@@ -280,16 +307,18 @@ export default definePlugin({
       // Required: one or more branch names or PR numbers to link into a stack.
       input: z.object({ refs: z.array(z.union([z.string(), z.number().int()])).min(1) }),
       run: ({ input, ctx }) =>
-        ghStackProvider({ cwd: resolveRepoCwd(configRepos(ctx.config), undefined) }).link(
-          input.refs,
-        ),
+        ghStackProvider({
+          cwd: resolveRepoCwd(effectiveRepos(ctx.config, ctx.global), undefined),
+        }).link(input.refs),
     }),
 
     unstack: action({
       summary: "Delete the stack locally and on GitHub (gh stack unstack)",
       input: z.object({}).default({}),
       run: ({ ctx }) =>
-        ghStackProvider({ cwd: resolveRepoCwd(configRepos(ctx.config), undefined) }).unstack(),
+        ghStackProvider({
+          cwd: resolveRepoCwd(effectiveRepos(ctx.config, ctx.global), undefined),
+        }).unstack(),
     }),
   },
 });
