@@ -14,18 +14,44 @@
  * an empty board, so polling stays alive and the panel simply hides the section.
  */
 import { basename, join } from "node:path";
+import type { spawn as nodeSpawn } from "node:child_process";
 
-import { definePlugin, read, reposOf, validateSettingsDescriptor, z } from "@perch/sdk";
+import {
+  action,
+  definePlugin,
+  read,
+  reposOf,
+  terminalConfigOf,
+  validateSettingsDescriptor,
+  z,
+} from "@perch/sdk";
 
 import { buildDexBoard, DexBoard, type DexGroup, parseRawTasks } from "./normalize.js";
 import { dexNotifications } from "./notify.js";
-import { DexProvider, type Exec } from "./provider.js";
+import { defaultExec, DexProvider, type Exec } from "./provider.js";
+import { runSpawn, type SpawnInput, type SpawnResult } from "./spawn.js";
 
 export { buildDexBoard, DexBoard, DexStatus, DexTaskView, parseRawTasks, RawDexTask } from "./normalize.js";
 export type { DexGroup } from "./normalize.js";
 export { dexNotifications } from "./notify.js";
 export { DexProvider } from "./provider.js";
 export type { Exec, ListOptions } from "./provider.js";
+export {
+  branchFor,
+  buildClaudeLaunch,
+  bootstrapPrompt,
+  deriveSlug,
+  DexRunner,
+  findTask,
+  GitRunner,
+  isValidTaskId,
+  resolveRepo,
+  runSpawn,
+  storagePathOf as spawnStoragePathOf,
+  worktreeAddArgs,
+  worktreePathFor,
+} from "./spawn.js";
+export type { SpawnDeps, SpawnInput, SpawnResult } from "./spawn.js";
 
 /**
  * Per-plugin config (`plugins.dex`). All optional: `plugins.dex = {}` monitors
@@ -43,10 +69,18 @@ const DexConfig = z.object({
   dirs: z.array(z.string()).optional(),
   /** Path to the `dex` binary; defaults to `dex` on PATH. */
   dexBin: z.string().optional(),
+  /** Path to the `git` binary (for the `spawn` action); defaults to `git` on PATH. */
+  gitBin: z.string().optional(),
   /** Include completed (done) tasks in the board; default false. */
   showCompleted: z.boolean().optional(),
 });
 export type DexConfig = z.infer<typeof DexConfig>;
+
+/** The `dex.spawn` action input: a task id, with an optional explicit repo override. */
+const SpawnInputSchema = z.object({
+  id: z.string(),
+  repo: z.string().optional(),
+});
 
 /** Narrow `ctx.config` (typed `unknown` by the SDK) to {@link DexConfig}; {} on miss. */
 function configOf(config: unknown): DexConfig {
@@ -64,6 +98,12 @@ let execOverride: Exec | undefined;
 /** Inject an `exec` stub for `dex.tasks` (tests only); pass `undefined` to reset. */
 export function __setExec(exec: Exec | undefined): void {
   execOverride = exec;
+}
+
+/** Test seam for the `spawn` action's terminal launcher (tests only). */
+let spawnOpenSpawn: typeof nodeSpawn | undefined;
+export function __setSpawnOpenSpawn(spawnFn: typeof nodeSpawn | undefined): void {
+  spawnOpenSpawn = spawnFn;
 }
 
 /**
@@ -105,6 +145,15 @@ export default definePlugin({
         "Path to the `dex` CLI. Leave as `dex` to use PATH; set an absolute path " +
         "if the daemon can't find it (e.g. an nvm/volta install when launched from Finder).",
       default: "dex",
+    },
+    {
+      key: "gitBin",
+      type: "string",
+      label: "git binary path",
+      description:
+        "Path to the `git` CLI, used by the spawn action to create a task's worktree. " +
+        "Leave as `git` to use PATH.",
+      default: "git",
     },
     // `dirs` (the monitored project roots) stays a perch.json-only setting: the
     // generic settings UI has no list field type yet, and exposing a string[] as
@@ -157,6 +206,35 @@ export default definePlugin({
       // Announce tasks newly blocked, or freshly ready (unblocked) so an agent can
       // pick them up. `prev`/`next` are validated DexBoards; skip the first poll.
       notify: ({ prev, next }) => dexNotifications(prev, next),
+    }),
+
+    /**
+     * Spawn an agent for a dex task: create the `dex/<id>-<slug>` worktree (off
+     * the repo's default branch) and launch an interactive `claude` in the user's
+     * terminal, seeded to fetch the task's full context and implement it. The repo
+     * is `input.repo` when given, else resolved from the task's project against
+     * `global.repos`. Daemon-side; MCP-exposed (yielding `perch dex spawn <id>` +
+     * a typed tool). Never half-creates: any failure returns `{ ok:false, message }`.
+     */
+    spawn: action<SpawnInput, DexConfig, SpawnResult>({
+      summary: "Create a worktree for a dex task and launch a seeded agent",
+      input: SpawnInputSchema,
+      expose: { mcp: true },
+      run: ({ input, ctx }): Promise<SpawnResult> => {
+        const cfg = configOf(ctx.config);
+        // `dirs` overrides the shared `global.repos` (same precedence as the read);
+        // these are the repos whose dex stores we probe + map the task's project to.
+        const repos = effectiveDirs(cfg.dirs ?? [], ctx.global);
+        return runSpawn(input, {
+          exec: execOverride ?? defaultExec,
+          dexBin: cfg.dexBin ?? "dex",
+          gitBin: cfg.gitBin ?? "git",
+          repos,
+          terminal: terminalConfigOf(ctx.global),
+          spawn: spawnOpenSpawn,
+          log: ctx.log,
+        });
+      },
     }),
   },
 });

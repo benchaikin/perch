@@ -1,0 +1,348 @@
+/**
+ * The `dex.spawn` action's machinery: create the `dex/<id>-<slug>` worktree for a
+ * dex task and launch an interactive Claude Code agent in the user's terminal,
+ * seeded for that task. Daemon-side; the GUI button is a separate surface.
+ *
+ * The TS here replicates the reference flow of `.claude/skills/dex-worktree`
+ * (slug derivation, sibling `<repo>-worktrees/<id>-<slug>` path, base =
+ * `origin/HEAD` → `main`) so the packaged daemon needs no skill scripts on disk.
+ * The impure edges — the `dex`/`git` CLIs and the terminal `spawn` — are seams,
+ * so the pure bits (slug, repo resolution, git args, the launch command) unit-test
+ * directly with stubs.
+ */
+import { basename, dirname, join } from "node:path";
+import type { spawn as nodeSpawn } from "node:child_process";
+
+import {
+  shellQuote,
+  spawnInTerminal,
+  type GlobalTerminalConfig,
+} from "@perch/sdk";
+
+import type { Exec } from "./provider.js";
+
+/** The `dex.spawn` action input. */
+export interface SpawnInput {
+  /** The dex task id (lowercase-alphanumeric, per the branch convention). */
+  id: string;
+  /** Explicit repo path override; else the task's project maps to a `global.repos` path. */
+  repo?: string;
+}
+
+/** The `dex.spawn` action result, surfaced to every projected surface. */
+export interface SpawnResult {
+  ok: boolean;
+  message: string;
+  /** The created worktree path, present only on success. */
+  worktreePath?: string;
+}
+
+/**
+ * Derive a short kebab slug from a task name, matching the reference helper's
+ * logic (`.claude/skills/dex-worktree/create-dex-worktree.sh`): lowercase,
+ * non-alphanumeric runs → a single hyphen, trim leading/trailing hyphens, and
+ * keep only the first few words for a readable branch. Returns "" when the name
+ * has no usable alphanumerics (the caller then falls back to a bare `dex/<id>`).
+ */
+export function deriveSlug(name: string, maxWords = 5): string {
+  const kebab = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+/, "")
+    .replace(/-+$/, "");
+  if (!kebab) return "";
+  return kebab.split("-").slice(0, maxWords).join("-");
+}
+
+/** True when an id is the lowercase-alphanumeric form the branch parser recovers. */
+export function isValidTaskId(id: string): boolean {
+  return /^[a-z0-9]+$/.test(id);
+}
+
+/** The branch a task gets: `dex/<id>-<slug>`, or bare `dex/<id>` when the slug is empty. */
+export function branchFor(id: string, slug: string): string {
+  return slug ? `dex/${id}-${slug}` : `dex/${id}`;
+}
+
+/**
+ * The worktree path a task gets: a sibling of the repo root named
+ * `<repo>-worktrees/<id>-<slug>` (or `<id>-task` when the slug is empty), so
+ * multiple dex worktrees don't collide and are easy to spot.
+ */
+export function worktreePathFor(repo: string, id: string, slug: string): string {
+  const worktreesDir = join(dirname(repo), `${basename(repo)}-worktrees`);
+  return join(worktreesDir, slug ? `${id}-${slug}` : `${id}-task`);
+}
+
+/**
+ * Resolve the repo directory for a task. An explicit `input.repo` wins (used as
+ * given). Otherwise the task's `project` (the basename the dex board groups by)
+ * is matched against `repos` by basename: a single match resolves; none or
+ * several is a clean failure (we don't guess). Returns the repo path on success,
+ * or an `error` message describing why it couldn't be resolved.
+ */
+export function resolveRepo(
+  input: { repo?: string },
+  project: string | undefined,
+  repos: string[],
+): { repo: string } | { error: string } {
+  if (input.repo) return { repo: input.repo };
+  if (!project) {
+    return {
+      error: "couldn't determine the task's project; pass an explicit repo to spawn.",
+    };
+  }
+  const matches = repos.filter((r) => basename(r) === project);
+  if (matches.length === 1) return { repo: matches[0]! };
+  if (matches.length === 0) {
+    return {
+      error: `no configured repo matches project "${project}"; add it to global.repos or pass an explicit repo.`,
+    };
+  }
+  return {
+    error: `project "${project}" is ambiguous (matches ${matches.length} repos); pass an explicit repo.`,
+  };
+}
+
+/**
+ * The args for `git -C <repo> worktree add -b <branch> <path> <base>` — creating
+ * the worktree on a NEW branch matching the dex convention, based off the repo's
+ * default branch.
+ */
+export function worktreeAddArgs(
+  repo: string,
+  branch: string,
+  path: string,
+  base: string,
+): string[] {
+  return ["-C", repo, "worktree", "add", "-b", branch, path, base];
+}
+
+/** A short bootstrap prompt for the spawned agent; it fetches its own full context. */
+export function bootstrapPrompt(id: string): string {
+  return (
+    `Work on dex task ${id}. Run \`dex show ${id} --full\` for the full context, ` +
+    `then implement it. Verify (build/test/lint), open a PR with the create-pr skill, ` +
+    `and don't reference the dex id in commit messages or the PR.`
+  );
+}
+
+/**
+ * Build the inner command the terminal runs: cd into the worktree and `exec` an
+ * interactive `claude` seeded with the bootstrap prompt. Modeled on
+ * `worktrees/open`'s `buildShellInDir` — the path and prompt are shell-quoted, and
+ * `exec` replaces the launcher's `sh` so Ctrl-C reaches `claude` directly.
+ */
+export function buildClaudeLaunch(worktreePath: string, prompt: string): string {
+  return `cd ${shellQuote(worktreePath)} && exec claude ${shellQuote(prompt)}`;
+}
+
+/** A git runner around the {@link Exec} seam, mirroring `worktrees/provider`. */
+export class GitRunner {
+  constructor(
+    private readonly gitBin: string,
+    private readonly exec: Exec,
+  ) {}
+
+  /**
+   * The repo's default branch: `git symbolic-ref --short refs/remotes/origin/HEAD`
+   * with the `origin/` prefix stripped, falling back to `main` when there's no
+   * remote HEAD (a fresh repo, or no `origin`).
+   */
+  async defaultBranch(repo: string): Promise<string> {
+    try {
+      const out = await this.exec(
+        this.gitBin,
+        ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
+        { cwd: repo },
+      );
+      return out.trim().replace(/^origin\//, "") || "main";
+    } catch {
+      return "main";
+    }
+  }
+
+  /** Create the worktree; rejects (surfacing git's stderr) on failure. */
+  worktreeAdd(repo: string, branch: string, path: string, base: string): Promise<string> {
+    return this.exec(this.gitBin, worktreeAddArgs(repo, branch, path, base));
+  }
+}
+
+/** A dex runner around the {@link Exec} seam (the `show`/`start` subcommands). */
+export class DexRunner {
+  constructor(
+    private readonly dexBin: string,
+    private readonly exec: Exec,
+  ) {}
+
+  /**
+   * `dex [--storage-path P] show <id> --json --full` → the task object, or
+   * `undefined` when the store has no such task (or the call fails). `--storage-path`
+   * is a global option, so it precedes the subcommand.
+   */
+  async show(id: string, storagePath?: string): Promise<{ name?: string } | undefined> {
+    const args: string[] = [];
+    if (storagePath) args.push("--storage-path", storagePath);
+    args.push("show", id, "--json", "--full");
+    try {
+      const stdout = await this.exec(this.dexBin, args);
+      const parsed: unknown = JSON.parse(stdout);
+      // `dex show` yields an object for one id, or an array; take the first match.
+      const task = Array.isArray(parsed) ? parsed[0] : parsed;
+      if (task && typeof task === "object") return task as { name?: string };
+      return undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Best-effort `dex [--storage-path P] start <id>`; never throws. */
+  async start(id: string, storagePath?: string): Promise<void> {
+    const args: string[] = [];
+    if (storagePath) args.push("--storage-path", storagePath);
+    args.push("start", id);
+    try {
+      await this.exec(this.dexBin, args);
+    } catch {
+      // Marking in-progress is optional; degrade gracefully.
+    }
+  }
+}
+
+/** Dependencies for {@link runSpawn} — the seams the action injects, tests stub. */
+export interface SpawnDeps {
+  exec: Exec;
+  dexBin: string;
+  gitBin: string;
+  /** The monitored project roots, in `global.repos` order (each carries a `.dex/`). */
+  repos: string[];
+  /** The terminal preference (from `terminalConfigOf(ctx.global)`). */
+  terminal: GlobalTerminalConfig;
+  /** Injected terminal spawn (tests stub it). */
+  spawn?: typeof nodeSpawn;
+  /** Injected script writer for the terminal launcher (tests stub it). */
+  writeScript?: (label: string, command: string) => string;
+  log?: (message: string) => void;
+}
+
+/**
+ * The store path to query for a repo's tasks: its `.dex` directory (matching
+ * `dex.tasks`' `storagePathOf`). Exported so the resolution stays in lockstep.
+ */
+export function storagePathOf(repo: string): string {
+  return join(repo, ".dex");
+}
+
+/**
+ * Locate which configured repo's dex store holds `id`, returning the task's
+ * `name` + the `project` (the store repo's basename, the same tag the dex board
+ * groups by) so {@link resolveRepo} can map it back to a repo path. Probes each
+ * store via `dex show`; the first store that knows the id wins. When no repos are
+ * configured, falls back to the cwd-resolved store (project `undefined`).
+ * `undefined` when no store has the id.
+ */
+export async function findTask(
+  dex: DexRunner,
+  id: string,
+  repos: string[],
+): Promise<{ project: string | undefined; name: string } | undefined> {
+  for (const repo of repos) {
+    const task = await dex.show(id, storagePathOf(repo));
+    if (task && typeof task.name === "string") return { project: basename(repo), name: task.name };
+  }
+  // No monitored repos: fall back to the cwd-resolved store (no project tag).
+  if (repos.length === 0) {
+    const task = await dex.show(id);
+    if (task && typeof task.name === "string") return { project: undefined, name: task.name };
+  }
+  return undefined;
+}
+
+/**
+ * Create the `dex/<id>-<slug>` worktree and launch a seeded `claude` agent in the
+ * user's terminal. Never throws: every failure (bad id, unresolved repo, existing
+ * worktree, git error, terminal error) returns a clear `{ ok:false, message }`,
+ * and nothing is half-created — the worktree is only added once the repo + branch
+ * are settled, and the agent is launched only after it exists.
+ */
+export async function runSpawn(input: SpawnInput, deps: SpawnDeps): Promise<SpawnResult> {
+  const id = input.id.trim();
+  if (!isValidTaskId(id)) {
+    return {
+      ok: false,
+      message: `dex id "${input.id}" is not lowercase-alphanumeric; the branch parser would not match it.`,
+    };
+  }
+
+  const dex = new DexRunner(deps.dexBin, deps.exec);
+
+  // Resolve the task (name → slug) and its project (the repo its store lives in).
+  // An explicit `input.repo` short-circuits the per-store probe: we just need the
+  // name from that repo's store (or the default store).
+  let name: string;
+  let resolvedRepo: string;
+  if (input.repo) {
+    const task = await dex.show(id, storagePathOf(input.repo));
+    const fallback = task ?? (await dex.show(id));
+    if (!fallback || typeof fallback.name !== "string") {
+      return { ok: false, message: `dex task "${id}" not found.` };
+    }
+    name = fallback.name;
+    resolvedRepo = input.repo;
+  } else {
+    const found = await findTask(dex, id, deps.repos);
+    if (!found) {
+      return {
+        ok: false,
+        message: `dex task "${id}" not found in any configured repo's store.`,
+      };
+    }
+    name = found.name;
+    const resolved = resolveRepo(input, found.project, deps.repos);
+    if ("error" in resolved) return { ok: false, message: resolved.error };
+    resolvedRepo = resolved.repo;
+  }
+
+  const slug = deriveSlug(name);
+  const branch = branchFor(id, slug);
+  const worktreePath = worktreePathFor(resolvedRepo, id, slug);
+
+  // Create the worktree off the repo's default branch. git's own `worktree add`
+  // refuses an existing path, but we surface a clearer message either way.
+  const git = new GitRunner(deps.gitBin, deps.exec);
+  const base = await git.defaultBranch(resolvedRepo);
+  try {
+    await git.worktreeAdd(resolvedRepo, branch, worktreePath, base);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return {
+      ok: false,
+      message: `couldn't create worktree at ${worktreePath} (branch ${branch}): ${detail}`,
+    };
+  }
+
+  // Worktree exists: optionally mark in-progress (best-effort), then launch.
+  await dex.start(id, storagePathOf(resolvedRepo));
+
+  const launched = spawnInTerminal({
+    command: buildClaudeLaunch(worktreePath, bootstrapPrompt(id)),
+    terminal: deps.terminal,
+    label: `dex ${id}`,
+    log: deps.log,
+    spawn: deps.spawn,
+    writeScript: deps.writeScript,
+  });
+  if (!launched.ok) {
+    return {
+      ok: false,
+      message: `created worktree at ${worktreePath}, but ${launched.message}`,
+      worktreePath,
+    };
+  }
+
+  return {
+    ok: true,
+    message: `Spawned agent for ${id} in ${worktreePath} (branch ${branch}).`,
+    worktreePath,
+  };
+}
