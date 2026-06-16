@@ -244,3 +244,86 @@ function rollupDisplayStatus(t: DexTask, activeAncestors: Set<string>): DexStatu
   }
   return t.status;
 }
+
+// ---------------------------------------------------------------------------
+// Dependency-graph view derivation
+//
+// The graph view renders the blocker edges (`blockedBy`) rather than the
+// parent/child task tree. Kept here — out of the DOM layer — so the derivation
+// is unit-testable without a jsdom harness; the renderer walks the forest below
+// and draws each node with the same row vocabulary as the tree view.
+// ---------------------------------------------------------------------------
+
+/**
+ * One node in the dependency forest: a task row plus the (recursively derived)
+ * tasks it blocks. Edge direction is blocker → blocked, so a node's `children`
+ * are the tasks waiting on it.
+ */
+export interface DexGraphNode {
+  row: DexRow;
+  /** The tasks this row blocks (its dependents); empty for a leaf. */
+  children: DexGraphNode[];
+}
+
+/**
+ * Derive the dependency forest from a section's rows, following the `blockedBy`
+ * blocker edges (not the task tree). Pure — no DOM. The renderer walks the
+ * returned roots depth-first, indenting children under their blocker.
+ *
+ * Shape:
+ *   - **Roots = UNBLOCKED tasks** — those with no still-active blocker present
+ *     in the set (empty `blockedBy`, or every listed blocker id is unknown).
+ *   - A **blocked** task nests under *each* of its active blockers, so it can
+ *     appear more than once when several tasks gate it. We chose
+ *     appear-under-every-blocker (rather than a single "primary" blocker)
+ *     because the point of the graph view is to surface *all* the edges a task
+ *     waits on — collapsing to one blocker would silently hide dependencies.
+ *
+ * Edge cases:
+ *   - **Cycles** (A blocks B blocks A): we never recurse into a node already on
+ *     the current ancestor path, so a cycle terminates instead of looping
+ *     forever. The cyclic node still appears once (as a child of its blocker);
+ *     its own children are simply not re-expanded under that ancestor.
+ *   - **Unknown blocker id** (a blocker not in the row set): ignored — a task
+ *     whose only blockers are all unknown becomes a root, since it can't nest
+ *     under a parent that isn't there.
+ *   - **Standalone tasks** (no edges either way): roots with no children.
+ *   - Completed blockers are already filtered out upstream, so a `blockedBy`
+ *     entry is always an active blocker (or an unknown id, handled above).
+ */
+export function deriveDexGraph(rows: readonly DexRow[]): DexGraphNode[] {
+  const rowById = new Map(rows.map((r) => [r.id, r]));
+  // blocker id → the rows it blocks (the reverse of each row's `blockedBy`).
+  const dependentsOf = new Map<string, DexRow[]>();
+  for (const row of rows) {
+    for (const blockerId of row.blockedBy) {
+      // Skip edges to blockers that aren't in the set (stale/foreign ids).
+      if (!rowById.has(blockerId)) continue;
+      const list = dependentsOf.get(blockerId);
+      if (list) list.push(row);
+      else dependentsOf.set(blockerId, [row]);
+    }
+  }
+
+  // Build a node and recurse into its dependents, carrying the ancestor path so
+  // a cycle (an id already above us) stops rather than re-expands forever.
+  const build = (row: DexRow, path: Set<string>): DexGraphNode => {
+    const children: DexGraphNode[] = [];
+    for (const dep of dependentsOf.get(row.id) ?? []) {
+      if (path.has(dep.id)) continue; // cycle guard: dep is already an ancestor
+      path.add(dep.id);
+      children.push(build(dep, path));
+      path.delete(dep.id);
+    }
+    return { row, children };
+  };
+
+  // Roots are the unblocked tasks: none of their listed blockers is a known row.
+  const roots: DexGraphNode[] = [];
+  for (const row of rows) {
+    const blocked = row.blockedBy.some((id) => rowById.has(id));
+    if (blocked) continue;
+    roots.push(build(row, new Set([row.id])));
+  }
+  return roots;
+}

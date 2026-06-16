@@ -17,7 +17,9 @@ import type {
 import { SERVICES_TAB_ID } from "../panel-state.js";
 import {
   DEX_TASKS_ID,
+  deriveDexGraph,
   dexHealth,
+  type DexGraphNode,
   type DexRow,
   type DexSection,
   type DexStatus,
@@ -820,10 +822,71 @@ function dexSectionEl(section: DexSection, mode: DexViewMode): HTMLElement | nul
   const epicIds = section.rows.filter((r) => r.isEpic).map((r) => r.id);
   el.append(dexHeaderEl(epicIds, mode));
 
-  // TODO(dex-graph): when `mode === "graph"`, render the dependency graph here.
-  // The graph renderer is a separate, later subtask; until it lands, graph mode
-  // falls through to the existing tree rendering so the toggle still works.
-  dexTreeRows(el, section);
+  // Graph mode walks the blocker edges (`blockedBy`) instead of the task tree;
+  // tree mode is the original pre-ordered render, completely unchanged.
+  if (mode === "graph") dexGraphRows(el, section);
+  else dexTreeRows(el, section);
+  return el;
+}
+
+/**
+ * Append the dependency-graph forest to `el`: the unblocked tasks as roots, each
+ * blocked task nested under every blocker it waits on (so it can repeat when
+ * several tasks gate it). Derivation lives in `deriveDexGraph` (pure, tested);
+ * here we just walk it depth-first, indenting children to show the nesting.
+ */
+function dexGraphRows(el: HTMLElement, section: DexSection): void {
+  const walk = (node: DexGraphNode, depth: number): void => {
+    el.append(dexGraphRowEl(node.row, depth));
+    for (const child of node.children) walk(child, depth + 1);
+  };
+  for (const root of deriveDexGraph(section.rows)) walk(root, 0);
+}
+
+/**
+ * One dependency-graph node row. Mirrors {@link dexRowEl} (status marker, name,
+ * blocker/landable/worktree chips, click-to-open-detail) but indents by *graph*
+ * depth rather than tree depth, and carries no expand/collapse chevron — the
+ * graph has no collapsible epics. A `dex-graph-row` class tags it for the bundle
+ * test and any graph-specific styling; the `.bad`/blocked vs ready/muted marker
+ * tone (from the shared {@link dexMarkerClass}) distinguishes blocked nodes from
+ * unblocked roots.
+ */
+function dexGraphRowEl(row: DexRow, depth: number): HTMLElement {
+  const el = document.createElement("div");
+  el.className = `row dex-row dex-graph-row${depth > 0 ? " dex-graph-nested" : ""}`;
+  // Indent by blocker-nesting depth so dependents read as nested under blockers.
+  el.style.paddingLeft = `${depth * 14}px`;
+  const blockedHint = row.blockedByCount > 0 ? ` (blocked by ${row.blockedByCount})` : "";
+  el.title = `${row.name} — ${DEX_STATUS_LABEL[row.status]}${blockedHint}`;
+
+  // Aligning spacer where the tree's chevron sits, so markers line up with the
+  // tree view's columns.
+  const spacer = document.createElement("span");
+  spacer.className = "dex-chevron-spacer";
+  el.append(spacer);
+
+  const marker = document.createElement("i");
+  marker.className = dexMarkerClass(row);
+  marker.title = DEX_STATUS_LABEL[row.displayStatus];
+  el.append(marker);
+
+  const name = document.createElement("span");
+  name.className = "branch";
+  name.textContent = row.name;
+  el.append(name);
+
+  if (row.blockedByCount > 0) el.append(dexBlockedChip(row.blockedByCount));
+  if (row.landable) {
+    const landable = dexLandableChipEl(row.landable);
+    if (landable) el.append(landable);
+  }
+  if (row.worktree) el.append(dexWorktreeEl(row.worktree));
+
+  el.addEventListener("click", () => {
+    selectedDexId = row.id;
+    if (lastState) render(lastState);
+  });
   return el;
 }
 

@@ -459,6 +459,13 @@ body {
   font-weight: 600;
 }
 
+/* Dependency-graph node row. Reuses .row/.dot/.chip/.branch; indentation is set
+   inline by blocker-nesting depth. A subtle left rule on nested nodes (depth > 0)
+   makes the "this task waits on its blocker" edge read at a glance. */
+.dex-graph-row.dex-graph-nested {
+  border-left: 1px solid var(--border);
+}
+
 /* Expand/collapse chevron on an epic row (and an aligning spacer on leaves), so
    markers line up whether or not a row has children. The chevron is its own
    click target (toggles children) and stops propagation to the row. */
