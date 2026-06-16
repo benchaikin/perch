@@ -489,10 +489,16 @@ body {
   color: var(--accent);
 }
 
-/* Dex section header: the icon-only expand/collapse-all control, right-aligned. */
+/* Dex section header: the icon-only view-toggle + expand/collapse-all controls,
+   grouped at the right. Neutralize .icon-btn's margin-left:auto so the buttons
+   sit together (a gap between them) rather than being pushed apart. */
 .dex-header {
   display: flex;
   justify-content: flex-end;
+  gap: 2px;
+}
+.dex-header .icon-btn {
+  margin-left: 0;
 }
 
 /* Task detail view (replaces the list when a task is selected). */
