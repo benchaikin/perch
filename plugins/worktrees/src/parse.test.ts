@@ -7,6 +7,7 @@ import { test } from "node:test";
 import {
   buildWorktrees,
   mergeWorktrees,
+  parseDexTaskId,
   parseStatus,
   parseWorktreeList,
   worktreeHealth,
@@ -52,6 +53,44 @@ prunable gitdir file points to non-existent location
   assert.equal(wts[0]!.bare, true);
   assert.equal(wts[1]!.locked, true);
   assert.equal(wts[1]!.prunable, true);
+});
+
+test("parseDexTaskId extracts the id from a dex/ branch, else undefined", () => {
+  // Bare id, id + kebab slug, and id followed by a nested ref segment.
+  assert.equal(parseDexTaskId("dex/abc12345"), "abc12345");
+  assert.equal(parseDexTaskId("dex/abc12345-some-slug"), "abc12345");
+  assert.equal(parseDexTaskId("dex/abc12345/x"), "abc12345");
+  // Non-dex branches → no association.
+  assert.equal(parseDexTaskId("feature/x"), undefined);
+  assert.equal(parseDexTaskId("main"), undefined);
+  // Undefined (detached) / empty → undefined.
+  assert.equal(parseDexTaskId(undefined), undefined);
+  assert.equal(parseDexTaskId(""), undefined);
+  // Strict charset: uppercase isn't part of the id (stops at the first non-[a-z0-9]).
+  assert.equal(parseDexTaskId("dex/ABC123"), undefined);
+  assert.equal(parseDexTaskId("dex/abc_123"), "abc");
+  // The prefix must be exactly `dex/`.
+  assert.equal(parseDexTaskId("dexx/abc12345"), undefined);
+  assert.equal(parseDexTaskId("dex/"), undefined);
+});
+
+test("buildWorktrees derives taskId from the branch, override via taskIdByPath", () => {
+  const raws = parseWorktreeList(
+    `worktree /repo\nHEAD aaaa\nbranch refs/heads/dex/abc12345-feature\n`,
+  );
+  // No map → branch parse.
+  assert.equal(buildWorktrees(raws, new Map()).worktrees[0]!.taskId, "abc12345");
+  // Map entry wins (a config override beats the branch parse).
+  const overridden = buildWorktrees(
+    raws,
+    new Map(),
+    undefined,
+    new Map([["/repo", "override9"]]),
+  ).worktrees[0]!;
+  assert.equal(overridden.taskId, "override9");
+  // A non-dex branch with no override → undefined.
+  const plain = parseWorktreeList(`worktree /r\nHEAD aaaa\nbranch refs/heads/main\n`);
+  assert.equal(buildWorktrees(plain, new Map()).worktrees[0]!.taskId, undefined);
 });
 
 test("parseStatus counts dirty entries, detects conflict + ahead/behind", () => {

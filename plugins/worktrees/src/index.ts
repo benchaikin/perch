@@ -32,6 +32,7 @@ import {
 import {
   buildWorktrees,
   mergeWorktrees,
+  parseDexTaskId,
   parseStatus,
   parseWorktreeList,
   Worktrees,
@@ -45,6 +46,7 @@ export {
   buildWorktree,
   buildWorktrees,
   mergeWorktrees,
+  parseDexTaskId,
   parseStatus,
   parseWorktreeList,
   Worktree,
@@ -162,16 +164,24 @@ export default definePlugin({
             return { worktrees: [] };
           }
           const raws = parseWorktreeList(listing);
-          // Per-worktree status, bounded by the worktree count (typically a handful).
+          // Per-worktree status + dex task id, bounded by the worktree count
+          // (typically a handful). The task id resolves to the worktree-local
+          // `perch.dexTask` config when set, else the `dex/<id>` branch parse.
           const statusByPath = new Map<string, WorktreeStatus>();
+          const taskIdByPath = new Map<string, string | undefined>();
           await Promise.all(
             raws
               .filter((r) => !r.bare)
               .map(async (r) => {
-                statusByPath.set(r.path, parseStatus(await provider.statusRaw(r.path)));
+                const [status, config] = await Promise.all([
+                  provider.statusRaw(r.path),
+                  provider.configRaw(r.path),
+                ]);
+                statusByPath.set(r.path, parseStatus(status));
+                taskIdByPath.set(r.path, config || parseDexTaskId(r.branch));
               }),
           );
-          return buildWorktrees(raws, statusByPath, tag);
+          return buildWorktrees(raws, statusByPath, tag, taskIdByPath);
         };
 
         const board = mergeWorktrees(await Promise.all(roots.map(boardFor)));

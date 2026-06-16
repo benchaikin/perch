@@ -21,14 +21,20 @@ function listing(path: string, branch: string): string {
 
 /**
  * Build an `Exec` stub that returns canned `git worktree list` output per `cwd`
- * and empty status output. A `cwd` not in `byCwd` throws (a non-git / bad root).
+ * (the repo root) and empty status output. An optional `configByCwd` returns a
+ * `perch.dexTask` value per worktree path (else empty, the unset case). A repo
+ * `cwd` not in `byCwd` throws (a non-git / bad root).
  */
-function execFor(byCwd: Record<string, string>): Exec {
+function execFor(byCwd: Record<string, string>, configByCwd: Record<string, string> = {}): Exec {
   return (_cmd, args, opts) => {
     if (args[0] === "worktree") {
       const out = opts?.cwd !== undefined ? byCwd[opts.cwd] : undefined;
       if (out === undefined) return Promise.reject(new Error(`not a git repo: ${opts?.cwd}`));
       return Promise.resolve(out);
+    }
+    if (args[0] === "config") {
+      // `git config --worktree --get perch.dexTask` per worktree path.
+      return Promise.resolve(opts?.cwd !== undefined ? (configByCwd[opts.cwd] ?? "") : "");
     }
     // status — empty (clean) for every worktree.
     return Promise.resolve("");
@@ -98,6 +104,38 @@ test("list: a bad root contributes nothing rather than failing the whole list", 
     const { worktrees } = await run({}, { repos: ["/work/alpha", "/work/beta"] });
     assert.equal(worktrees.length, 1);
     assert.equal(worktrees[0]!.repo, "alpha");
+  } finally {
+    __setExec(undefined);
+  }
+});
+
+test("list: taskId derives from a dex/ branch when no config override is set", async () => {
+  __setExec(
+    execFor({
+      "/work/alpha":
+        listing("/work/alpha", "main") + listing("/work/alpha-feat", "dex/abc12345-link"),
+    }),
+  );
+  try {
+    const { worktrees } = await run({}, { repos: ["/work/alpha"] });
+    assert.equal(worktrees.length, 2);
+    assert.equal(worktrees[0]!.taskId, undefined); // main is on `main`
+    assert.equal(worktrees[1]!.taskId, "abc12345"); // parsed from the branch
+  } finally {
+    __setExec(undefined);
+  }
+});
+
+test("list: a perch.dexTask config override beats the branch parse", async () => {
+  __setExec(
+    execFor(
+      { "/work/alpha": listing("/work/alpha-feat", "dex/abc12345-link") },
+      { "/work/alpha-feat": "override9" },
+    ),
+  );
+  try {
+    const { worktrees } = await run({}, { repos: ["/work/alpha"] });
+    assert.equal(worktrees[0]!.taskId, "override9");
   } finally {
     __setExec(undefined);
   }
