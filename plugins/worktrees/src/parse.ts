@@ -52,6 +52,12 @@ export const Worktree = z.object({
    * when the source root is unknown (the daemon-cwd default).
    */
   repo: z.string().optional(),
+  /**
+   * The dex task this worktree is associated with, when one is encoded — either
+   * parsed from a `dex/<id>` branch or read from the worktree-local
+   * `perch.dexTask` git config (the config wins). Undefined when unassociated.
+   */
+  taskId: z.string().optional(),
   branch: z.string().optional(),
   detached: z.boolean(),
   /** The repository's main worktree (listed first by git). */
@@ -72,6 +78,19 @@ export const Worktrees = z.object({
   worktrees: z.array(Worktree),
 });
 export type Worktrees = z.infer<typeof Worktrees>;
+
+/**
+ * Extract the dex task id a branch encodes, per the shared convention: a branch
+ * named `dex/<id>` or `dex/<id>-<slug>`, where `<id>` is a run of lowercase
+ * alphanumerics (`[a-z0-9]`) immediately after the literal `dex/` prefix, up to
+ * the next `-`/`/`/end. A branch that doesn't start with `dex/` (or is
+ * undefined/detached/empty) → undefined.
+ */
+export function parseDexTaskId(branch: string | undefined): string | undefined {
+  if (!branch) return undefined;
+  const m = /^dex\/([a-z0-9]+)/.exec(branch);
+  return m ? m[1] : undefined;
+}
 
 /** Parse `git worktree list --porcelain` into records (main worktree first). */
 export function parseWorktreeList(porcelain: string): RawWorktree[] {
@@ -160,6 +179,7 @@ export function buildWorktree(
   status: WorktreeStatus | undefined,
   main: boolean,
   repo?: string,
+  taskId?: string,
 ): Worktree {
   const dirtyCount = status?.dirtyCount ?? 0;
   const conflict = status?.conflict ?? false;
@@ -170,6 +190,7 @@ export function buildWorktree(
     path: raw.path,
     name,
     repo,
+    taskId,
     branch: raw.branch,
     detached: raw.detached,
     main,
@@ -189,17 +210,23 @@ export function buildWorktree(
  * a per-path status map. Skips bare worktrees (no working tree to report on).
  * The first (non-bare) record is that repo's main worktree. `repo` (the root's
  * basename) tags each row so callers can group/label multiple repos; pass
- * undefined for the daemon-cwd default (a single, unlabeled repo).
+ * undefined for the daemon-cwd default (a single, unlabeled repo). An optional
+ * `taskIdByPath` supplies each worktree's resolved dex task id (config override
+ * or branch parse); paths absent from it fall back to the branch parse.
  */
 export function buildWorktrees(
   raws: RawWorktree[],
   statusByPath: ReadonlyMap<string, WorktreeStatus>,
   repo?: string,
+  taskIdByPath?: ReadonlyMap<string, string | undefined>,
 ): Worktrees {
   const visible = raws.filter((r) => !r.bare);
-  const worktrees = visible.map((raw, i) =>
-    buildWorktree(raw, statusByPath.get(raw.path), i === 0, repo),
-  );
+  const worktrees = visible.map((raw, i) => {
+    const taskId = taskIdByPath?.has(raw.path)
+      ? taskIdByPath.get(raw.path)
+      : parseDexTaskId(raw.branch);
+    return buildWorktree(raw, statusByPath.get(raw.path), i === 0, repo, taskId);
+  });
   return { worktrees };
 }
 

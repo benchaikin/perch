@@ -61,4 +61,23 @@ export class WorktreesProvider {
       return "";
     }
   }
+
+  /**
+   * The worktree-local `perch.dexTask` git config (trimmed), or "" when unset.
+   * Best-effort: `git config --worktree --get` exits non-zero when the key is
+   * missing *or* when `extensions.worktreeConfig` is disabled — both degrade
+   * silently to "" rather than throwing.
+   */
+  async configRaw(worktreePath: string): Promise<string> {
+    try {
+      const out = await this.exec(
+        this.gitBin,
+        ["config", "--worktree", "--get", "perch.dexTask"],
+        { cwd: worktreePath },
+      );
+      return out.trim();
+    } catch {
+      return "";
+    }
+  }
 }
