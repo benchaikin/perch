@@ -11,6 +11,9 @@
  * knows the wire shape of `worktrees.list`'s output, not the plugin's internals.
  */
 
+import type { DexStatus } from "./dex-state.js";
+import type { LinkedTask } from "./worktree-task-link.js";
+
 /** Canonical capability id of the worktrees read the section renders. */
 export const WORKTREES_LIST_ID = "worktrees.list";
 
@@ -35,6 +38,12 @@ export interface Worktree {
   locked: boolean;
   prunable: boolean;
   health: WorktreeHealth;
+  /**
+   * The dex task this worktree was created for, when known — parsed by the
+   * worktrees plugin from a `dex/<taskId>-<slug>` branch or a `perch.dexTask`
+   * git config. Used to join worktrees to dex tasks (see `worktree-task-link`).
+   */
+  taskId?: string;
 }
 
 /** `worktrees.list`'s output: every worktree of the repo, main first. */
@@ -42,8 +51,15 @@ export interface WorktreeList {
   worktrees: Worktree[];
 }
 
-/** A rendered worktree row (identical to the wire shape today; kept distinct for the renderer's contract). */
-export type WorktreeRow = Worktree;
+/**
+ * A rendered worktree row: the wire shape plus an optional `task` annotation —
+ * the dex task this worktree was created for, joined in by `buildPanelState`
+ * from `linkWorktreesAndTasks`. Absent when the worktree carries no `taskId` or
+ * no matching task exists (or the dex board is missing).
+ */
+export interface WorktreeRow extends Worktree {
+  task?: { id: string; name: string; status: DexStatus };
+}
 
 /** Tallies for the tab badge / header summary. */
 export interface WorktreeCounts {
@@ -87,18 +103,25 @@ export function worstWorktreeHealth(section: WorktreesSection): WorktreeHealth {
  * Build the Worktrees section from the latest `worktrees.list` output. Hidden
  * when the list is absent or empty. `multiRepo` is set when the rows carry more
  * than one distinct `repo` tag, so the renderer groups them under per-repo
- * headers. Pure: same input → same output.
+ * headers. `taskByPath` (from `linkWorktreesAndTasks`) annotates each row with
+ * its matched dex task; pass an empty map (or omit it) for no annotation. Pure:
+ * same input → same output.
  */
-export function buildWorktreesSection(list: WorktreeList | undefined): WorktreesSection {
+export function buildWorktreesSection(
+  list: WorktreeList | undefined,
+  taskByPath?: ReadonlyMap<string, LinkedTask>,
+): WorktreesSection {
   if (!list || list.worktrees.length === 0) {
     return { visible: false, rows: [], counts: { ...ZERO_COUNTS }, multiRepo: false };
   }
   const counts: WorktreeCounts = { ...ZERO_COUNTS, total: list.worktrees.length };
   const repos = new Set<string>();
-  for (const w of list.worktrees) {
+  const rows: WorktreeRow[] = list.worktrees.map((w) => {
     if (w.dirty) counts.dirty += 1;
     if (w.conflict) counts.conflict += 1;
     if (w.repo) repos.add(w.repo);
-  }
-  return { visible: true, rows: list.worktrees, counts, multiRepo: repos.size > 1 };
+    const task = taskByPath?.get(w.path);
+    return task ? { ...w, task } : w;
+  });
+  return { visible: true, rows, counts, multiRepo: repos.size > 1 };
 }

@@ -34,6 +34,7 @@ import {
   type WorktreeList,
   type WorktreesSection,
 } from "./worktrees-state.js";
+import { linkWorktreesAndTasks } from "./worktree-task-link.js";
 
 /** Canonical capability id of the cross-repo "My PRs" read the panel renders. */
 export const STACK_PRS_ID = "stack.prs";
@@ -512,6 +513,13 @@ function buildTabs(ctx: TabContext): PanelTab[] {
  */
 export function buildPanelState(input: BuildInput): PanelState {
   const { overview, daemonUp, syncAvailable, error } = input;
+  // The dex board and worktrees list both feed the panel; join them once here so
+  // each section can carry the cross-reference (a worktree's task, a task's live
+  // worktree). The link tolerates either board being absent (empty maps).
+  const dexBoard = daemonUp ? input.dexBoard : undefined;
+  const worktreesList = daemonUp ? input.worktreesList : undefined;
+  const link = linkWorktreesAndTasks(worktreesList, dexBoard);
+
   // Sync progress, the transient toast, and the Services section ride along on
   // every state (the section is self-hiding when process-compose is absent).
   const live = {
@@ -522,8 +530,8 @@ export function buildPanelState(input: BuildInput): PanelState {
       input.servicesActing,
       input.servicesBulkActing,
     ),
-    dex: buildDexSection(daemonUp ? input.dexBoard : undefined, daemonUp && !!input.dexPresent),
-    worktrees: buildWorktreesSection(daemonUp ? input.worktreesList : undefined),
+    dex: buildDexSection(dexBoard, daemonUp && !!input.dexPresent, link.worktreeByTaskId),
+    worktrees: buildWorktreesSection(worktreesList, link.taskByWorktreePath),
   };
 
   if (!daemonUp) {

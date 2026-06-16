@@ -70,6 +70,20 @@ test("buildWorktreesSection sets multiRepo only when rows span >1 repo", () => {
   );
 });
 
+test("buildWorktreesSection annotates rows from the task map (and only those)", () => {
+  const section = buildWorktreesSection(
+    list(
+      wt({ name: "a", path: "/wt/a", health: "muted" }),
+      wt({ name: "b", path: "/wt/b", health: "muted" }),
+    ),
+    new Map([["/wt/a", { id: "t1", name: "Task one", status: "in-progress" }]]),
+  );
+  assert.deepEqual(section.rows[0]!.task, { id: "t1", name: "Task one", status: "in-progress" });
+  // Unmatched rows carry no task; an omitted map leaves every row bare.
+  assert.equal(section.rows[1]!.task, undefined);
+  assert.equal(buildWorktreesSection(list(wt({ name: "a", health: "muted" }))).rows[0]!.task, undefined);
+});
+
 test("worstWorktreeHealth: bad > warn > muted", () => {
   // A conflict (bad) dominates.
   assert.equal(
