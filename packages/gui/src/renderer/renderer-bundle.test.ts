@@ -39,6 +39,28 @@ test(
 );
 
 test(
+  "renderer bundle carries the live-agent fleet marker class",
+  { skip: !existsSync(bundlePath) ? "bundle not built (run pnpm build first)" : false },
+  () => {
+    const bundle = readFileSync(bundlePath, "utf8");
+    // The dex task row's live-agent marker — the fleet-view affordance.
+    assert.ok(
+      bundle.includes("dex-agent"),
+      "expected the `dex-agent` marker class in the renderer bundle",
+    );
+    // A couple of the state labels, so a gutted agent-marker map is caught too.
+    assert.ok(
+      bundle.includes("Agent running"),
+      "expected the `Agent running` hint in the bundle",
+    );
+    assert.ok(
+      bundle.includes("Agent blocked"),
+      "expected the `Agent blocked` hint in the bundle",
+    );
+  },
+);
+
+test(
   "renderer bundle carries the Dex tree/graph view toggle",
   { skip: !existsSync(bundlePath) ? "bundle not built (run pnpm build first)" : false },
   () => {
