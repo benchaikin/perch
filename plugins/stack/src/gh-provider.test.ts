@@ -318,6 +318,44 @@ test("mutations pass -R when a repo is supplied", async () => {
   ]);
 });
 
+test("mergePr shells `gh pr merge <number>` with the default squash strategy", async () => {
+  const { exec, calls } = recordingExec();
+  await ghStackProvider({ exec }).mergePr({ number: 42 });
+  assert.deepEqual(calls, [["pr", "merge", "42", "--squash"]]);
+});
+
+test("mergePr honors an explicit merge method", async () => {
+  const { exec, calls } = recordingExec();
+  await ghStackProvider({ exec }).mergePr({ number: 7, method: "rebase" });
+  await ghStackProvider({ exec }).mergePr({ number: 8, method: "merge" });
+  assert.deepEqual(calls, [
+    ["pr", "merge", "7", "--rebase"],
+    ["pr", "merge", "8", "--merge"],
+  ]);
+});
+
+test("mergePr passes -R when a repo is supplied (and no cwd targets it)", async () => {
+  const { exec, calls } = recordingExec();
+  await ghStackProvider({ exec }).mergePr({ number: 99, repo: "owner/repo" });
+  assert.deepEqual(calls, [["-R", "owner/repo", "pr", "merge", "99", "--squash"]]);
+});
+
+test("mergePr drops -R and targets by cwd when a cwd is configured", async () => {
+  const calls: { args: string[]; cwd?: string }[] = [];
+  const exec: Exec = (_cmd, args, opts) => {
+    calls.push({ args, cwd: opts?.cwd });
+    return Promise.resolve("");
+  };
+  await ghStackProvider({ exec, cwd: "/work/main" }).mergePr({ number: 5, repo: "owner/repo" });
+  assert.deepEqual(calls, [{ args: ["pr", "merge", "5", "--squash"], cwd: "/work/main" }]);
+});
+
+test("mergePr propagates a non-zero exit (GitHub rejected the merge)", async () => {
+  const exec: Exec = () =>
+    Promise.reject(new Error("Pull request is not mergeable: the base branch policy prohibits"));
+  await assert.rejects(() => ghStackProvider({ exec }).mergePr({ number: 3 }), /not mergeable/);
+});
+
 test("sync shells `gh stack sync` and reports success on a clean rebase", async () => {
   const { exec, calls } = recordingExec("Synced 3 branches onto main.\n");
   const result = await ghStackProvider({ exec }).sync();

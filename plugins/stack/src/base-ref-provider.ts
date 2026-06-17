@@ -196,6 +196,12 @@ export function baseRefProvider(options: BaseRefProviderOptions = {}): StackProv
     merge(): Promise<void> {
       return Promise.reject(new Error(`merge ${NOT_SUPPORTED}`));
     },
+    // The per-PR merge runs through `ghStackProvider` (it keys off a PR number,
+    // not stack tracking), so this fallback never serves it — present only to
+    // satisfy the interface.
+    mergePr(): Promise<void> {
+      return Promise.reject(new Error(`merge-pr ${NOT_SUPPORTED}`));
+    },
     checkout(): Promise<void> {
       return Promise.reject(new Error(`checkout ${NOT_SUPPORTED}`));
     },

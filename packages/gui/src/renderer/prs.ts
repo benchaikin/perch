@@ -18,6 +18,10 @@ let resolvingConflicts: string[] = [];
 let openAgentAvailable = false;
 /** Branches with an open-agent spawn in flight — their button shows a spinner. */
 let openingAgents: string[] = [];
+/** Whether the merge-pr action exists (gates the per-PR "Merge" button). */
+let mergePrAvailable = false;
+/** Branches with a merge in flight — their button shows a spinner. */
+let mergingPrs: string[] = [];
 
 /**
  * Build the "review comments to address" badge: a Font Awesome comment icon +
@@ -110,6 +114,44 @@ function openAgentBtnEl(row: PrRow): HTMLElement {
 }
 
 /**
+ * Build the per-PR "Merge" button, shown only on a standalone, mergeable PR row
+ * when the action exists (see {@link prCanMerge} for the gate; stacked layers
+ * never get it — those merge bottom-up via the stack-wide Sync/Merge). Clicking
+ * merges the PR via `stack.merge-pr` (`gh pr merge`); the main process confirms
+ * first, since a merge is outward-facing and hard to reverse. While the merge is
+ * in flight the button disables and shows a spinner, and the click is stopped
+ * from bubbling to the row's open-in-browser handler.
+ */
+function mergePrBtnEl(row: PrRow): HTMLElement {
+  const btn = document.createElement("button");
+  // Primary accent — on a mergeable row it's the recommended next action.
+  // `merge-pr-btn` is a marker class for targeting.
+  btn.className = "btn btn-primary btn-sm merge-pr-btn";
+  const inFlight = mergingPrs.includes(row.branch);
+  btn.disabled = inFlight;
+  btn.title = `Merge this PR (${row.repo})`;
+  if (inFlight) {
+    const spinner = document.createElement("i");
+    spinner.className = "fa-solid fa-circle-notch fa-spin";
+    btn.append(spinner, " Merging…");
+  } else {
+    const glyph = document.createElement("i");
+    glyph.className = "fa-solid fa-code-merge";
+    btn.append(glyph, " Merge");
+    btn.addEventListener("click", (e) => {
+      // Don't open the PR in the browser; just merge it.
+      e.stopPropagation();
+      void window.perch.mergePr({
+        number: row.number,
+        repo: row.repo,
+        headRefName: row.branch,
+      });
+    });
+  }
+  return btn;
+}
+
+/**
  * Build one PR row; clicking opens the PR in the browser. When `pos` is given
  * (a stacked PR), it shows the layer's position number instead of a dot.
  */
@@ -154,6 +196,12 @@ function prRowEl(row: PrRow, pos?: number): HTMLElement {
   // A merge conflict is already shown by the `⚠ merge` mergeable chip
   // (mergeable === "CONFLICTING"); don't double-indicate it with a `cf` badge.
   el.append(chips);
+
+  // A standalone, mergeable PR gets a one-click "Merge" button. Restricted to
+  // standalone rows (`pos === undefined`): stacked layers must merge bottom-up
+  // via the stack-wide action, never one layer in isolation. Hidden when the PR
+  // isn't mergeable or the action is absent.
+  if (pos === undefined && row.canMerge && mergePrAvailable) el.append(mergePrBtnEl(row));
 
   // A conflicting PR gets a one-click "Resolve conflicts" button that spins up
   // an agent on its branch — hidden for clean PRs and when the action is absent.
@@ -247,6 +295,8 @@ export function renderPrsPane(container: HTMLElement, state: PanelState): void {
   resolvingConflicts = state.resolvingConflicts;
   openAgentAvailable = state.openAgentAvailable;
   openingAgents = state.openingAgents;
+  mergePrAvailable = state.mergePrAvailable;
+  mergingPrs = state.mergingPrs;
 
   if (state.status === "ok") {
     for (const repo of state.repos) container.append(repoSectionEl(repo));

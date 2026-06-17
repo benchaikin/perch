@@ -28,7 +28,15 @@ import {
 } from "./resolve-conflicts.js";
 import { resolveStackView } from "./resolve-view.js";
 
-export type { Exec, ExecOptions, MergeOptions, StackProvider, SyncResult } from "./provider.js";
+export type {
+  Exec,
+  ExecOptions,
+  MergeMethod,
+  MergeOptions,
+  MergePrOptions,
+  StackProvider,
+  SyncResult,
+} from "./provider.js";
 export { ghStackProvider } from "./gh-provider.js";
 export { baseRefProvider } from "./base-ref-provider.js";
 export { resolveStackView } from "./resolve-view.js";
@@ -81,6 +89,12 @@ const StackConfig = z.object({
    * string/number, so this stays config-only (`plugins.stack.reviewBotIgnore`).
    */
   reviewBotIgnore: z.array(z.string()).optional(),
+  /**
+   * Strategy for the per-PR `merge-pr` action (`gh pr merge --<method>`).
+   * Defaults to `squash` (linear trunk history). Distinct from the stack-wide
+   * `merge`, which delegates the strategy to `gh stack merge`.
+   */
+  mergeMethod: z.enum(["squash", "merge", "rebase"]).default("squash"),
 });
 type StackConfig = z.infer<typeof StackConfig>;
 
@@ -150,6 +164,29 @@ function configStackDirection(config: unknown): StackDirection {
   return "bottom-to-top";
 }
 
+/**
+ * Read the resolved per-PR merge strategy from a capability's `ctx.config`,
+ * defaulting to `"squash"` when unset or malformed. Narrowed locally for the
+ * same reason as {@link configRepos}.
+ */
+function configMergeMethod(config: unknown): "squash" | "merge" | "rebase" {
+  if (config && typeof config === "object") {
+    const value = (config as StackConfig).mergeMethod;
+    if (value === "squash" || value === "merge" || value === "rebase") {
+      return value;
+    }
+  }
+  return "squash";
+}
+
+/** Best-effort message from a rejected `gh` invocation (carries gh's stderr). */
+function errorMessage(err: unknown): string {
+  if (err && typeof err === "object" && "message" in err) {
+    return String((err as { message: unknown }).message);
+  }
+  return String(err);
+}
+
 export default definePlugin({
   id: "stack",
   name: "Stack",
@@ -168,6 +205,19 @@ export default definePlugin({
       options: [
         { value: "bottom-to-top", label: "Base at top" },
         { value: "top-to-bottom", label: "Tip at top" },
+      ],
+    },
+    {
+      key: "mergeMethod",
+      type: "enum",
+      label: "Merge method",
+      description:
+        "How the per-PR Merge button merges a mergeable PR (gh pr merge). Squash keeps trunk history linear.",
+      default: "squash",
+      options: [
+        { value: "squash", label: "Squash" },
+        { value: "merge", label: "Merge commit" },
+        { value: "rebase", label: "Rebase" },
       ],
     },
   ]),
@@ -387,6 +437,48 @@ export default definePlugin({
         ghStackProvider({
           cwd: resolveRepoCwd(effectiveRepos(ctx.config, ctx.global), input?.repo),
         }).merge({}),
+    }),
+
+    /**
+     * Merge ONE mergeable PR by number (`gh pr merge --<method>`) — the per-PR
+     * complement of the stack-wide `merge` (`gh stack merge`, bottom-up). The
+     * natural completion of the My PRs row workflow: a standalone green/approved
+     * PR gets a one-click merge, where `resolve-conflicts` only clears the
+     * conflict so the user *can* merge.
+     *
+     * Deliberately single-PR and number-keyed — NOT for stacked layers, which
+     * must merge bottom-up via `stack.merge`; the GUI only offers this button on
+     * standalone PRs. The merge's own server-side mergeability check is the
+     * authority: `gh pr merge` exits non-zero (→ `{ ok:false }`) when the PR is
+     * not mergeable, checks are pending, or branch protection rejects it, so a
+     * stale panel can't force a bad merge. MCP stays off (agents drive `gh`).
+     */
+    "merge-pr": action({
+      summary: "Merge a single mergeable PR by number (gh pr merge)",
+      // `number` is required (the PR to merge); `headRefName` is accepted for
+      // parity with the other per-PR actions (the GUI passes it) but the merge
+      // keys off `number`.
+      input: z.object({
+        repo: z.string().optional(),
+        number: z.number().int(),
+        headRefName: z.string().optional(),
+      }),
+      run: async ({ input, ctx }) => {
+        const cwd = resolveRepoCwd(effectiveRepos(ctx.config, ctx.global), input.repo);
+        const method = configMergeMethod(ctx.config);
+        try {
+          await ghStackProvider({ cwd }).mergePr({ number: input.number, method });
+          const message = `Merged PR #${input.number} (${method}).`;
+          ctx.log(message);
+          return { ok: true, message };
+        } catch (err) {
+          // gh's stderr explains the rejection (not mergeable, pending checks,
+          // branch protection, needs review) — surface it verbatim.
+          const message = `Couldn't merge PR #${input.number}: ${errorMessage(err)}`;
+          ctx.log(message);
+          return { ok: false, message };
+        }
+      },
     }),
 
     checkout: action({

@@ -39,7 +39,14 @@ import { execFile } from "node:child_process";
 
 import type { CiStatus, StackGraph, StackLayer } from "./graph.js";
 import { StackGraph as StackGraphSchema } from "./graph.js";
-import type { Exec, ExecOptions, MergeOptions, StackProvider, SyncResult } from "./provider.js";
+import type {
+  Exec,
+  ExecOptions,
+  MergeOptions,
+  MergePrOptions,
+  StackProvider,
+  SyncResult,
+} from "./provider.js";
 
 /**
  * Default runner: spawn a real process and resolve its stdout. On a non-zero
@@ -532,6 +539,18 @@ export function ghStackProvider(options: GhStackProviderOptions = {}): StackProv
     },
     async merge(opts: MergeOptions): Promise<void> {
       await exec("gh", repoArgs(opts.repo, ["stack", "merge"]), execOpts);
+    },
+    async mergePr(opts: MergePrOptions): Promise<void> {
+      // Passing the strategy flag (`--squash`/`--merge`/`--rebase`) makes
+      // `gh pr merge` non-interactive: it merges immediately when the PR is
+      // mergeable and exits non-zero (which propagates) otherwise — the merge's
+      // own server-side mergeability re-check.
+      const method = opts.method ?? "squash";
+      await exec(
+        "gh",
+        repoArgs(opts.repo, ["pr", "merge", String(opts.number), `--${method}`]),
+        execOpts,
+      );
     },
     async checkout(ref: string | number): Promise<void> {
       await exec("gh", ["stack", "checkout", String(ref)], execOpts);

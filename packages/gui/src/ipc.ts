@@ -27,6 +27,16 @@ export interface ResolveConflictsRequest {
   number: number;
 }
 
+/** Renderer → main payload to merge a single mergeable PR. */
+export interface MergePrRequest {
+  /** The PR number to merge (`gh pr merge` keys off this). */
+  number: number;
+  /** The repo the PR belongs to (name), selecting which configured repo to target. */
+  repo: string;
+  /** The PR's head branch — drives the in-flight spinner key + the confirm prompt. */
+  headRefName: string;
+}
+
 /** Renderer → main payload to open a free-form agent session for a PR. */
 export interface OpenAgentRequest {
   /** The PR's head branch to check out + open the session on. */
@@ -59,6 +69,13 @@ export const Channels = {
    * clear its in-progress state.
    */
   openAgent: "perch:open-agent",
+  /**
+   * Renderer → main `invoke`: merge a single mergeable PR (payload: a
+   * {@link MergePrRequest}). Main confirms (a merge is hard to reverse), runs
+   * `stack.merge-pr`, refreshes the overview so the merged PR drops out, and
+   * resolves when done so the button can clear its in-progress state.
+   */
+  mergePr: "perch:merge-pr",
   /** Renderer → main: open a PR's URL in the browser (payload: the URL). */
   openPr: "perch:open-pr",
   /**
@@ -142,6 +159,13 @@ export interface PerchBridge {
    * its in-progress UI; the success/error notice is pushed via panel state.
    */
   openAgent(request: OpenAgentRequest): Promise<void>;
+  /**
+   * Ask the main process to merge a single mergeable PR (it confirms first).
+   * Resolves when the merge finishes (or fails) and the overview has refreshed,
+   * so the caller can clear its in-progress UI; the outcome is pushed via panel
+   * state.
+   */
+  mergePr(request: MergePrRequest): Promise<void>;
   /** Ask the main process to open a PR's URL in the browser. */
   openPr(url: string): void;
   /** Ask the main process to start/stop/restart a service (by name). */
