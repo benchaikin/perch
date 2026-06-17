@@ -303,11 +303,13 @@ body {
   font-size: 11px;
 }
 
-/* The delete (trash) control on a dex row: a confirm-armed trash button, sized to
-   match the in-row controls. The wrapper sits at the trailing edge — either pushed
-   by a preceding spawn/worktree's auto-margin, or anchored here when neither is
-   present (`.dex-delete-anchor`). Inner icon-buttons drop .icon-btn's own
-   margin-left:auto so they stay a tight cluster instead of spreading apart. */
+/* The delete (trash) control on a dex row: a single trash button, sized to match
+   the in-row controls. (The confirmation is a native pop-up dialog raised from
+   main, so there's no inline confirm/cancel pair to style.) The wrapper sits at
+   the trailing edge — either pushed by a preceding spawn/worktree's auto-margin,
+   or anchored here when neither is present (`.dex-delete-anchor`). The inner
+   icon-button drops .icon-btn's own margin-left:auto so the trailing cluster stays
+   tight instead of spreading apart. */
 .dex-delete {
   align-items: center;
   gap: 2px;
@@ -319,19 +321,6 @@ body {
 .dex-graph-row .dex-delete .icon-btn {
   margin-left: 0;
   padding: 1px 4px;
-  font-size: 11px;
-}
-/* The armed confirm button reads as the destructive "go": red glyph, brightening
-   on hover. The cancel and resting trash stay neutral until hovered. */
-.dex-delete .dex-delete-confirm {
-  color: var(--bad);
-}
-.dex-delete .dex-delete-confirm:hover {
-  color: var(--bad);
-  background: rgba(var(--bad-rgb), 0.15);
-}
-.dex-delete-warn {
-  color: var(--warn);
   font-size: 11px;
 }
 
@@ -351,11 +340,6 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-}
-/* The labeled delete confirm carries the destructive red accent + border. */
-.dex-detail .dex-detail-actions .btn.btn-sm.dex-delete-confirm {
-  color: var(--bad);
-  border-color: var(--bad);
 }
 
 /* Collapsible worktree repo header button. Styled like a header but interactive:
