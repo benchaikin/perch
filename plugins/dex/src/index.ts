@@ -34,6 +34,7 @@ import {
   runRemoveBlocker,
 } from "./blocker.js";
 import { type DeleteInput, type DeleteResult, runDelete } from "./delete.js";
+import { type EditInput, type EditResult, runEdit } from "./edit.js";
 import { type NewInput, type NewResult, runNew } from "./new.js";
 import { LandBoard, landNotifications, runLand } from "./land.js";
 import { dexNotifications } from "./notify.js";
@@ -59,6 +60,8 @@ export { resolveBlockerStore, runAddBlocker, runRemoveBlocker } from "./blocker.
 export type { BlockerDeps, BlockerInput, BlockerResult } from "./blocker.js";
 export { locateTaskStore, runDelete } from "./delete.js";
 export type { DeleteDeps, DeleteInput, DeleteResult } from "./delete.js";
+export { runEdit } from "./edit.js";
+export type { EditDeps, EditInput, EditResult } from "./edit.js";
 export { newTaskPrompt, newTaskTitle, resolveNewRepo, runNew } from "./new.js";
 export type { NewDeps, NewInput, NewResult } from "./new.js";
 export {
@@ -148,6 +151,19 @@ const SpawnInputSchema = z.object({
 const DeleteInputSchema = z.object({
   id: z.string(),
   repo: z.string().optional(),
+});
+
+/**
+ * The `dex.edit` action input: a task id, an optional explicit repo override, and
+ * the new values for the editable metadata fields. Each field is optional —
+ * omitting one leaves it unchanged (no flag sent); only what's present is edited.
+ */
+const EditInputSchema = z.object({
+  id: z.string(),
+  repo: z.string().optional(),
+  name: z.string().optional(),
+  description: z.string().optional(),
+  priority: z.number().optional(),
 });
 
 /**
@@ -378,6 +394,40 @@ export default definePlugin({
         // Same repo precedence as `dex.tasks`/`dex.spawn`: `dirs` → global.repos.
         const repos = effectiveDirs(cfg.dirs ?? [], ctx.global);
         return runDelete(input, {
+          exec: execOverride ?? defaultExec,
+          dexBin: cfg.dexBin ?? "dex",
+          repos,
+          log: ctx.log,
+        });
+      },
+    }),
+
+    /**
+     * Edit a dex task's metadata (name, description, priority) in whichever
+     * monitored repo's store holds it — the board's "correct the ticket"
+     * counterpart to `delete`, projecting the `dex` CLI's `edit` onto perch's
+     * surfaces so a task's name/description can be fixed without dropping to the
+     * CLI. The store is `input.repo`'s when given, else found by probing the
+     * configured stores (same precedence as `spawn`/`delete`). Only the fields
+     * present in the input become `dex edit` flags, so an unchanged field is never
+     * sent; a blank name is rejected and a no-op succeeds quietly. Daemon-side;
+     * MCP-exposed (yielding `perch dex edit <id> -n ... -d ...` + a typed tool).
+     * Never throws: any failure returns `{ ok:false, message }`.
+     *
+     * Unlike delete there is no live-worktree guard — name/description/priority are
+     * pure metadata, safe to change while an agent works the task. The GUI detail
+     * screen drives this with an inline editor (the non-activating panel can't rely
+     * on a `window.prompt`).
+     */
+    edit: action<EditInput, DexConfig, EditResult>({
+      summary: "Edit a dex task's name/description/priority in the store that holds it",
+      input: EditInputSchema,
+      expose: { mcp: true },
+      run: ({ input, ctx }): Promise<EditResult> => {
+        const cfg = configOf(ctx.config);
+        // Same repo precedence as `dex.tasks`/`dex.spawn`/`dex.delete`.
+        const repos = effectiveDirs(cfg.dirs ?? [], ctx.global);
+        return runEdit(input, {
           exec: execOverride ?? defaultExec,
           dexBin: cfg.dexBin ?? "dex",
           repos,

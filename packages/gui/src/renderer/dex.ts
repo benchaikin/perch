@@ -23,6 +23,7 @@ import type { LandableState } from "../landable.js";
 import type { AgentState, AgentSummary } from "../agents-state.js";
 import type { LinkedWorktree } from "../worktree-task-link.js";
 import type { DexViewMode } from "../window-state.js";
+import type { DexEditRequest } from "../ipc.js";
 import { requestRender } from "./rerender.js";
 
 /** Collapsed dex epic ids (their descendants are hidden); preserved across re-renders. */
@@ -72,6 +73,28 @@ let newTaskJustArmed = false;
 const confirmingDeleteDexIds = new Set<string>();
 /** Dex task ids whose delete has been confirmed and is still in flight (spinner). */
 const deletingDexIds = new Set<string>();
+/**
+ * The dex task whose detail view is in inline-edit mode (name + description
+ * inputs), if any. Tracked here (not in pushed state) so edit mode survives the
+ * board's periodic re-render; only one task edits at a time (the detail view
+ * shows a single task). Always equals {@link selectedDexId} while set.
+ */
+let editingDexId: string | undefined;
+/**
+ * The in-progress edit draft for the task in edit mode — seeded from the row on
+ * entering edit mode and updated on each keystroke, so typed content survives a
+ * background re-render (which rebuilds the detail from the row, not the live DOM
+ * inputs). `undefined` when not editing.
+ */
+let dexEditDraft: { name: string; description: string } | undefined;
+/** True after a save attempt with a blank name — flags the name input invalid
+ *  (a task must keep a name) and keeps edit mode open. Cleared on the next edit. */
+let dexEditNameInvalid = false;
+/** True right after entering edit mode, so the name input grabs focus once. */
+let dexEditJustOpened = false;
+/** Dex task ids whose inline edit is being saved (in flight) — disables the
+ *  Save/Cancel controls and shows a spinner. */
+const savingDexIds = new Set<string>();
 /**
  * The dex task being dragged to create a dependency edge (drag-and-drop), plus its
  * project — the source of "drop A onto B ⇒ B blocked-by A". Tracked at module scope
@@ -448,12 +471,18 @@ function dexDetailEl(row: DexRow): HTMLElement {
   const wrap = document.createElement("div");
   wrap.className = "dex-detail";
 
+  // Edit mode swaps the name into a text input, the description into a textarea,
+  // and the actions row into Save/Cancel (see dexEnterEdit / runDexEdit).
+  const editing = editingDexId === row.id;
+
   const back = document.createElement("button");
   back.className = "btn btn-sm dex-back";
   const bi = document.createElement("i");
   bi.className = "fa-solid fa-arrow-left";
   back.append(bi, " Tasks");
   back.addEventListener("click", () => {
+    // Leaving the detail also abandons any in-progress edit.
+    dexExitEdit();
     selectedDexId = undefined;
     requestRender();
   });
@@ -463,10 +492,14 @@ function dexDetailEl(row: DexRow): HTMLElement {
   head.className = "dex-detail-head";
   const marker = document.createElement("i");
   marker.className = dexMarkerClass(row);
-  const title = document.createElement("span");
-  title.className = "dex-detail-title";
-  title.textContent = row.name;
-  head.append(marker, title);
+  if (editing) {
+    head.append(marker, dexNameInputEl(row));
+  } else {
+    const title = document.createElement("span");
+    title.className = "dex-detail-title";
+    title.textContent = row.name;
+    head.append(marker, title);
+  }
   wrap.append(head);
 
   const meta = document.createElement("div");
@@ -492,16 +525,27 @@ function dexDetailEl(row: DexRow): HTMLElement {
   if (row.agent) meta.append(dexAgentMarkerEl(row.agent));
   wrap.append(meta);
 
-  // A ready, unblocked, unworked task gets a launch button right here — the
-  // detail-page twin of the per-row start button. canSpawnDex already excludes
-  // tasks with a live agent/worktree, so the agent marker above stands in then.
-  // The labeled delete control sits alongside it (the detail-page twin of the
-  // per-row trash button).
+  // The actions row. In edit mode it's Save/Cancel; otherwise the spawn launch
+  // (for a ready, unblocked, unworked task — canSpawnDex excludes live
+  // agent/worktree tasks, so the agent marker above stands in then), the Edit
+  // button, and the labeled delete control (twins of the per-row controls).
   const actions = document.createElement("div");
   actions.className = "dex-detail-actions";
-  if (canSpawnDex(row)) actions.append(dexDetailSpawnBtnEl(row.id));
-  actions.append(dexDeleteControlEl(row, true));
+  if (editing) {
+    actions.append(dexEditSaveBtnEl(row), dexEditCancelBtnEl());
+  } else {
+    if (canSpawnDex(row)) actions.append(dexDetailSpawnBtnEl(row.id));
+    actions.append(dexDetailEditBtnEl(row));
+    actions.append(dexDeleteControlEl(row, true));
+  }
   wrap.append(actions);
+
+  if (editing) {
+    // The description as a textarea, seeded from the draft — a multi-line editor
+    // so the description's line breaks are preserved faithfully.
+    wrap.append(dexDescriptionTextareaEl(row));
+    return wrap;
+  }
 
   if (row.description) wrap.append(dexBodyEl(row.description));
   if (row.result) {
@@ -511,6 +555,201 @@ function dexDetailEl(row: DexRow): HTMLElement {
     wrap.append(label, dexBodyEl(row.result));
   }
   return wrap;
+}
+
+/**
+ * Enter inline-edit mode for the detail screen's task: seed the draft from the
+ * row's current name/description and flag the name input to grab focus on the
+ * next render. The draft (not the live DOM inputs) is the source of truth, so a
+ * background board re-render rebuilds the editor without losing typed content.
+ */
+function dexEnterEdit(row: DexRow): void {
+  editingDexId = row.id;
+  dexEditDraft = { name: row.name, description: row.description };
+  dexEditNameInvalid = false;
+  dexEditJustOpened = true;
+}
+
+/** Leave inline-edit mode and drop the draft (cancel, save-complete, or navigate away). */
+function dexExitEdit(): void {
+  editingDexId = undefined;
+  dexEditDraft = undefined;
+  dexEditNameInvalid = false;
+  dexEditJustOpened = false;
+}
+
+/**
+ * The detail screen's "Edit" button: switches the read-only detail into inline
+ * edit mode (name input + description textarea), seeding the draft from the row.
+ * Sits in the actions row alongside Spawn/Delete — closing the
+ * create/spawn/delete/edit loop on the panel.
+ */
+function dexDetailEditBtnEl(row: DexRow): HTMLElement {
+  const btn = document.createElement("button");
+  btn.className = "btn btn-sm dex-edit-btn";
+  btn.title = "Edit this task's name and description";
+  btn.setAttribute("aria-label", btn.title);
+  const i = document.createElement("i");
+  i.className = "fa-solid fa-pen";
+  btn.append(i, " Edit");
+  btn.addEventListener("click", () => {
+    dexEnterEdit(row);
+    requestRender();
+  });
+  return btn;
+}
+
+/**
+ * The name text input for edit mode, seeded from the draft and bound to it on
+ * input (so typing survives a re-render). Enter saves, Escape cancels. Flags
+ * invalid (a blank name) after a rejected save. Grabs focus once on entering edit
+ * mode. The `if (!dexEditDraft)` seed is a safety net — {@link dexEnterEdit}
+ * normally seeds the draft before this renders.
+ */
+function dexNameInputEl(row: DexRow): HTMLInputElement {
+  if (!dexEditDraft) dexEditDraft = { name: row.name, description: row.description };
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = `dex-edit-name${dexEditNameInvalid ? " invalid" : ""}`;
+  input.value = dexEditDraft.name;
+  input.placeholder = "Task name";
+  input.setAttribute("aria-label", "Task name");
+  if (dexEditNameInvalid) input.setAttribute("aria-invalid", "true");
+  input.addEventListener("input", () => {
+    if (dexEditDraft) dexEditDraft.name = input.value;
+    if (dexEditNameInvalid && input.value.trim() !== "") {
+      dexEditNameInvalid = false;
+      input.classList.remove("invalid");
+      input.removeAttribute("aria-invalid");
+    }
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      dexExitEdit();
+      requestRender();
+    } else if (e.key === "Enter") {
+      // Single-line name field: Enter commits (the textarea keeps Enter for newlines).
+      e.preventDefault();
+      void runDexEdit(row);
+    }
+  });
+  // Focus + select once, when edit mode first opens.
+  if (dexEditJustOpened) {
+    dexEditJustOpened = false;
+    setTimeout(() => {
+      input.focus();
+      input.select();
+    }, 0);
+  }
+  return input;
+}
+
+/**
+ * The description textarea for edit mode, seeded from the draft and bound to it on
+ * input (so multi-line content survives a re-render). Escape cancels; Enter inserts
+ * a newline as usual (only the name field commits on Enter). An empty value is a
+ * legitimate clear.
+ */
+function dexDescriptionTextareaEl(row: DexRow): HTMLTextAreaElement {
+  if (!dexEditDraft) dexEditDraft = { name: row.name, description: row.description };
+  const area = document.createElement("textarea");
+  area.className = "dex-edit-description";
+  area.value = dexEditDraft.description;
+  area.placeholder = "Description (optional)";
+  area.setAttribute("aria-label", "Task description");
+  area.rows = 8;
+  area.addEventListener("input", () => {
+    if (dexEditDraft) dexEditDraft.description = area.value;
+  });
+  area.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      dexExitEdit();
+      requestRender();
+    }
+  });
+  return area;
+}
+
+/**
+ * The Save (✓) control for edit mode: commits the draft via {@link runDexEdit}.
+ * Shows a spinner while the save is in flight.
+ */
+function dexEditSaveBtnEl(row: DexRow): HTMLElement {
+  const btn = document.createElement("button");
+  btn.className = "btn btn-sm dex-edit-save";
+  const inFlight = savingDexIds.has(row.id);
+  btn.disabled = inFlight;
+  btn.title = inFlight ? "Saving…" : "Save changes";
+  btn.setAttribute("aria-label", btn.title);
+  const i = document.createElement("i");
+  i.className = inFlight ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-check";
+  btn.append(i, inFlight ? " Saving…" : " Save");
+  if (!inFlight) btn.addEventListener("click", () => void runDexEdit(row));
+  return btn;
+}
+
+/** The Cancel (✗) control for edit mode: discards the draft and leaves edit mode. */
+function dexEditCancelBtnEl(): HTMLElement {
+  const btn = document.createElement("button");
+  btn.className = "btn btn-sm dex-edit-cancel";
+  btn.title = "Cancel";
+  btn.setAttribute("aria-label", btn.title);
+  const i = document.createElement("i");
+  i.className = "fa-solid fa-xmark";
+  btn.append(i, " Cancel");
+  btn.addEventListener("click", () => {
+    dexExitEdit();
+    requestRender();
+  });
+  return btn;
+}
+
+/**
+ * Commit the inline edit: validate a non-blank name, compute which fields changed
+ * vs the row (so unchanged fields aren't sent), and — if anything changed — save
+ * via `window.perch.dexEdit`. A blank name flags the input invalid and stays in
+ * edit mode; a no-op (nothing changed) just leaves edit mode without a call. While
+ * the save is in flight the id sits in `savingDexIds` (spinner); on completion edit
+ * mode closes and the board refresh (driven from main) reflects the change.
+ */
+async function runDexEdit(row: DexRow): Promise<void> {
+  const id = row.id;
+  if (savingDexIds.has(id) || !dexEditDraft) return;
+
+  const name = dexEditDraft.name.trim();
+  if (name === "") {
+    // A task must keep a name — flag the field and stay in edit mode.
+    dexEditNameInvalid = true;
+    dexEditJustOpened = true; // re-focus the field
+    requestRender();
+    return;
+  }
+
+  // Only send the fields that actually changed (description compared verbatim so a
+  // whitespace-only edit still counts; an empty description is a valid clear).
+  const request: DexEditRequest = { id };
+  if (name !== row.name) request.name = name;
+  if (dexEditDraft.description !== row.description) request.description = dexEditDraft.description;
+
+  if (request.name === undefined && request.description === undefined) {
+    // No-op: nothing changed. Leave edit mode quietly without a daemon round-trip.
+    dexExitEdit();
+    requestRender();
+    return;
+  }
+
+  savingDexIds.add(id);
+  requestRender();
+  try {
+    await window.perch.dexEdit(request);
+  } finally {
+    savingDexIds.delete(id);
+    // Leave edit mode on completion; the board refresh from main updates the row.
+    dexExitEdit();
+    requestRender();
+  }
 }
 
 /** The mode shown after toggling away from `mode` — the two-state flip. */
@@ -864,6 +1103,7 @@ export function dexSectionEl(
       return el;
     }
     selectedDexId = undefined; // selection went away (task completed/removed)
+    dexExitEdit(); // drop any in-progress edit for the now-gone task
   }
 
   // Plugin present but nothing open (e.g. everything's completed) — show an

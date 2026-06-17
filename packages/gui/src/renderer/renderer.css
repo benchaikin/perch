@@ -783,6 +783,48 @@ body {
   line-height: 1.5;
 }
 
+/* Inline edit-mode fields on the detail screen: the name text input (in the
+   header, in place of the title) and the description textarea (in place of the
+   body). Both adopt the panel's surface + rule so they read as native editors,
+   not browser-chrome inputs; focus brightens the border to the accent. */
+.dex-edit-name,
+.dex-edit-description {
+  width: 100%;
+  color: var(--fg);
+  background: var(--chip-bg);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+.dex-edit-name {
+  font-weight: 600;
+  font-size: 13px;
+}
+.dex-edit-description {
+  margin-top: 6px;
+  resize: vertical;
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, "Courier New", monospace;
+  font-size: 12px;
+  color: var(--detail-fg);
+  line-height: 1.5;
+}
+.dex-edit-name:focus,
+.dex-edit-description:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+/* A rejected (blank) name flags the field with the destructive accent until the
+   next keystroke makes it non-empty. */
+.dex-edit-name.invalid {
+  border-color: var(--bad);
+}
+/* The Save control carries the affirmative accent border, mirroring how the
+   labeled delete-confirm carries the destructive one. */
+.dex-detail .dex-detail-actions .btn.btn-sm.dex-edit-save {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 /* The per-service status text (e.g. "running · pid 42", "crashed · exit 1"). */
 .service-status {
   flex: 0 0 auto;
