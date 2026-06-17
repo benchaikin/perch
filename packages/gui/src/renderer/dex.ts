@@ -52,6 +52,15 @@ let spawningAllDex = false;
 const confirmingDeleteDexIds = new Set<string>();
 /** Dex task ids whose delete has been confirmed and is still in flight (spinner). */
 const deletingDexIds = new Set<string>();
+/**
+ * The dex task being dragged to create a dependency edge (drag-and-drop), plus its
+ * project — the source of "drop A onto B ⇒ B blocked-by A". Tracked at module scope
+ * (not in pushed state) so the drop handler on the target row can read which task
+ * was picked up, and so a cross-project drop is rejected before hitting the daemon.
+ * `undefined` when no drag is in flight.
+ */
+let draggingDexId: string | undefined;
+let draggingDexProject: string | undefined;
 
 /**
  * Status-specific marker glyphs for dex task rows. Distinct *shapes* (open
@@ -361,6 +370,9 @@ function dexRowEl(row: DexRow): HTMLElement {
   // Every task gets a trash control (a confirmed delete), so a mistaken/duplicate
   // task can be cleared straight from the row.
   el.append(dexDeleteControlEl(row));
+
+  // Drag this row onto another to wire a dependency (drop A onto B ⇒ B blocked-by A).
+  makeDexRowDraggable(el, row);
 
   el.addEventListener("click", () => {
     selectedDexId = row.id;
@@ -713,6 +725,10 @@ function dexGraphRowEl(row: DexRow, depth: number): HTMLElement {
   if (canSpawnDex(row)) el.append(dexSpawnBtnEl(row.id));
   el.append(dexDeleteControlEl(row));
 
+  // Drag this node onto another to wire a dependency — the graph view is the natural
+  // surface for editing blocker edges (drop A onto B ⇒ B blocked-by A).
+  makeDexRowDraggable(el, row);
+
   el.addEventListener("click", () => {
     selectedDexId = row.id;
     requestRender();
@@ -904,6 +920,79 @@ async function runDexDelete(id: string): Promise<void> {
     deletingDexIds.delete(id);
     requestRender();
   }
+}
+
+/**
+ * Whether `target` is a valid drop target for the in-flight dependency drag: there
+ * is a drag, it isn't a self-drop (A onto A is a no-op), and source + target share
+ * a project — a blocker edge can only link tasks in the same store, so a
+ * cross-project drop is rejected before it reaches the daemon. Cycles aren't checked
+ * here; dex itself rejects them and the daemon surfaces that as a clear notice.
+ */
+function isValidDexDropTarget(target: DexRow): boolean {
+  if (draggingDexId === undefined || draggingDexId === target.id) return false;
+  return target.project === draggingDexProject;
+}
+
+/** Strip the transient drop-target highlight from every dex row (drag end / drop). */
+function clearDexDropHighlights(): void {
+  for (const el of document.querySelectorAll(".dex-drop-target")) {
+    el.classList.remove("dex-drop-target");
+  }
+}
+
+/**
+ * Wire drag-and-drop dependency editing onto a dex task row. The row becomes
+ * draggable; dropping the dragged task onto ANOTHER row makes the drop target
+ * blocked-by the dragged task (drop A onto B ⇒ B blocked-by A). A valid target
+ * (different task, same project) lights up while hovered; the drop fires
+ * `dexAddBlocker` and the board refreshes (with a success/error toast) from main.
+ *
+ * Shared by the tree and graph row builders so both surfaces edit dependencies
+ * identically. The drag gesture doesn't open the row's detail — HTML5 drag suppresses
+ * the trailing click — so the existing click-to-open behavior is untouched.
+ */
+function makeDexRowDraggable(el: HTMLElement, row: DexRow): void {
+  el.draggable = true;
+
+  el.addEventListener("dragstart", (e) => {
+    draggingDexId = row.id;
+    draggingDexProject = row.project;
+    el.classList.add("dex-dragging");
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = "link";
+      // Carry the id too, so a drop still resolves if module state is ever lost.
+      e.dataTransfer.setData("text/plain", row.id);
+    }
+  });
+
+  el.addEventListener("dragend", () => {
+    draggingDexId = undefined;
+    draggingDexProject = undefined;
+    el.classList.remove("dex-dragging");
+    clearDexDropHighlights();
+  });
+
+  el.addEventListener("dragover", (e) => {
+    if (!isValidDexDropTarget(row)) return;
+    // Calling preventDefault marks this a valid drop zone (and lets the drop fire).
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "link";
+    el.classList.add("dex-drop-target");
+  });
+
+  el.addEventListener("dragleave", () => {
+    el.classList.remove("dex-drop-target");
+  });
+
+  el.addEventListener("drop", (e) => {
+    e.preventDefault();
+    el.classList.remove("dex-drop-target");
+    const sourceId = draggingDexId ?? e.dataTransfer?.getData("text/plain") ?? undefined;
+    if (!sourceId || !isValidDexDropTarget(row)) return;
+    // Drop source onto this row ⇒ this row (the target) becomes blocked by source.
+    void window.perch.dexAddBlocker({ blockedId: row.id, blockerId: sourceId });
+  });
 }
 
 /**

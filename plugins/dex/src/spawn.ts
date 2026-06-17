@@ -271,6 +271,25 @@ export class DexRunner {
     args.push("delete", id, "--force");
     return this.exec(this.dexBin, args);
   }
+
+  /**
+   * Add or remove a blocker edge via `dex [--storage-path P] edit <blockedId>
+   * --add-blocker|--remove-blocker <blockerId>` — wiring a dependency so
+   * `blockedId` waits on `blockerId` (or unwiring one). Resolves with the CLI's
+   * stdout; rejects (surfacing stderr) on failure. dex itself rejects a self-block
+   * and a cycle with a clear message, so the caller can pass those straight through.
+   */
+  async editBlocker(
+    op: "add" | "remove",
+    blockedId: string,
+    blockerId: string,
+    storagePath?: string,
+  ): Promise<string> {
+    const args: string[] = [];
+    if (storagePath) args.push("--storage-path", storagePath);
+    args.push("edit", blockedId, op === "add" ? "--add-blocker" : "--remove-blocker", blockerId);
+    return this.exec(this.dexBin, args);
+  }
 }
 
 /** Dependencies for {@link runSpawn} — the seams the action injects, tests stub. */

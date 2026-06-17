@@ -27,6 +27,12 @@ import {
 } from "@perch/sdk";
 
 import { buildDexBoard, DexBoard, type DexGroup, parseRawTasks } from "./normalize.js";
+import {
+  type BlockerInput,
+  type BlockerResult,
+  runAddBlocker,
+  runRemoveBlocker,
+} from "./blocker.js";
 import { type DeleteInput, type DeleteResult, runDelete } from "./delete.js";
 import { LandBoard, landNotifications, runLand } from "./land.js";
 import { dexNotifications } from "./notify.js";
@@ -48,6 +54,8 @@ export {
   RawDexTask,
 } from "./normalize.js";
 export type { DexGroup } from "./normalize.js";
+export { resolveBlockerStore, runAddBlocker, runRemoveBlocker } from "./blocker.js";
+export type { BlockerDeps, BlockerInput, BlockerResult } from "./blocker.js";
 export { locateTaskStore, runDelete } from "./delete.js";
 export type { DeleteDeps, DeleteInput, DeleteResult } from "./delete.js";
 export {
@@ -136,6 +144,17 @@ const SpawnInputSchema = z.object({
 /** The `dex.delete` action input: a task id, with an optional explicit repo override. */
 const DeleteInputSchema = z.object({
   id: z.string(),
+  repo: z.string().optional(),
+});
+
+/**
+ * The `dex.add-blocker` / `dex.remove-blocker` action input: the blocked task, the
+ * blocker it waits on, and an optional explicit repo override. Drop A onto B ⇒
+ * `{ blockedId: B, blockerId: A }`.
+ */
+const BlockerInputSchema = z.object({
+  blockedId: z.string(),
+  blockerId: z.string(),
   repo: z.string().optional(),
 });
 
@@ -345,6 +364,58 @@ export default definePlugin({
         // Same repo precedence as `dex.tasks`/`dex.spawn`: `dirs` → global.repos.
         const repos = effectiveDirs(cfg.dirs ?? [], ctx.global);
         return runDelete(input, {
+          exec: execOverride ?? defaultExec,
+          dexBin: cfg.dexBin ?? "dex",
+          repos,
+          log: ctx.log,
+        });
+      },
+    }),
+
+    /**
+     * Add a blocker edge: make `blockedId` depend on `blockerId` (so `blockedId`
+     * is "blocked" until `blockerId` completes) — the daemon half of the board's
+     * drag-and-drop dependency gesture (drop task A onto task B ⇒ B blocked-by A).
+     * The store is `input.repo`'s when given, else found by probing the configured
+     * stores; both tasks must live in the SAME store (a dependency can't span
+     * projects). Runs `dex edit <blockedId> --add-blocker <blockerId>`; dex itself
+     * rejects a self-block and a cycle with a clear message, surfaced verbatim.
+     * Daemon-side; MCP-exposed (`perch dex add-blocker --blockedId B --blockerId A`
+     * + a typed tool). Never throws: any failure returns `{ ok:false, message }`.
+     */
+    "add-blocker": action<BlockerInput, DexConfig, BlockerResult>({
+      summary: "Make one dex task depend on (be blocked by) another",
+      input: BlockerInputSchema,
+      expose: { mcp: true },
+      run: ({ input, ctx }): Promise<BlockerResult> => {
+        const cfg = configOf(ctx.config);
+        // Same repo precedence as `dex.tasks`/`dex.spawn`/`dex.delete`.
+        const repos = effectiveDirs(cfg.dirs ?? [], ctx.global);
+        return runAddBlocker(input, {
+          exec: execOverride ?? defaultExec,
+          dexBin: cfg.dexBin ?? "dex",
+          repos,
+          log: ctx.log,
+        });
+      },
+    }),
+
+    /**
+     * Remove a blocker edge: drop `blockerId` from `blockedId`'s blockers — the
+     * inverse of `add-blocker`, so a mistakenly-wired dependency can be undone from
+     * the board without dropping to the CLI. Same store resolution as `add-blocker`.
+     * Runs `dex edit <blockedId> --remove-blocker <blockerId>`. Daemon-side;
+     * MCP-exposed (`perch dex remove-blocker --blockedId B --blockerId A` + a typed
+     * tool). Never throws: any failure returns `{ ok:false, message }`.
+     */
+    "remove-blocker": action<BlockerInput, DexConfig, BlockerResult>({
+      summary: "Remove a blocker (dependency) from one dex task",
+      input: BlockerInputSchema,
+      expose: { mcp: true },
+      run: ({ input, ctx }): Promise<BlockerResult> => {
+        const cfg = configOf(ctx.config);
+        const repos = effectiveDirs(cfg.dirs ?? [], ctx.global);
+        return runRemoveBlocker(input, {
           exec: execOverride ?? defaultExec,
           dexBin: cfg.dexBin ?? "dex",
           repos,

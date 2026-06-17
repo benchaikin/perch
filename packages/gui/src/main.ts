@@ -38,6 +38,7 @@ import { DaemonUnavailableError, PerchClient } from "@perch/cli";
 import { shouldShowNotification, toNotifyOptions } from "./notify.js";
 import {
   Channels,
+  type DexBlockerRequest,
   type OpenAgentRequest,
   type ResolveConflictsRequest,
   type ServiceActionRequest,
@@ -680,6 +681,36 @@ async function deleteDex(id: string): Promise<void> {
   }
 }
 
+/**
+ * Add a dependency (blocker) edge between two dex tasks via the dex plugin's
+ * `add-blocker` action — `blockedId` becomes blocked by `blockerId` — then refresh
+ * the board and toast the outcome. Driven by the renderer's drag-and-drop (drop A
+ * onto B ⇒ B blocked-by A). Awaited by the renderer (via `ipcMain.handle`) so the
+ * drop target clears its in-flight state when the edit finishes. On success the
+ * board is re-fetched immediately so the new blocked chip appears without waiting
+ * for the next poll. The daemon surfaces dex's own self-block/cycle rejections as a
+ * clear `{ ok:false, message }`, toasted here.
+ */
+async function addDexBlocker(request: DexBlockerRequest): Promise<void> {
+  if (!client) return;
+  try {
+    const result = (await client.invoke({ id: "dex.add-blocker", input: request })) as {
+      ok?: boolean;
+      message?: string;
+    } | null;
+    if (result && result.ok === false) {
+      showNotice({ tone: "bad", text: result.message ?? "Couldn't add the dependency." });
+    } else {
+      showNotice({ tone: "ok", text: result?.message ?? "Added the dependency." });
+      await refreshDexBoard();
+    }
+  } catch (err) {
+    showNotice({ tone: "bad", text: `Add dependency failed: ${errorMessage(err)}` });
+  } finally {
+    pushState();
+  }
+}
+
 /** Re-invoke `dex.tasks` so the board reflects a just-deleted task immediately. */
 async function refreshDexBoard(): Promise<void> {
   if (!client) return;
@@ -1301,6 +1332,9 @@ function registerIpc(): void {
   ipcMain.handle(Channels.dexSpawn, (_event, id: string) => spawnDex(id));
   ipcMain.handle(Channels.dexSpawnReady, () => spawnDexReady());
   ipcMain.handle(Channels.dexDelete, (_event, id: string) => deleteDex(id));
+  ipcMain.handle(Channels.dexAddBlocker, (_event, request: DexBlockerRequest) =>
+    addDexBlocker(request),
+  );
   ipcMain.handle(Channels.resolveConflicts, (_event, request: ResolveConflictsRequest) =>
     resolveConflicts(request),
   );
