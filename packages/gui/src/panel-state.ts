@@ -45,6 +45,8 @@ export const STACK_PRS_ID = "stack.prs";
 export const STACK_SYNC_ID = "stack.sync";
 /** Canonical capability id of the per-PR resolve-conflicts action. */
 export const STACK_RESOLVE_CONFLICTS_ID = "stack.resolve-conflicts";
+/** Canonical capability id of the per-PR "open a free-form agent" action. */
+export const STACK_OPEN_AGENT_ID = "stack.open-agent";
 
 /** Normalized CI rollup for a PR (mirrors the stack plugin's `CiStatus`). */
 export type CiStatus = "pass" | "fail" | "pending" | "none";
@@ -241,6 +243,16 @@ export interface PanelState {
    * spinner and disables, so a double-click can't double-spawn.
    */
   resolvingConflicts: string[];
+  /**
+   * Whether the open-agent action exists in the registry (gates the per-PR "Open
+   * agent" button, shown on every row regardless of conflict state).
+   */
+  openAgentAvailable: boolean;
+  /**
+   * Branch names with an open-agent spawn in flight — their button shows a
+   * spinner and disables, so a double-click can't double-spawn.
+   */
+  openingAgents: string[];
   /** A transient status toast, when one is active. */
   notice?: Notice;
   /**
@@ -306,12 +318,16 @@ export interface BuildInput {
   syncAvailable: boolean;
   /** Whether `stack.resolve-conflicts` is present in `registry.list`. */
   resolveConflictsAvailable?: boolean;
+  /** Whether `stack.open-agent` is present in `registry.list`. */
+  openAgentAvailable?: boolean;
   /** A transient error message (e.g. an invoke failed). */
   error?: string;
   /** Repos with an in-flight sync. */
   syncing?: string[];
   /** Branches with an in-flight resolve-conflicts spawn. */
   resolvingConflicts?: string[];
+  /** Branches with an in-flight open-agent spawn. */
+  openingAgents?: string[];
   /** A transient status toast. */
   notice?: Notice;
   /** The latest `services.list` data, or `undefined` if none has arrived yet. */
@@ -611,6 +627,8 @@ export function buildPanelState(input: BuildInput): PanelState {
     // the registry probe found. The in-flight branch set rides along too.
     resolveConflictsAvailable: daemonUp ? !!input.resolveConflictsAvailable : false,
     resolvingConflicts: input.resolvingConflicts ?? [],
+    openAgentAvailable: daemonUp ? !!input.openAgentAvailable : false,
+    openingAgents: input.openingAgents ?? [],
     notice: input.notice,
     landableByTaskId,
     agentByTaskId,

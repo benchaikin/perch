@@ -14,6 +14,10 @@ let syncingRepos: string[] = [];
 let resolveConflictsAvailable = false;
 /** Branches with a resolve-conflicts spawn in flight — their button shows a spinner. */
 let resolvingConflicts: string[] = [];
+/** Whether the open-agent action exists (gates the per-PR "Open agent" button). */
+let openAgentAvailable = false;
+/** Branches with an open-agent spawn in flight — their button shows a spinner. */
+let openingAgents: string[] = [];
 
 /**
  * Build the "review comments to address" badge: a Font Awesome comment icon +
@@ -60,6 +64,43 @@ function resolveConflictsBtnEl(row: PrRow): HTMLElement {
       void window.perch.resolveConflicts({
         headRefName: row.branch,
         baseRefName: row.baseRefName,
+        repo: row.repo,
+        number: row.number,
+      });
+    });
+  }
+  return btn;
+}
+
+/**
+ * Build the per-PR "Open agent" button, shown on every row when the action
+ * exists. Clicking drops a free-form, auto-mode Claude session into the PR's
+ * worktree (via `stack.open-agent`) with no seeded prompt — an "open an agent
+ * here, no agenda" entry point for ad-hoc work. While the spawn is in flight the
+ * button disables and shows a spinner, and the click is stopped from bubbling to
+ * the row's open-in-browser handler.
+ */
+function openAgentBtnEl(row: PrRow): HTMLElement {
+  const btn = document.createElement("button");
+  // A quieter secondary button — it's general-purpose, not the recommended
+  // action like Resolve conflicts. `open-agent-btn` is a marker class.
+  btn.className = "btn btn-sm open-agent-btn";
+  const inFlight = openingAgents.includes(row.branch);
+  btn.disabled = inFlight;
+  btn.title = `Open a free-form Claude agent session on this PR's branch (${row.repo})`;
+  if (inFlight) {
+    const spinner = document.createElement("i");
+    spinner.className = "fa-solid fa-circle-notch fa-spin";
+    btn.append(spinner, " Opening…");
+  } else {
+    const glyph = document.createElement("i");
+    glyph.className = "fa-solid fa-robot";
+    btn.append(glyph, " Open agent");
+    btn.addEventListener("click", (e) => {
+      // Don't open the PR in the browser; just spawn the agent.
+      e.stopPropagation();
+      void window.perch.openAgent({
+        headRefName: row.branch,
         repo: row.repo,
         number: row.number,
       });
@@ -117,6 +158,10 @@ function prRowEl(row: PrRow, pos?: number): HTMLElement {
   // A conflicting PR gets a one-click "Resolve conflicts" button that spins up
   // an agent on its branch — hidden for clean PRs and when the action is absent.
   if (row.conflict && resolveConflictsAvailable) el.append(resolveConflictsBtnEl(row));
+
+  // Every PR gets an "Open agent" button — a general-purpose, agenda-free Claude
+  // session on its branch — hidden only when the action is absent.
+  if (openAgentAvailable) el.append(openAgentBtnEl(row));
 
   return el;
 }
@@ -200,6 +245,8 @@ export function renderPrsPane(container: HTMLElement, state: PanelState): void {
   syncingRepos = state.syncing;
   resolveConflictsAvailable = state.resolveConflictsAvailable;
   resolvingConflicts = state.resolvingConflicts;
+  openAgentAvailable = state.openAgentAvailable;
+  openingAgents = state.openingAgents;
 
   if (state.status === "ok") {
     for (const repo of state.repos) container.append(repoSectionEl(repo));

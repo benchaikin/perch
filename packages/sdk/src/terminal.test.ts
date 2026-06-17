@@ -9,6 +9,7 @@ import { test } from "node:test";
 import { dexTaskColorRgb } from "./dex-color.js";
 import {
   applyTemplate,
+  buildAgentLaunchCommand,
   DEFAULT_TERMINAL,
   FOCUS_OR_SPAWN_TEMPLATES,
   focusableApp,
@@ -22,6 +23,28 @@ import {
   TERMINAL_APP_TEMPLATES,
   terminalConfigOf,
 } from "./terminal.js";
+
+test("buildAgentLaunchCommand: seeds an interactive auto-mode claude with the prompt", () => {
+  const cmd = buildAgentLaunchCommand("/work/perch-worktrees/fix", "do the thing");
+  assert.equal(
+    cmd,
+    "cd '/work/perch-worktrees/fix' && exec claude --permission-mode auto 'do the thing'",
+  );
+});
+
+test("buildAgentLaunchCommand: no prompt → auto-mode claude with NO trailing arg", () => {
+  const cmd = buildAgentLaunchCommand("/work/perch-worktrees/fix");
+  // The bare session ends right after `auto` — no empty quoted string appended.
+  assert.equal(cmd, "cd '/work/perch-worktrees/fix' && exec claude --permission-mode auto");
+});
+
+test("buildAgentLaunchCommand: an empty/whitespace prompt is treated as no prompt", () => {
+  assert.equal(
+    buildAgentLaunchCommand("/w", "   "),
+    "cd '/w' && exec claude --permission-mode auto",
+  );
+  assert.equal(buildAgentLaunchCommand("/w", ""), "cd '/w' && exec claude --permission-mode auto");
+});
 
 test("resolveTerminalTemplate: chosen app picks its preset", () => {
   assert.equal(resolveTerminalTemplate({ terminalApp: "iTerm2" }), TERMINAL_APP_TEMPLATES.iTerm2);

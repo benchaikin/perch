@@ -18,6 +18,7 @@ import {
 import { ghStackProvider } from "./gh-provider.js";
 import { StackGraph } from "./graph.js";
 import { prNotifications } from "./notify.js";
+import { runOpenAgent, type OpenAgentInput, type OpenAgentResult } from "./open-agent.js";
 import { buildPrOverview, PrOverview, type StackDirection } from "./prs.js";
 import { reposResult, ReposResult, resolveRepoCwd } from "./repos.js";
 import {
@@ -36,6 +37,17 @@ export {
   type ResolveConflictsInput,
   type ResolveConflictsResult,
 } from "./resolve-conflicts.js";
+export { runOpenAgent, type OpenAgentInput, type OpenAgentResult } from "./open-agent.js";
+export {
+  parseWorktreeForBranch,
+  resolveOrCreateWorktree,
+  sanitizeBranchForPath,
+  worktreeAddArgs,
+  worktreeListArgs,
+  worktreePathFor,
+  type WorktreeDeps,
+  type WorktreeResolution,
+} from "./worktree.js";
 export { CiStatus, StackGraph, StackLayer } from "./graph.js";
 export { allChains, chainContaining } from "./chains.js";
 export { prNotifications } from "./notify.js";
@@ -300,6 +312,39 @@ export default definePlugin({
       run: ({ input, ctx }): Promise<ResolveConflictsResult> => {
         const cwd = resolveRepoCwd(effectiveRepos(ctx.config, ctx.global), input.repo);
         return runResolveConflicts(input, {
+          repoDir: cwd ?? process.cwd(),
+          gitBin: "git",
+          terminal: terminalConfigOf(ctx.global),
+          log: ctx.log,
+        });
+      },
+    }),
+
+    /**
+     * Open a free-form Claude agent session on a PR's branch — the agenda-free
+     * sibling of `resolve-conflicts`. Checks out the PR's head branch in a
+     * worktree (reusing one already checked out, e.g. a dex-spawned PR or one
+     * whose conflicts were resolved) and launches `claude --permission-mode auto`
+     * with NO seed prompt, dropping straight into a live interactive session for
+     * ad-hoc work. General-purpose: available on every PR, not just conflicting
+     * ones.
+     *
+     * Resolves the repo's directory the same way `stack.view`/`resolve-conflicts`
+     * do (the worktree lives at `<repo>-worktrees/<branch>`), falling back to
+     * `process.cwd()` when no repos are configured. MCP stays off (matching the
+     * other actions; agents drive git directly).
+     */
+    "open-agent": action<OpenAgentInput, StackConfig, OpenAgentResult>({
+      summary: "Open a free-form Claude agent session on a PR's branch (auto mode, no prompt)",
+      // `headRefName` is required (the branch to open on); the rest are optional.
+      input: z.object({
+        repo: z.string().optional(),
+        headRefName: z.string(),
+        number: z.number().int().optional(),
+      }),
+      run: ({ input, ctx }): Promise<OpenAgentResult> => {
+        const cwd = resolveRepoCwd(effectiveRepos(ctx.config, ctx.global), input.repo);
+        return runOpenAgent(input, {
           repoDir: cwd ?? process.cwd(),
           gitBin: "git",
           terminal: terminalConfigOf(ctx.global),

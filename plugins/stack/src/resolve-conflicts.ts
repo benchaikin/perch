@@ -17,8 +17,7 @@
  * pure bits (worktree path, git args, the prompt, the launch command) unit-test
  * directly with stubs.
  */
-import { basename, dirname, join } from "node:path";
-import { execFile, type spawn as nodeSpawn } from "node:child_process";
+import { type spawn as nodeSpawn } from "node:child_process";
 
 import {
   buildAgentLaunchCommand,
@@ -28,6 +27,24 @@ import {
 } from "@perch/sdk";
 
 import type { Exec } from "./provider.js";
+import {
+  parseWorktreeForBranch,
+  resolveOrCreateWorktree,
+  sanitizeBranchForPath,
+  worktreeAddArgs,
+  worktreeListArgs,
+  worktreePathFor,
+} from "./worktree.js";
+
+// Re-export the shared worktree primitives from their historical home so the
+// action's tests and any external importers keep resolving them here.
+export {
+  parseWorktreeForBranch,
+  sanitizeBranchForPath,
+  worktreeAddArgs,
+  worktreeListArgs,
+  worktreePathFor,
+};
 
 /** The `stack.resolve-conflicts` action input. */
 export interface ResolveConflictsInput {
@@ -50,71 +67,6 @@ export interface ResolveConflictsResult {
   worktreePath?: string;
   /** True when an existing worktree for the branch was reused rather than created. */
   reused?: boolean;
-}
-
-/**
- * Make a branch name safe to use as a single path segment: lowercase isn't
- * forced (branch names are case-sensitive), but a branch can contain `/`
- * (`dex/abc-foo`, `feat/x`) and other separators, which would otherwise nest or
- * escape the worktrees dir. Collapse every run of non-`[A-Za-z0-9._]` to a single
- * `-` and trim leading/trailing hyphens. Returns `"branch"` if nothing usable
- * remains (so the path is always well-formed).
- */
-export function sanitizeBranchForPath(branch: string): string {
-  const safe = branch
-    .replace(/[^A-Za-z0-9._]+/g, "-")
-    .replace(/^-+/, "")
-    .replace(/-+$/, "");
-  return safe || "branch";
-}
-
-/**
- * The worktree path for resolving a branch's conflicts: a sibling of the repo
- * named `<repo>-worktrees/<sanitized-branch>`, matching the dex spawn's sibling
- * convention so all of Perch's spawned worktrees live in one place and are easy
- * to spot.
- */
-export function worktreePathFor(repoDir: string, branch: string): string {
-  const worktreesDir = join(dirname(repoDir), `${basename(repoDir)}-worktrees`);
-  return join(worktreesDir, sanitizeBranchForPath(branch));
-}
-
-/**
- * The args for `git -C <repoDir> worktree add <path> <branch>` — checking out an
- * EXISTING branch (no `-b`), unlike the dex spawn which creates a new branch.
- * git's own DWIM creates a local tracking branch from `origin/<branch>` when the
- * branch isn't yet local (the common case for a teammate-less PR it still is).
- */
-export function worktreeAddArgs(repoDir: string, path: string, branch: string): string[] {
-  return ["-C", repoDir, "worktree", "add", path, branch];
-}
-
-/** The args for `git -C <repoDir> worktree list --porcelain`. */
-export function worktreeListArgs(repoDir: string): string[] {
-  return ["-C", repoDir, "worktree", "list", "--porcelain"];
-}
-
-/**
- * Scan `git worktree list --porcelain` output for an existing worktree whose
- * checked-out branch is `branch`, returning its path (or `undefined` if none).
- * The porcelain format is blank-line-separated records, each starting with a
- * `worktree <path>` line; a `branch refs/heads/<name>` line names the branch
- * (absent for a detached HEAD). We match `refs/heads/<branch>` exactly so a
- * branch already checked out elsewhere is reused, not double-added (git refuses
- * to check the same branch out in two worktrees anyway).
- */
-export function parseWorktreeForBranch(porcelain: string, branch: string): string | undefined {
-  const wanted = `refs/heads/${branch}`;
-  let currentPath: string | undefined;
-  for (const line of porcelain.split(/\r?\n/)) {
-    if (line.startsWith("worktree ")) {
-      currentPath = line.slice("worktree ".length).trim();
-    } else if (line.startsWith("branch ")) {
-      const ref = line.slice("branch ".length).trim();
-      if (ref === wanted && currentPath) return currentPath;
-    }
-  }
-  return undefined;
 }
 
 /**
@@ -149,23 +101,6 @@ export function agentTitle(input: ResolveConflictsInput): string {
   const tail = input.number !== undefined ? `#${input.number}` : input.headRefName;
   return `fix conflicts · ${tail}`;
 }
-
-/** Default command runner: spawn a real `git` and resolve its stdout. */
-const defaultExec: Exec = (cmd, args, opts) =>
-  new Promise((resolve, reject) => {
-    execFile(
-      cmd,
-      args,
-      { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, cwd: opts?.cwd },
-      (err, stdout) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-        resolve(stdout);
-      },
-    );
-  });
 
 /** Dependencies for {@link runResolveConflicts} — the seams the action injects. */
 export interface ResolveConflictsDeps {
@@ -204,40 +139,16 @@ export async function runResolveConflicts(
     return { ok: false, message: "no head branch given; can't resolve conflicts." };
   }
 
-  const exec = deps.exec ?? defaultExec;
-
-  // Reuse an existing worktree for this branch rather than double-adding it (git
-  // refuses to check the same branch out twice anyway). Best-effort: if the list
-  // fails we just fall through to creating one, and let `worktree add` surface a
-  // clearer error.
-  let worktreePath: string | undefined;
-  let reused = false;
-  try {
-    const list = await exec(deps.gitBin, worktreeListArgs(deps.repoDir));
-    const existing = parseWorktreeForBranch(list, headRef);
-    if (existing) {
-      worktreePath = existing;
-      reused = true;
-      deps.log?.(`reusing existing worktree for ${headRef}: ${existing}`);
-    }
-  } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    deps.log?.(`couldn't list worktrees (continuing): ${detail}`);
+  const resolved = await resolveOrCreateWorktree(headRef, {
+    repoDir: deps.repoDir,
+    exec: deps.exec,
+    gitBin: deps.gitBin,
+    log: deps.log,
+  });
+  if (!resolved.ok) {
+    return { ok: false, message: resolved.message };
   }
-
-  if (!worktreePath) {
-    const path = worktreePathFor(deps.repoDir, headRef);
-    try {
-      await exec(deps.gitBin, worktreeAddArgs(deps.repoDir, path, headRef));
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      return {
-        ok: false,
-        message: `couldn't create worktree at ${path} for branch ${headRef}: ${detail}`,
-      };
-    }
-    worktreePath = path;
-  }
+  const { worktreePath, reused } = resolved;
 
   const launched = spawnInTerminal({
     command: buildAgentLaunchCommand(worktreePath, conflictPrompt(input)),
