@@ -237,15 +237,25 @@ export class DexRunner {
     }
   }
 
-  /** Best-effort `dex [--storage-path P] start <id>`; never throws. */
-  async start(id: string, storagePath?: string): Promise<void> {
+  /**
+   * `dex [--storage-path P] start <id> --force` — mark the task in-progress.
+   * Resolves `{ ok: true }` on success, or `{ ok: false, detail }` surfacing the
+   * CLI's error on failure (the caller decides what to do; it does NOT swallow).
+   *
+   * `--force` makes this idempotent: `dex start` errors "already in progress" on
+   * a task that's already started, but spawning (or re-spawning) an agent for a
+   * task IS claiming it, so we re-claim rather than treat that as a failure.
+   */
+  async start(id: string, storagePath?: string): Promise<{ ok: boolean; detail?: string }> {
     const args: string[] = [];
     if (storagePath) args.push("--storage-path", storagePath);
-    args.push("start", id);
+    args.push("start", id, "--force");
     try {
       await this.exec(this.dexBin, args);
-    } catch {
-      // Marking in-progress is optional; degrade gracefully.
+      return { ok: true };
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      return { ok: false, detail };
     }
   }
 
@@ -426,10 +436,11 @@ export async function findTask(
 
 /**
  * Create the `dex/<id>-<slug>` worktree and launch a seeded `claude` agent in the
- * user's terminal. Never throws: every failure (bad id, unresolved repo, existing
- * worktree, git error, terminal error) returns a clear `{ ok:false, message }`,
- * and nothing is half-created — the worktree is only added once the repo + branch
- * are settled, and the agent is launched only after it exists.
+ * user's terminal. Never throws: every failure (bad id, unresolved repo, a task
+ * we can't mark in-progress, an existing worktree, a git error, a terminal error)
+ * returns a clear `{ ok:false, message }`, and nothing is half-created — the task
+ * is marked in-progress before anything is built, the worktree is only added once
+ * the repo + branch are settled, and the agent is launched only after it exists.
  */
 export async function runSpawn(input: SpawnInput, deps: SpawnDeps): Promise<SpawnResult> {
   const id = input.id.trim();
@@ -469,6 +480,23 @@ export async function runSpawn(input: SpawnInput, deps: SpawnDeps): Promise<Spaw
     resolvedRepo = resolved.repo;
   }
 
+  // Mark the task in-progress BEFORE building anything. Spawning an agent for a
+  // task IS starting work on it, and `started_at` is the only thing perch keys
+  // the in-progress status off (normalize.ts `deriveStatus`) — a live worktree is
+  // not consulted. So this is a hard requirement, not a best-effort nicety: if we
+  // can't mark it, we must NOT go on to create a worktree + launch an agent on a
+  // task that still reads as 'ready' (the bug this guards against). Marking first
+  // (rather than just before the launch) means a launched agent always sits on an
+  // in-progress task; the only failure that can outrun the mark is a worktree-add
+  // error, which on an already-claimed task is precisely the case `--force` heals.
+  const started = await dex.start(id, storagePathOf(resolvedRepo));
+  if (!started.ok) {
+    return {
+      ok: false,
+      message: `couldn't mark dex task "${id}" in-progress (${started.detail ?? "dex start failed"}); not spawning an agent.`,
+    };
+  }
+
   const slug = deriveSlug(name);
   const branch = branchFor(id, slug);
   const worktreePath = worktreePathFor(resolvedRepo, id, slug);
@@ -496,9 +524,8 @@ export async function runSpawn(input: SpawnInput, deps: SpawnDeps): Promise<Spaw
   // tree and blocks auto-land from reaping the worktree once its PR merges.
   await excludeDexLink(worktreePath, git, fs, deps.log);
 
-  // Worktree exists: optionally mark in-progress (best-effort), then launch.
-  await dex.start(id, storagePathOf(resolvedRepo));
-
+  // The task is already marked in-progress (above) and the worktree exists, so
+  // launch the seeded agent.
   const launched = spawnInTerminal({
     command: buildClaudeLaunch(worktreePath, bootstrapPrompt(id)),
     terminal: deps.terminal,
