@@ -4,42 +4,27 @@
  *
  * A packaged Perch.app ships no `node_modules` and no workspace `plugins/` dir,
  * so the daemon's normal dynamic/filesystem plugin discovery (`loadPluginsByIds`
- * walking up to `pnpm-workspace.yaml`) can't run. Instead we **statically import**
- * the bundled plugins (stack + services + dex) and hand them to {@link startDaemon} as
- * pre-loaded `PluginDef`s, so esbuild inlines them into the bundle and no
- * filesystem discovery happens. Without this, a packaged build's `services.list`
- * (and the panel's Services section) would be missing entirely.
+ * walking up to `pnpm-workspace.yaml`) can't run. Instead {@link bundledDaemonOptions}
+ * (in `perchd-options.ts`) **statically imports** the bundled plugins and hands
+ * them to {@link startDaemon} as pre-loaded `PluginDef`s, so esbuild inlines them
+ * into the bundle and no filesystem discovery happens.
  *
- * We still want a REAL daemon (not the test-mode daemon `pluginDefs` implies):
- * it must read the user's `perch.json` for the stack plugin's per-repo config,
- * write a pidfile, and hot-reload on config edits. So we:
- *
- *   - pass `pluginDefs: [stackPlugin]`             — no plugin discovery,
- *   - derive `configs` from `perch.json`           — the stack repos load,
- *   - set `pidFile: true` and `watch: true`        — `pluginDefs` flips these
- *                                                     to test-mode defaults
- *                                                     (off), so re-enable them,
- *   - inject `loadPlugins: () => [stackPlugin]`     — live reloads resolve the
- *                                                     statically-imported plugin
- *                                                     by id too, and
- *   - install SIGTERM/SIGINT handlers calling stop  — `pluginDefs` also skips
- *                                                     core's own signal handlers.
+ * We still want a REAL daemon (not the test-mode daemon `pluginDefs` implies): it
+ * must read the user's `perch.json` (per-plugin `configs` AND the cross-plugin
+ * `global` block — `global.repos`, the shared terminal), write a pidfile, and
+ * hot-reload on config edits. The option-building lives in `perchd-options.ts`
+ * (side-effect-free, so it's unit-testable); this entry just resolves the paths,
+ * loads the config, boots the daemon, and installs signal handlers (`pluginDefs`
+ * suppresses core's own).
  */
 import {
   configPath as defaultConfigPath,
   loadConfig,
-  pluginsFromConfig,
   socketPath as defaultSocketPath,
   startDaemon,
 } from "@perch/core";
-import stackPlugin from "@perch/plugin-stack";
-import servicesPlugin from "@perch/plugin-services";
-import dexPlugin from "@perch/plugin-dex";
-import worktreesPlugin from "@perch/plugin-worktrees";
-import agentsPlugin from "@perch/plugin-agents";
 
-/** The plugins bundled into the packaged daemon (statically imported above). */
-const BUNDLED_PLUGINS = [stackPlugin, servicesPlugin, dexPlugin, worktreesPlugin, agentsPlugin];
+import { bundledDaemonOptions } from "./perchd-options.js";
 
 /** Boot the bundled daemon, then keep the process alive for the RPC server. */
 async function main(): Promise<void> {
@@ -49,24 +34,9 @@ async function main(): Promise<void> {
   const socketPath = process.env.PERCH_SOCKET ?? defaultSocketPath();
   const configPath = process.env.PERCH_CONFIG ?? defaultConfigPath();
 
-  // Resolve the bundled plugins' config from `perch.json` (keyed by plugin id —
-  // `"stack"` / `"services"` — matching each static plugin's `id`). A missing
-  // file yields empty config and the plugins operate on their defaults.
-  const { configs } = pluginsFromConfig(await loadConfig(configPath));
-
-  const daemon = await startDaemon({
-    socketPath,
-    configPath,
-    // Pre-loaded plugins: esbuild inlines them; no `plugins/`-dir discovery.
-    pluginDefs: BUNDLED_PLUGINS,
-    configs,
-    // `pluginDefs` defaults these off (test mode) — we want the real behavior.
-    pidFile: true,
-    watch: true,
-    // Live reloads ask for plugins by id; resolve to the static plugins so a
-    // re-enabled plugin doesn't fall back to filesystem discovery.
-    loadPlugins: async () => BUNDLED_PLUGINS,
-  });
+  // A missing file yields empty config and the plugins operate on their defaults.
+  const loaded = await loadConfig(configPath);
+  const daemon = await startDaemon(bundledDaemonOptions(loaded, { socketPath, configPath }));
 
   // `pluginDefs` also suppresses core's own SIGINT/SIGTERM handlers; install our
   // own so the GUI quitting (or `kill`) shuts the daemon down gracefully (which
