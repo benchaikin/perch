@@ -310,6 +310,20 @@ export { z };
 /** Shared repo list + the cross-plugin `global.repos` setting. */
 export { GlobalReposConfig, reposOf } from "./repos.js";
 
+/**
+ * Shared dex-task identity colors (stable id → color). Also published as the
+ * dependency-free `@perch/sdk/dex-color` subpath, so the browser renderer can
+ * import it without pulling the node-only parts of this index into its bundle.
+ */
+export {
+  DEX_TASK_PALETTE,
+  dexTaskColor,
+  dexTaskColorCss,
+  dexTaskColorRgb,
+  type DexRgb,
+  type DexTaskColor,
+} from "./dex-color.js";
+
 /** Shared terminal launcher + the cross-plugin terminal setting. */
 export {
   applyTemplate,

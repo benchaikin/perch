@@ -8,6 +8,7 @@ import {
   buildDexSection,
   deriveDexGraph,
   dexHealth,
+  isOpenDexTask,
   worstDexHealth,
   type DexBoard,
   type DexGraphNode,
@@ -39,6 +40,16 @@ test("dexHealth maps each status to a marker color", () => {
   assert.equal(dexHealth("in-progress"), "warn");
   assert.equal(dexHealth("done"), "ok");
   assert.equal(dexHealth("ready"), "muted");
+});
+
+test("isOpenDexTask: unblocked and not done is open; blocked or done is not", () => {
+  assert.equal(isOpenDexTask({ status: "ready", blockedByCount: 0 }), true);
+  assert.equal(isOpenDexTask({ status: "in-progress", blockedByCount: 0 }), true);
+  // Done → not open even when unblocked.
+  assert.equal(isOpenDexTask({ status: "done", blockedByCount: 0 }), false);
+  // Active blockers → not open even for an otherwise-workable status.
+  assert.equal(isOpenDexTask({ status: "ready", blockedByCount: 2 }), false);
+  assert.equal(isOpenDexTask({ status: "blocked", blockedByCount: 1 }), false);
 });
 
 test("buildDexSection visibility tracks plugin presence, not board arrival", () => {

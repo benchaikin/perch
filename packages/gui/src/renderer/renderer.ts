@@ -19,11 +19,13 @@ import {
   DEX_TASKS_ID,
   deriveDexGraph,
   dexHealth,
+  isOpenDexTask,
   type DexGraphNode,
   type DexRow,
   type DexSection,
   type DexStatus,
 } from "../dex-state.js";
+import { dexTaskColor } from "@perch/sdk/dex-color";
 import type { LandableState } from "../landable.js";
 import type { AgentState, AgentSummary } from "../agents-state.js";
 import {
@@ -629,12 +631,25 @@ function dexBlockedChip(count: number): HTMLElement {
  * The task id as a monospace reference chip (for `dex show`, commit messages,
  * etc.). Click to copy it to the clipboard with a brief inline confirmation;
  * `stopPropagation` so copying never opens the row's detail view.
+ *
+ * When `open` (the task is unblocked and unfinished — see {@link isOpenDexTask}),
+ * the chip carries the task's stable identity color from the shared
+ * {@link dexTaskColor}: a `dex-open` class plus the `--task-color`/`--task-color-rgb`
+ * custom properties the CSS tints from. This is an identity ACCENT layered on the
+ * neutral chip, distinct from the row's health marker — the id text stays legible
+ * on both themes (the color rides the chip's border/tint, not the glyphs).
  */
-function dexIdChipEl(id: string): HTMLElement {
+function dexIdChipEl(id: string, open = false): HTMLElement {
   const chip = document.createElement("span");
   chip.className = "chip muted dex-id";
   chip.title = "Copy task id";
   chip.textContent = id;
+  if (open) {
+    const color = dexTaskColor(id);
+    chip.classList.add("dex-open");
+    chip.style.setProperty("--task-color", color.hex);
+    chip.style.setProperty("--task-color-rgb", `${color.rgb.r}, ${color.rgb.g}, ${color.rgb.b}`);
+  }
   chip.addEventListener("click", (e) => {
     e.stopPropagation();
     window.perch.copyText(id);
@@ -697,8 +712,9 @@ function dexRowEl(row: DexRow): HTMLElement {
   name.textContent = row.name;
   el.append(name);
 
-  // The task id as a click-to-copy chip, matching the detail view.
-  el.append(dexIdChipEl(row.id));
+  // The task id as a click-to-copy chip, matching the detail view; an open
+  // (unblocked, unfinished) task's chip carries its stable identity color.
+  el.append(dexIdChipEl(row.id, isOpenDexTask(row)));
 
   if (row.blockedByCount > 0) el.append(dexBlockedChip(row.blockedByCount));
 
@@ -957,8 +973,9 @@ function dexGraphRowEl(row: DexRow, depth: number): HTMLElement {
   name.textContent = row.name;
   el.append(name);
 
-  // The task id as a click-to-copy chip, matching the detail view.
-  el.append(dexIdChipEl(row.id));
+  // The task id as a click-to-copy chip, matching the detail view; an open
+  // (unblocked, unfinished) task's chip carries its stable identity color.
+  el.append(dexIdChipEl(row.id, isOpenDexTask(row)));
 
   if (row.blockedByCount > 0) el.append(dexBlockedChip(row.blockedByCount));
   if (row.landable) {

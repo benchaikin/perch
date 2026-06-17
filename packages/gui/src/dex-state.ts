@@ -106,6 +106,22 @@ export interface DexRow {
   agent?: AgentSummary;
 }
 
+/**
+ * Whether a dex task is "open": unblocked (no active blockers) and not yet
+ * completed. The shared predicate behind a task's identity-color accent — an
+ * open task gets a {@link dexTaskColor} on its row, and the worktrees/terminals
+ * surfaces match against this same notion of open.
+ *
+ * Deliberately BROADER than the renderer's `canSpawnDex`, which additionally
+ * requires the task be `ready` with no live worktree/agent: an open task that's
+ * already being worked (has a worktree or running agent) still counts here, so
+ * its color stays consistent everywhere it appears. Structural on purpose so it
+ * applies to a {@link DexRow} or a raw {@link DexTask} alike.
+ */
+export function isOpenDexTask(task: Pick<DexRow, "status" | "blockedByCount">): boolean {
+  return task.blockedByCount === 0 && task.status !== "done";
+}
+
 /** Tallies per status, for the tab badge + any header summary. */
 export interface DexCounts {
   ready: number;
