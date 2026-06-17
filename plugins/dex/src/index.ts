@@ -30,7 +30,13 @@ import { buildDexBoard, DexBoard, type DexGroup, parseRawTasks } from "./normali
 import { LandBoard, landNotifications, runLand } from "./land.js";
 import { dexNotifications } from "./notify.js";
 import { defaultExec, DexProvider, type Exec } from "./provider.js";
-import { runSpawn, type SpawnInput, type SpawnResult } from "./spawn.js";
+import {
+  runSpawn,
+  runSpawnBatch,
+  type SpawnBatchResult,
+  type SpawnInput,
+  type SpawnResult,
+} from "./spawn.js";
 
 export { buildDexBoard, DexBoard, DexStatus, DexTaskView, parseRawTasks, RawDexTask } from "./normalize.js";
 export type { DexGroup } from "./normalize.js";
@@ -58,15 +64,25 @@ export {
   DexRunner,
   findTask,
   GitRunner,
+  isReadyToSpawn,
   isValidTaskId,
   linkDexStore,
   resolveRepo,
   runSpawn,
+  runSpawnBatch,
   storagePathOf as spawnStoragePathOf,
   worktreeAddArgs,
   worktreePathFor,
 } from "./spawn.js";
-export type { FsOps, SpawnDeps, SpawnInput, SpawnResult } from "./spawn.js";
+export type {
+  FsOps,
+  SpawnBatchEntry,
+  SpawnBatchResult,
+  SpawnCandidate,
+  SpawnDeps,
+  SpawnInput,
+  SpawnResult,
+} from "./spawn.js";
 
 /**
  * Per-plugin config (`plugins.dex`). All optional: `plugins.dex = {}` monitors
@@ -158,6 +174,39 @@ export function effectiveDirs(dirs: string[], global: unknown): string[] {
   return dirs.length > 0 ? dirs : reposOf(global);
 }
 
+/**
+ * Read the dex board across the monitored stores — one group per store, with an
+ * unreadable store contributing an empty group rather than failing the whole
+ * read. When `dirs` is empty, falls back to the daemon's own cwd-resolved store.
+ * Shared by the `tasks` read and the `spawn-all` action so both filter the same
+ * board.
+ */
+async function fetchBoard(
+  provider: DexProvider,
+  dirs: string[],
+  showCompleted: boolean,
+  log: (message: string) => void,
+): Promise<DexBoard> {
+  const fetchGroup = async (dir?: string): Promise<DexGroup> => {
+    try {
+      const raw = await provider.listRaw(
+        dir ? { storagePath: storagePathOf(dir), showCompleted } : { showCompleted },
+      );
+      return { project: dir ? basename(dir) : undefined, tasks: parseRawTasks(raw) };
+    } catch (err) {
+      log(`dex board: failed to read ${dir ?? "default store"}: ${String(err)}`);
+      return { project: dir ? basename(dir) : undefined, tasks: [] };
+    }
+  };
+
+  const groups =
+    dirs.length === 0
+      ? [await fetchGroup()]
+      : await Promise.all(dirs.map((dir) => fetchGroup(dir)));
+
+  return buildDexBoard(groups);
+}
+
 export default definePlugin({
   id: "dex",
   name: "Dex Tasks",
@@ -218,33 +267,10 @@ export default definePlugin({
       run: async ({ ctx }): Promise<DexBoard> => {
         const cfg = configOf(ctx.config);
         const provider = new DexProvider(cfg.dexBin ?? "dex", { exec: execOverride });
-        const showCompleted = cfg.showCompleted ?? false;
         // `dirs` overrides the shared `global.repos`; falls back to it, then to
         // the daemon's cwd-resolved store when both are empty.
         const dirs = effectiveDirs(cfg.dirs ?? [], ctx.global);
-
-        // One group per monitored store; an unreadable store contributes nothing
-        // rather than failing the whole poll.
-        const fetchGroup = async (dir?: string): Promise<DexGroup> => {
-          try {
-            const raw = await provider.listRaw(
-              dir
-                ? { storagePath: storagePathOf(dir), showCompleted }
-                : { showCompleted },
-            );
-            return { project: dir ? basename(dir) : undefined, tasks: parseRawTasks(raw) };
-          } catch (err) {
-            ctx.log(`dex.tasks: failed to read ${dir ?? "default store"}: ${String(err)}`);
-            return { project: dir ? basename(dir) : undefined, tasks: [] };
-          }
-        };
-
-        const groups =
-          dirs.length === 0
-            ? [await fetchGroup()]
-            : await Promise.all(dirs.map((dir) => fetchGroup(dir)));
-
-        return buildDexBoard(groups);
+        return fetchBoard(provider, dirs, cfg.showCompleted ?? false, ctx.log);
       },
       // Announce tasks newly blocked, or freshly ready (unblocked) so an agent can
       // pick them up. `prev`/`next` are validated DexBoards; skip the first poll.
@@ -273,6 +299,38 @@ export default definePlugin({
           dexBin: cfg.dexBin ?? "dex",
           gitBin: cfg.gitBin ?? "git",
           repos,
+          terminal: terminalConfigOf(ctx.global),
+          spawn: spawnOpenSpawn,
+          log: ctx.log,
+        });
+      },
+    }),
+
+    /**
+     * Batch spawn: launch an agent for EVERY ready (unblocked) dex task at once,
+     * each in its own `dex/<id>-<slug>` worktree — the fleet counterpart of
+     * `spawn` and the GUI's top-level "spawn all ready" button. Reads the same
+     * board the `tasks` read does, filters to the daemon-side readiness gate
+     * (`ready` + no active blockers; in-progress/blocked tasks are skipped, and
+     * `runSpawn` itself refuses a task whose worktree already exists), and runs
+     * `runSpawn` over the survivors in parallel. CLI-exposed as `perch dex
+     * spawn-all` (and MCP as `dex_spawn-all`). Returns a `{ spawned, failed }`
+     * summary; never throws.
+     */
+    "spawn-all": action({
+      summary: "Spawn an agent for every ready (unblocked) dex task, in parallel",
+      input: z.object({}).default({}),
+      expose: { mcp: true },
+      run: async ({ ctx }): Promise<SpawnBatchResult> => {
+        const cfg = configOf(ctx.config);
+        const dirs = effectiveDirs(cfg.dirs ?? [], ctx.global);
+        const provider = new DexProvider(cfg.dexBin ?? "dex", { exec: execOverride });
+        const board = await fetchBoard(provider, dirs, cfg.showCompleted ?? false, ctx.log);
+        return runSpawnBatch(board.tasks, {
+          exec: execOverride ?? defaultExec,
+          dexBin: cfg.dexBin ?? "dex",
+          gitBin: cfg.gitBin ?? "git",
+          repos: dirs,
           terminal: terminalConfigOf(ctx.global),
           spawn: spawnOpenSpawn,
           log: ctx.log,

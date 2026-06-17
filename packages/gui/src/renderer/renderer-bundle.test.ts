@@ -165,3 +165,24 @@ test(
     );
   },
 );
+
+test(
+  "renderer bundle carries the top-level spawn-all-ready button",
+  { skip: !existsSync(bundlePath) ? "bundle not built (run pnpm build first)" : false },
+  () => {
+    const bundle = readFileSync(bundlePath, "utf8");
+    // The fleet-launch button class + its label, and the bridge call it wires up.
+    assert.ok(
+      bundle.includes("dex-spawn-all"),
+      "expected the `dex-spawn-all` button class in the renderer bundle",
+    );
+    assert.ok(
+      bundle.includes("Spawn agents for "),
+      "expected the spawn-all button label in the bundle",
+    );
+    assert.ok(
+      bundle.includes("dexSpawnReady"),
+      "expected the `dexSpawnReady` bridge call in the renderer bundle",
+    );
+  },
+);

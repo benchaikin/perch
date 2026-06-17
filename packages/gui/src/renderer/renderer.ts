@@ -876,14 +876,42 @@ function dexViewToggleEl(mode: DexViewMode): HTMLElement {
 }
 
 /**
- * Build the Dex section header: the tree/graph view-mode toggle plus, when
- * there are epics, an expand/collapse-all toggle over them.
+ * The top-level "spawn all ready" control for the Dex section: one click runs
+ * `dex.spawn-all` (`window.perch.dexSpawnReady`) to create a worktree + seeded
+ * agent for every ready task at once — the fleet counterpart of the per-row
+ * {@link dexSpawnBtnEl}. The label carries the ready `count` so it reads as
+ * "spawn agents for N ready tasks"; only rendered when `count > 0`.
  */
-function dexHeaderEl(epicIds: string[], mode: DexViewMode): HTMLElement {
+function dexSpawnReadyBtnEl(count: number): HTMLElement {
+  const btn = document.createElement("button");
+  btn.className = "icon-btn dex-spawn-all";
+  const label = `Spawn agents for ${count} ready task${count === 1 ? "" : "s"}`;
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
+  const i = document.createElement("i");
+  i.className = "fa-solid fa-rocket";
+  btn.append(i);
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    window.perch.dexSpawnReady();
+  });
+  return btn;
+}
+
+/**
+ * Build the Dex section header: the tree/graph view-mode toggle, a top-level
+ * "spawn all ready" button when any tasks are ready, plus — when there are
+ * epics — an expand/collapse-all toggle over them.
+ */
+function dexHeaderEl(epicIds: string[], mode: DexViewMode, readyCount: number): HTMLElement {
   const header = document.createElement("div");
   header.className = "repo-header dex-header";
 
   header.append(dexViewToggleEl(mode));
+
+  // Fleet launch: spawn an agent for every ready task at once. Hidden when
+  // nothing is ready (no-op would just toast "no ready tasks").
+  if (readyCount > 0) header.append(dexSpawnReadyBtnEl(readyCount));
 
   // Collapse-all only applies to the tree's epics — skip it in graph mode and
   // when there are no epics to fold.
@@ -943,7 +971,8 @@ function dexSectionEl(section: DexSection, mode: DexViewMode): HTMLElement | nul
   // The header carries the tree/graph toggle (always) plus, in tree mode, the
   // collapse-all control over any epics.
   const epicIds = section.rows.filter((r) => r.isEpic).map((r) => r.id);
-  el.append(dexHeaderEl(epicIds, mode));
+  const readyCount = section.rows.filter(canSpawnDex).length;
+  el.append(dexHeaderEl(epicIds, mode, readyCount));
 
   // Graph mode walks the blocker edges (`blockedBy`) instead of the task tree;
   // tree mode is the original pre-ordered render, completely unchanged.

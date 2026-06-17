@@ -590,6 +590,29 @@ async function spawnDex(id: string): Promise<void> {
   }
 }
 
+/**
+ * Spawn an agent for every ready dex task at once via the dex plugin's
+ * `spawn-all` action, then toast the rolled-up `{ spawned, failed }` summary
+ * (the fleet launch is otherwise invisible until each terminal appears).
+ */
+async function spawnDexReady(): Promise<void> {
+  if (!client) return;
+  try {
+    const result = (await client.invoke({ id: "dex.spawn-all", input: {} })) as {
+      spawned?: number;
+      failed?: number;
+      message?: string;
+    } | null;
+    const failed = result?.failed ?? 0;
+    showNotice({
+      tone: failed > 0 ? "warn" : "ok",
+      text: result?.message ?? "Spawned agents for ready tasks.",
+    });
+  } catch (err) {
+    showNotice({ tone: "bad", text: `Spawn all ready failed: ${errorMessage(err)}` });
+  }
+}
+
 /** Show a transient status toast; auto-dismiss after a few seconds. */
 function showNotice(notice: Notice): void {
   buildInput.notice = notice;
@@ -1118,6 +1141,7 @@ function registerIpc(): void {
   ipcMain.on(Channels.serviceLogs, (_event, name: string) => void serviceLogs(name));
   ipcMain.on(Channels.worktreeOpen, (_event, path: string) => void openWorktree(path));
   ipcMain.on(Channels.dexSpawn, (_event, id: string) => void spawnDex(id));
+  ipcMain.on(Channels.dexSpawnReady, () => void spawnDexReady());
   // Clipboard writes go through main (Electron's clipboard) rather than the
   // renderer's navigator.clipboard, which a non-activating panel can't rely on.
   ipcMain.on(Channels.copyText, (_event, text: string) => {
