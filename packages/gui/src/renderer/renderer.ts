@@ -34,7 +34,7 @@ import {
   type WorktreesSection,
   type WorktreeRepoGroup,
 } from "../worktrees-state.js";
-import type { LinkedWorktree } from "../worktree-task-link.js";
+import type { LinkedTask, LinkedWorktree } from "../worktree-task-link.js";
 import type { DexViewMode } from "../window-state.js";
 import type {
   ServiceAction,
@@ -1081,11 +1081,23 @@ function worktreeRepoHeaderEl(group: WorktreeRepoGroup, collapsed: boolean): HTM
  * board's status chip is (`dexHealth` — blocked=red, in-progress/done/ready). The
  * name is truncated with CSS ellipsis so a long title can't blow out the row.
  * Non-interactive (clicking the row still opens the worktree dir).
+ *
+ * When the linked task is open (unblocked, unfinished — see {@link isOpenDexTask}),
+ * the chip also carries the task's stable identity color via the same
+ * `dex-open`/`--task-color` accent its dex row uses, so a worktree reads as the
+ * same "team color" as its task across the fleet. A blocked/done task's chip
+ * keeps its plain status tone.
  */
-function worktreeTaskChipEl(task: { id: string; name: string; status: DexStatus }): HTMLElement {
+function worktreeTaskChipEl(task: LinkedTask): HTMLElement {
   const chip = document.createElement("span");
   chip.className = `chip ${dexHealth(task.status)} worktree-task`;
   chip.title = `${task.id} · ${task.name} — ${DEX_STATUS_LABEL[task.status]}`;
+  if (isOpenDexTask(task)) {
+    const color = dexTaskColor(task.id);
+    chip.classList.add("dex-open");
+    chip.style.setProperty("--task-color", color.hex);
+    chip.style.setProperty("--task-color-rgb", `${color.rgb.r}, ${color.rgb.g}, ${color.rgb.b}`);
+  }
   const id = document.createElement("span");
   id.className = "worktree-task-id";
   id.textContent = task.id;

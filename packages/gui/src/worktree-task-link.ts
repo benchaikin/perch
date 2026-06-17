@@ -20,6 +20,11 @@ export interface LinkedTask {
   id: string;
   name: string;
   status: DexStatus;
+  /**
+   * Count of still-active blockers, carried so the worktree row can apply the
+   * task's identity color only when the task is open (see `isOpenDexTask`).
+   */
+  blockedByCount: number;
 }
 
 /** The worktree facet attached to a matched dex task row. */
@@ -110,7 +115,12 @@ export function linkWorktreesAndTasks(
     if (!task) continue;
 
     // worktree → task: every matched worktree carries its task.
-    taskByWorktreePath.set(w.path, { id: task.id, name: task.name, status: task.status });
+    taskByWorktreePath.set(w.path, {
+      id: task.id,
+      name: task.name,
+      status: task.status,
+      blockedByCount: task.blockedByCount,
+    });
 
     // task → worktree: keep the deterministically-preferred single match.
     const chosen = chosenByTaskId.get(task.id);

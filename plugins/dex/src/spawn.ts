@@ -14,6 +14,7 @@ import { basename, dirname, join } from "node:path";
 import type { spawn as nodeSpawn } from "node:child_process";
 
 import {
+  dexTaskColorRgb,
   shellQuote,
   spawnInTerminal,
   type GlobalTerminalConfig,
@@ -328,6 +329,10 @@ export async function runSpawn(input: SpawnInput, deps: SpawnDeps): Promise<Spaw
     command: buildClaudeLaunch(worktreePath, bootstrapPrompt(id)),
     terminal: deps.terminal,
     label: `dex ${id}`,
+    // Tint the agent's window to the task's identity color so it matches the
+    // task's dex row + linked worktree across the fleet (a no-op on terminals
+    // without a color hook).
+    tabColor: dexTaskColorRgb(id),
     log: deps.log,
     spawn: deps.spawn,
     writeScript: deps.writeScript,
