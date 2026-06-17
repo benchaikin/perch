@@ -751,6 +751,27 @@ function dexBodyEl(text: string): HTMLElement {
   return body;
 }
 
+/**
+ * The launch control for the task detail view: a compact, labeled button that
+ * runs `dex.spawn` (`window.perch.dexSpawn`) for the open task — the detail-page
+ * twin of the per-row {@link dexSpawnBtnEl} play button, reusing the same bridge
+ * path. Only built for {@link canSpawnDex} rows (ready, unblocked, unworked), so
+ * a started task shows its agent/worktree status here instead.
+ */
+function dexDetailSpawnBtnEl(id: string): HTMLElement {
+  const btn = document.createElement("button");
+  // Labeled `.btn.btn-sm` (room to spell it out on the detail page) plus the
+  // shared `dex-spawn` hook the row button uses.
+  btn.className = "btn btn-sm dex-spawn dex-detail-spawn";
+  btn.title = "Start an agent for this task";
+  btn.setAttribute("aria-label", "Start an agent for this task");
+  const i = document.createElement("i");
+  i.className = "fa-solid fa-play";
+  btn.append(i, " Start agent");
+  btn.addEventListener("click", () => window.perch.dexSpawn(id));
+  return btn;
+}
+
 /** Build the task detail view: a back affordance, the task header, meta chips, body + result. */
 function dexDetailEl(row: DexRow): HTMLElement {
   const wrap = document.createElement("div");
@@ -799,6 +820,11 @@ function dexDetailEl(row: DexRow): HTMLElement {
   }
   if (row.agent) meta.append(dexAgentMarkerEl(row.agent));
   wrap.append(meta);
+
+  // A ready, unblocked, unworked task gets a launch button right here — the
+  // detail-page twin of the per-row start button. canSpawnDex already excludes
+  // tasks with a live agent/worktree, so the agent marker above stands in then.
+  if (canSpawnDex(row)) wrap.append(dexDetailSpawnBtnEl(row.id));
 
   if (row.description) wrap.append(dexBodyEl(row.description));
   if (row.result) {
