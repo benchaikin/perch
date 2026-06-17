@@ -11,6 +11,7 @@
  * directly with stubs.
  */
 import { basename, dirname, join } from "node:path";
+import { lstat, symlink } from "node:fs/promises";
 import type { spawn as nodeSpawn } from "node:child_process";
 
 import {
@@ -223,8 +224,36 @@ export interface SpawnDeps {
   spawn?: typeof nodeSpawn;
   /** Injected script writer for the terminal launcher (tests stub it). */
   writeScript?: (label: string, command: string) => string;
+  /** Filesystem ops for linking the dex store into the worktree (tests stub it). */
+  fs?: FsOps;
   log?: (message: string) => void;
 }
+
+/**
+ * The filesystem ops {@link runSpawn} needs to link the dex store into a fresh
+ * worktree — a seam so unit tests never touch disk.
+ */
+export interface FsOps {
+  /** True if `path` already exists (any type, including a dangling symlink). */
+  exists(path: string): Promise<boolean>;
+  /** Create a symlink at `linkPath` pointing to `target`. */
+  symlink(target: string, linkPath: string): Promise<void>;
+}
+
+/** The real {@link FsOps}, backed by `node:fs/promises`. */
+export const defaultFsOps: FsOps = {
+  async exists(path) {
+    try {
+      // `lstat`, not `access`: we want an existing-but-dangling symlink to count,
+      // so we never clobber whatever is already at the path.
+      await lstat(path);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  symlink: (target, linkPath) => symlink(target, linkPath),
+};
 
 /**
  * The store path to query for a repo's tasks: its `.dex` directory (matching
@@ -232,6 +261,46 @@ export interface SpawnDeps {
  */
 export function storagePathOf(repo: string): string {
   return join(repo, ".dex");
+}
+
+/**
+ * Where to link the shared dex store into a worktree: a `.dex` entry at the
+ * worktree root pointing at the source repo's store (`<repo>/.dex`). The spawned
+ * agent's cwd IS the worktree, so this makes every `dex` command there (the
+ * bootstrap's `dex show <id>`, plus `dex start`/`dex complete` and the user's
+ * own) resolve the shared store with no `--storage-path`.
+ */
+export function dexStoreLinkSpec(
+  worktreePath: string,
+  repo: string,
+): { linkPath: string; target: string } {
+  return { linkPath: join(worktreePath, ".dex"), target: storagePathOf(repo) };
+}
+
+/**
+ * Best-effort: symlink the source repo's dex store into the freshly-created
+ * worktree. A worktree is a sibling dir with no `.dex` of its own, and dex has no
+ * storage env var — so without this the spawned agent's first command
+ * (`dex show <id> --full`) fails with "task not found". Never throws: a missing
+ * source store, a `.dex` already present (we don't clobber), or a symlink error
+ * just skips linking — the agent can still fall back to `--storage-path`.
+ */
+export async function linkDexStore(
+  worktreePath: string,
+  repo: string,
+  fs: FsOps,
+  log?: (message: string) => void,
+): Promise<void> {
+  const { linkPath, target } = dexStoreLinkSpec(worktreePath, repo);
+  try {
+    if (!(await fs.exists(target))) return; // the repo has no store to share
+    if (await fs.exists(linkPath)) return; // don't clobber an existing `.dex`
+    await fs.symlink(target, linkPath);
+    log?.(`linked dex store: ${linkPath} → ${target}`);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    log?.(`couldn't link dex store into ${worktreePath}: ${detail}`);
+  }
 }
 
 /**
@@ -321,6 +390,11 @@ export async function runSpawn(input: SpawnInput, deps: SpawnDeps): Promise<Spaw
       message: `couldn't create worktree at ${worktreePath} (branch ${branch}): ${detail}`,
     };
   }
+
+  // The worktree is a sibling dir with no `.dex`; link the source repo's store in
+  // so the spawned agent's `dex show <id>` (and the user's dex commands) resolve
+  // without a `--storage-path`. Best-effort — never blocks the launch.
+  await linkDexStore(worktreePath, resolvedRepo, deps.fs ?? defaultFsOps, deps.log);
 
   // Worktree exists: optionally mark in-progress (best-effort), then launch.
   await dex.start(id, storagePathOf(resolvedRepo));
