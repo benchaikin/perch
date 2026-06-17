@@ -711,6 +711,37 @@ async function addDexBlocker(request: DexBlockerRequest): Promise<void> {
   }
 }
 
+/**
+ * Remove a dependency (blocker) edge between two dex tasks via the dex plugin's
+ * `remove-blocker` action — `blockedId` stops being blocked by `blockerId` — then
+ * refresh the board and toast the outcome. The inverse of {@link addDexBlocker};
+ * driven by the renderer dragging a blocked graph node out of the blocker it's
+ * nested under. Awaited by the renderer (via `ipcMain.handle`) so the drop target
+ * clears its in-flight state when the edit finishes. Removing one edge leaves the
+ * task's other blocker edges untouched (the dex action targets the single pair).
+ * On success the board is re-fetched immediately so the task flips to ready (if
+ * that was its last active blocker) without waiting for the next poll.
+ */
+async function removeDexBlocker(request: DexBlockerRequest): Promise<void> {
+  if (!client) return;
+  try {
+    const result = (await client.invoke({ id: "dex.remove-blocker", input: request })) as {
+      ok?: boolean;
+      message?: string;
+    } | null;
+    if (result && result.ok === false) {
+      showNotice({ tone: "bad", text: result.message ?? "Couldn't remove the dependency." });
+    } else {
+      showNotice({ tone: "ok", text: result?.message ?? "Removed the dependency." });
+      await refreshDexBoard();
+    }
+  } catch (err) {
+    showNotice({ tone: "bad", text: `Remove dependency failed: ${errorMessage(err)}` });
+  } finally {
+    pushState();
+  }
+}
+
 /** Re-invoke `dex.tasks` so the board reflects a just-deleted task immediately. */
 async function refreshDexBoard(): Promise<void> {
   if (!client) return;
@@ -1334,6 +1365,9 @@ function registerIpc(): void {
   ipcMain.handle(Channels.dexDelete, (_event, id: string) => deleteDex(id));
   ipcMain.handle(Channels.dexAddBlocker, (_event, request: DexBlockerRequest) =>
     addDexBlocker(request),
+  );
+  ipcMain.handle(Channels.dexRemoveBlocker, (_event, request: DexBlockerRequest) =>
+    removeDexBlocker(request),
   );
   ipcMain.handle(Channels.resolveConflicts, (_event, request: ResolveConflictsRequest) =>
     resolveConflicts(request),

@@ -61,6 +61,16 @@ const deletingDexIds = new Set<string>();
  */
 let draggingDexId: string | undefined;
 let draggingDexProject: string | undefined;
+/**
+ * When the dragged row is a *nested graph node* (a blocked task drawn under one
+ * of its blockers), the id of that specific blocker — the other half of the edge
+ * the node currently sits on. Dropping the node onto the "unblock" zone removes
+ * exactly this `{ blockedId: draggingDexId, blockerId: draggingDexBlockerId }`
+ * edge, leaving the task's other blockers intact. `undefined` when the dragged
+ * row has no parent blocker (an unblocked root, or a tree-view row), so the
+ * remove gesture stays inert there.
+ */
+let draggingDexBlockerId: string | undefined;
 
 /**
  * Status-specific marker glyphs for dex task rows. Distinct *shapes* (open
@@ -669,11 +679,17 @@ export function dexSectionEl(
  * here we just walk it depth-first, indenting children to show the nesting.
  */
 function dexGraphRows(el: HTMLElement, section: DexSection): void {
-  const walk = (node: DexGraphNode, depth: number): void => {
-    el.append(dexGraphRowEl(node.row, depth));
-    for (const child of node.children) walk(child, depth + 1);
+  // The "drop here to unblock" target, revealed only while a nested node is
+  // dragged. Sits above the rows so a dragged-out node lands on it naturally.
+  el.append(dexUnblockZoneEl());
+  // `blockerId` is the id of the node this row is nested under — i.e. the blocker
+  // on the edge it sits on, so dropping it on the unblock zone removes that one
+  // edge. Roots (no parent) pass `undefined`; their dependents pass the parent's id.
+  const walk = (node: DexGraphNode, depth: number, blockerId: string | undefined): void => {
+    el.append(dexGraphRowEl(node.row, depth, blockerId));
+    for (const child of node.children) walk(child, depth + 1, node.row.id);
   };
-  for (const root of deriveDexGraph(section.rows)) walk(root, 0);
+  for (const root of deriveDexGraph(section.rows)) walk(root, 0, undefined);
 }
 
 /**
@@ -685,7 +701,7 @@ function dexGraphRows(el: HTMLElement, section: DexSection): void {
  * tone (from the shared {@link dexMarkerClass}) distinguishes blocked nodes from
  * unblocked roots.
  */
-function dexGraphRowEl(row: DexRow, depth: number): HTMLElement {
+function dexGraphRowEl(row: DexRow, depth: number, blockerId?: string): HTMLElement {
   const el = document.createElement("div");
   el.className = `row dex-row dex-graph-row${depth > 0 ? " dex-graph-nested" : ""}`;
   // Indent by blocker-nesting depth so dependents read as nested under blockers.
@@ -726,8 +742,10 @@ function dexGraphRowEl(row: DexRow, depth: number): HTMLElement {
   el.append(dexDeleteControlEl(row));
 
   // Drag this node onto another to wire a dependency — the graph view is the natural
-  // surface for editing blocker edges (drop A onto B ⇒ B blocked-by A).
-  makeDexRowDraggable(el, row);
+  // surface for editing blocker edges (drop A onto B ⇒ B blocked-by A). A nested
+  // node also carries the blocker it sits under, so dragging it onto the unblock
+  // zone removes that one edge.
+  makeDexRowDraggable(el, row, blockerId);
 
   el.addEventListener("click", () => {
     selectedDexId = row.id;
@@ -942,6 +960,64 @@ function clearDexDropHighlights(): void {
 }
 
 /**
+ * Show or hide the graph's "drop here to unblock" zone. Revealed (`armed`) only
+ * while a *nested* graph node is being dragged — a node that sits on a removable
+ * blocker edge — so the remove affordance can't be mistaken for the add gesture
+ * (which is a plain row-onto-row drop) when there's no edge to remove.
+ */
+function setDexUnblockZoneArmed(armed: boolean): void {
+  const zone = document.querySelector(".dex-unblock-zone");
+  if (!zone) return;
+  zone.classList.toggle("armed", armed);
+  if (!armed) zone.classList.remove("dex-drop-target");
+}
+
+/**
+ * The graph view's "drop here to unblock" zone: a drop target, hidden until a
+ * nested node is dragged, that removes the dragged node's blocker edge — the
+ * inverse of dropping one row onto another. Dropping a node nested under blocker
+ * B fires `dexRemoveBlocker({ blockedId: node, blockerId: B })`, removing exactly
+ * that edge and leaving the task's other blockers intact; main refreshes the
+ * board and toasts the outcome (and the task flips to ready if B was its last
+ * active blocker). Inert unless the drag carries a parent blocker
+ * (`draggingDexBlockerId`), so an unblocked-root drag can't trip it.
+ */
+function dexUnblockZoneEl(): HTMLElement {
+  const zone = document.createElement("div");
+  zone.className = "dex-unblock-zone";
+  const icon = document.createElement("i");
+  icon.className = "fa-solid fa-link-slash";
+  const label = document.createElement("span");
+  label.textContent = "Drop here to remove this blocker";
+  zone.append(icon, label);
+
+  zone.addEventListener("dragover", (e) => {
+    if (draggingDexBlockerId === undefined) return;
+    // preventDefault marks this a valid drop zone (and lets the drop fire).
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    zone.classList.add("dex-drop-target");
+  });
+
+  zone.addEventListener("dragleave", () => {
+    zone.classList.remove("dex-drop-target");
+  });
+
+  zone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    zone.classList.remove("dex-drop-target");
+    // Both halves of the edge come from the in-flight drag: the dragged node is
+    // the blocked task, and it carries the specific blocker it was nested under.
+    if (draggingDexId === undefined || draggingDexBlockerId === undefined) return;
+    void window.perch.dexRemoveBlocker({
+      blockedId: draggingDexId,
+      blockerId: draggingDexBlockerId,
+    });
+  });
+  return zone;
+}
+
+/**
  * Wire drag-and-drop dependency editing onto a dex task row. The row becomes
  * draggable; dropping the dragged task onto ANOTHER row makes the drop target
  * blocked-by the dragged task (drop A onto B ⇒ B blocked-by A). A valid target
@@ -951,16 +1027,27 @@ function clearDexDropHighlights(): void {
  * Shared by the tree and graph row builders so both surfaces edit dependencies
  * identically. The drag gesture doesn't open the row's detail — HTML5 drag suppresses
  * the trailing click — so the existing click-to-open behavior is untouched.
+ *
+ * `blockerId` (graph view only) is the blocker this row is nested under; passing
+ * it arms the "drop here to unblock" zone for the drag, so dropping the node there
+ * removes exactly that edge. Rows with no parent blocker omit it and only add.
  */
-function makeDexRowDraggable(el: HTMLElement, row: DexRow): void {
+function makeDexRowDraggable(el: HTMLElement, row: DexRow, blockerId?: string): void {
   el.draggable = true;
 
   el.addEventListener("dragstart", (e) => {
     draggingDexId = row.id;
     draggingDexProject = row.project;
+    draggingDexBlockerId = blockerId;
     el.classList.add("dex-dragging");
+    // A node sitting on a blocker edge can be dragged out to remove it — reveal
+    // the unblock drop zone for the duration of this drag.
+    if (blockerId !== undefined) setDexUnblockZoneArmed(true);
     if (e.dataTransfer) {
-      e.dataTransfer.effectAllowed = "link";
+      // A nested node can be dropped two ways — onto a row to ADD a blocker
+      // (`link`) or onto the unblock zone to REMOVE one (`move`) — so allow both;
+      // a row with no parent blocker only adds, so it stays `link`.
+      e.dataTransfer.effectAllowed = blockerId !== undefined ? "all" : "link";
       // Carry the id too, so a drop still resolves if module state is ever lost.
       e.dataTransfer.setData("text/plain", row.id);
     }
@@ -969,7 +1056,9 @@ function makeDexRowDraggable(el: HTMLElement, row: DexRow): void {
   el.addEventListener("dragend", () => {
     draggingDexId = undefined;
     draggingDexProject = undefined;
+    draggingDexBlockerId = undefined;
     el.classList.remove("dex-dragging");
+    setDexUnblockZoneArmed(false);
     clearDexDropHighlights();
   });
 

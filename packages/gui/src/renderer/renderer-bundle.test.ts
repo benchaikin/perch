@@ -97,6 +97,31 @@ test(
 );
 
 test(
+  "renderer bundle carries the drag-to-unblock remove gesture",
+  { skip: !existsSync(bundlePath) ? "bundle not built (run pnpm build first)" : false },
+  () => {
+    const bundle = readFileSync(bundlePath, "utf8");
+    // The drop zone class + its label — proof the remove-blocker affordance (drag
+    // a nested node out of its blocker) reaches the bundle. Paired with the IPC
+    // wiring tests, since the DOM build itself has no jsdom harness.
+    assert.ok(
+      bundle.includes("dex-unblock-zone"),
+      "expected the `dex-unblock-zone` class in the renderer bundle",
+    );
+    assert.ok(
+      bundle.includes("Drop here to remove this blocker"),
+      "expected the unblock zone's label in the bundle",
+    );
+    // The bridge call the drop wires up reaches the bundle (the inverse of the
+    // add-blocker drop).
+    assert.ok(
+      bundle.includes("dexRemoveBlocker"),
+      "expected the `dexRemoveBlocker` bridge call in the renderer bundle",
+    );
+  },
+);
+
+test(
   "renderer bundle carries the task id badge",
   { skip: !existsSync(bundlePath) ? "bundle not built (run pnpm build first)" : false },
   () => {
