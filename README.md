@@ -139,6 +139,27 @@ git config --worktree perch.dexTask <task-id>
 The easiest path is the bundled **`dex-worktree`** skill, which creates a
 correctly-named worktree for a dex task and launches an agent in it.
 
+### Spawning agents from Perch
+
+You don't have to kick off those agents by hand. Any **ready** dex task —
+unblocked and not already being worked — carries a **start** button (▶) on its
+row; one click spins up an agent on it. Because Perch projects a single capability
+onto every surface, the same `dex.spawn` action is also **`perch dex spawn <id>`**
+on the CLI and an **MCP tool**, so you (or an orchestrating agent) can start work
+from the panel, the terminal, or another agent.
+
+Spawning creates the task's `dex/<id>-<slug>` worktree (off the repo's default
+branch, with the repo resolved from the task's project via `global.repos`) and
+launches an interactive Claude Code agent in your terminal, seeded with a short
+**bootstrap prompt**: fetch the full task with `dex show <id> --full`, implement
+it, verify (build/test/lint), and open a PR via the `create-pr` skill — without
+leaking the dex id into the commits or the PR. The prompt stays deliberately
+short; the agent pulls its own context.
+
+This **closes the loop** with the live fleet view below: the agent runs on that
+same `dex/<id>` branch, so its session hooks report state back onto the very row
+you started it from — spawn → observe → land, all from the panel.
+
 ### The agent loop: a merge queue + a janitor
 
 Once an agent finishes a task on its `dex/<id>` branch and opens a PR (via the
