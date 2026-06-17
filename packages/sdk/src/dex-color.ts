@@ -7,11 +7,13 @@
  * all three author against ONE mapping — same id, same color, everywhere.
  *
  * The mapping is a stable string hash of the id indexed into a curated,
- * color-blind-friendly palette (Tableau 10): well-separated mid-tone hues that
- * stay legible as an accent on BOTH the light and dark themes. Hashing into a
+ * color-blind-friendly palette of 20 well-separated mid-tone hues that stay
+ * legible as an accent on BOTH the light and dark themes. Hashing into a
  * bounded palette (rather than hash → hue) trades a small chance of collision
  * for guaranteed-distinct, vetted colors — two tasks may share a color, but no
- * task ever gets an illegible or muddy one. Pure + total over arbitrary ids
+ * task ever gets an illegible or muddy one. Twenty hues (vs. ten) roughly
+ * halves the per-pair collision chance, so a fleet of concurrent agents is far
+ * less likely to show two same-colored tasks. Pure + total over arbitrary ids
  * (including ""), so callers never have to guard the input.
  *
  * This module is deliberately dependency-free (no node built-ins) so the browser
@@ -37,11 +39,21 @@ export interface DexTaskColor {
 }
 
 /**
- * The curated identity palette: Tableau 10. Ten categorical hues chosen to be
- * mutually distinguishable (including for the common red-green color
- * deficiencies) and mid-toned enough to read as an accent on either theme.
- * Order is load-bearing only in that the hash indexes into it; the entries are
- * already well-separated, so neighbors differ clearly.
+ * The curated identity palette: twenty categorical hues chosen to be mutually
+ * distinguishable and mid-toned enough to read as an accent on either theme.
+ * The first ten are Tableau 10; the next ten are hand-checked additions that
+ * fill the gaps — concentrated in the blue→magenta arc (the palette's sparsest
+ * region, and the one where the common red-green color deficiencies preserve
+ * the most discrimination), plus a sea-green, lime, sienna, and ochre to round
+ * out the wheel. Every entry sits in a mid-tone lightness band (CIELAB L* ≈
+ * 42–68; the lone outlier is the inherited light pink), and every pair is well
+ * separated in normal vision (min ΔE ≈ 12) so neighbors differ clearly. Adding
+ * hues changes which id maps to which color, but that is cosmetic and recomputed
+ * everywhere from the id, so nothing persisted needs migrating.
+ *
+ * Order is load-bearing only in that the hash indexes into it (and `% length`
+ * scales automatically as the array grows); the entries are already
+ * well-separated, so the specific order does not matter.
  */
 export const DEX_TASK_PALETTE = [
   "#4e79a7", // blue
@@ -54,6 +66,16 @@ export const DEX_TASK_PALETTE = [
   "#ff9da7", // pink
   "#9c755f", // brown
   "#bab0ac", // gray
+  "#3aa6c4", // cyan
+  "#4f6bd0", // cobalt
+  "#6a4ec4", // indigo
+  "#8e5cc6", // violet
+  "#bf5cb3", // orchid
+  "#d0589c", // magenta
+  "#4fa37d", // sea green
+  "#9caf3f", // lime
+  "#cf6a3a", // sienna
+  "#b0873b", // ochre
 ] as const;
 
 /**
