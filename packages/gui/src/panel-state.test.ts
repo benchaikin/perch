@@ -10,6 +10,7 @@ import {
   ciChip,
   landableDecisionCount,
   mergeableChip,
+  prCanMerge,
   reviewChip,
   toPrRow,
   type PrOverview,
@@ -126,6 +127,39 @@ test("PR health is warn when there are review comments but nothing blocking", ()
       .health,
     "bad",
   );
+});
+
+/** A PR that satisfies every clause of the merge gate. */
+const mergeablePr = { ...basePr, mergeable: "MERGEABLE" as const, ciStatus: "pass" as const };
+
+test("prCanMerge is true for a MERGEABLE, green, conflict-free PR", () => {
+  assert.equal(prCanMerge(mergeablePr), true);
+  // CI green isn't required — a PR with no checks configured still merges.
+  assert.equal(prCanMerge({ ...mergeablePr, ciStatus: "none" }), true);
+  // An explicit approval is fine (not required, but must not block).
+  assert.equal(prCanMerge({ ...mergeablePr, reviewDecision: "APPROVED" }), true);
+});
+
+test("prCanMerge is false for each non-mergeable reason", () => {
+  // Not MERGEABLE per GitHub (conflicting / unknown / absent).
+  assert.equal(prCanMerge({ ...mergeablePr, mergeable: "CONFLICTING" }), false);
+  assert.equal(prCanMerge({ ...mergeablePr, mergeable: "UNKNOWN" }), false);
+  assert.equal(prCanMerge({ ...basePr, ciStatus: "pass" }), false); // mergeable undefined
+  // Red or pending CI.
+  assert.equal(prCanMerge({ ...mergeablePr, ciStatus: "fail" }), false);
+  assert.equal(prCanMerge({ ...mergeablePr, ciStatus: "pending" }), false);
+  // A live conflict flag or a needed rebase.
+  assert.equal(prCanMerge({ ...mergeablePr, conflict: true }), false);
+  assert.equal(prCanMerge({ ...mergeablePr, needsRebase: true }), false);
+  // Changes requested.
+  assert.equal(prCanMerge({ ...mergeablePr, reviewDecision: "CHANGES_REQUESTED" }), false);
+});
+
+test("toPrRow surfaces the merge gate on the row's canMerge flag", () => {
+  assert.equal(toPrRow(mergeablePr, "r").canMerge, true);
+  assert.equal(toPrRow({ ...mergeablePr, ciStatus: "fail" }, "r").canMerge, false);
+  // Defaults (no mergeable signal) → not offerable.
+  assert.equal(toPrRow({ ...basePr }, "r").canMerge, false);
 });
 
 test("landableDecisionCount counts only needs-review + ready (your-move states)", () => {

@@ -47,6 +47,8 @@ export const STACK_SYNC_ID = "stack.sync";
 export const STACK_RESOLVE_CONFLICTS_ID = "stack.resolve-conflicts";
 /** Canonical capability id of the per-PR "open a free-form agent" action. */
 export const STACK_OPEN_AGENT_ID = "stack.open-agent";
+/** Canonical capability id of the per-PR single-PR merge action. */
+export const STACK_MERGE_PR_ID = "stack.merge-pr";
 
 /** Normalized CI rollup for a PR (mirrors the stack plugin's `CiStatus`). */
 export type CiStatus = "pass" | "fail" | "pending" | "none";
@@ -132,6 +134,11 @@ export interface PrRow {
   needsRebase: boolean;
   /** True when this PR has a merge conflict — render a "conflict" badge. */
   conflict: boolean;
+  /**
+   * True when this PR is in a one-click-mergeable state (see {@link prCanMerge}):
+   * the per-PR Merge button shows only on a standalone PR for which this holds.
+   */
+  canMerge: boolean;
   /**
    * Count of human-authored inline review comments to address. The renderer
    * shows a comment-icon badge when > 0, emphasized when > 1.
@@ -253,6 +260,16 @@ export interface PanelState {
    * spinner and disables, so a double-click can't double-spawn.
    */
   openingAgents: string[];
+  /**
+   * Whether the merge-pr action exists in the registry (gates the per-PR "Merge"
+   * button, shown only on a standalone PR that is {@link prCanMerge}).
+   */
+  mergePrAvailable: boolean;
+  /**
+   * Branch names with a merge in flight — their button shows a spinner and
+   * disables, so a double-click can't double-merge.
+   */
+  mergingPrs: string[];
   /** A transient status toast, when one is active. */
   notice?: Notice;
   /**
@@ -320,6 +337,8 @@ export interface BuildInput {
   resolveConflictsAvailable?: boolean;
   /** Whether `stack.open-agent` is present in `registry.list`. */
   openAgentAvailable?: boolean;
+  /** Whether `stack.merge-pr` is present in `registry.list`. */
+  mergePrAvailable?: boolean;
   /** A transient error message (e.g. an invoke failed). */
   error?: string;
   /** Repos with an in-flight sync. */
@@ -328,6 +347,8 @@ export interface BuildInput {
   resolvingConflicts?: string[];
   /** Branches with an in-flight open-agent spawn. */
   openingAgents?: string[];
+  /** Branches with an in-flight merge. */
+  mergingPrs?: string[];
   /** A transient status toast. */
   notice?: Notice;
   /** The latest `services.list` data, or `undefined` if none has arrived yet. */
@@ -429,6 +450,26 @@ export function prHealth(pr: PrInfo): Health {
   return (pr.humanReviewCommentCount ?? 0) > 0 ? "warn" : "ok";
 }
 
+/**
+ * Whether a PR is in a one-click-mergeable state for the per-PR Merge button:
+ * GitHub reports it `MERGEABLE`, CI isn't failing or pending (green, or no checks
+ * configured), there's no conflict or needed rebase, and reviewers haven't
+ * requested changes. This is the UX gate that decides whether to *offer* the
+ * button — `gh pr merge` re-checks mergeability server-side at merge time
+ * (pending checks, branch protection, required reviews), so it stays the merge
+ * authority and a stale panel can't force a bad merge.
+ */
+export function prCanMerge(pr: PrInfo): boolean {
+  return (
+    pr.mergeable === "MERGEABLE" &&
+    pr.ciStatus !== "fail" &&
+    pr.ciStatus !== "pending" &&
+    !(pr.conflict ?? false) &&
+    !(pr.needsRebase ?? false) &&
+    pr.reviewDecision !== "CHANGES_REQUESTED"
+  );
+}
+
 /** Derive a single rendered PR row from a raw {@link PrInfo} in repo `repoName`. */
 export function toPrRow(pr: PrInfo, repoName: string): PrRow {
   const chips: Chip[] = [ciChip(pr.ciStatus ?? "none")];
@@ -446,6 +487,7 @@ export function toPrRow(pr: PrInfo, repoName: string): PrRow {
     chips,
     needsRebase: pr.needsRebase ?? false,
     conflict: pr.conflict ?? false,
+    canMerge: prCanMerge(pr),
     humanReviewCommentCount: pr.humanReviewCommentCount ?? 0,
     health: prHealth(pr),
   };
@@ -629,6 +671,8 @@ export function buildPanelState(input: BuildInput): PanelState {
     resolvingConflicts: input.resolvingConflicts ?? [],
     openAgentAvailable: daemonUp ? !!input.openAgentAvailable : false,
     openingAgents: input.openingAgents ?? [],
+    mergePrAvailable: daemonUp ? !!input.mergePrAvailable : false,
+    mergingPrs: input.mergingPrs ?? [],
     notice: input.notice,
     landableByTaskId,
     agentByTaskId,

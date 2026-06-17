@@ -39,6 +39,7 @@ import { shouldShowNotification, toNotifyOptions } from "./notify.js";
 import {
   Channels,
   type DexBlockerRequest,
+  type MergePrRequest,
   type OpenAgentRequest,
   type ResolveConflictsRequest,
   type ServiceActionRequest,
@@ -56,6 +57,7 @@ import {
 import {
   buildPanelState,
   landableDecisionCount,
+  STACK_MERGE_PR_ID,
   STACK_OPEN_AGENT_ID,
   STACK_PRS_ID,
   STACK_RESOLVE_CONFLICTS_ID,
@@ -342,6 +344,7 @@ async function connect(): Promise<void> {
     buildInput.syncAvailable = caps.some((c) => c.id === STACK_SYNC_ID);
     buildInput.resolveConflictsAvailable = caps.some((c) => c.id === STACK_RESOLVE_CONFLICTS_ID);
     buildInput.openAgentAvailable = caps.some((c) => c.id === STACK_OPEN_AGENT_ID);
+    buildInput.mergePrAvailable = caps.some((c) => c.id === STACK_MERGE_PR_ID);
     servicesPresent = caps.some((c) => c.id === SERVICES_LIST_ID);
     dexPresent = caps.some((c) => c.id === DEX_TASKS_ID);
     buildInput.dexPresent = dexPresent;
@@ -351,6 +354,7 @@ async function connect(): Promise<void> {
     buildInput.syncAvailable = false;
     buildInput.resolveConflictsAvailable = false;
     buildInput.openAgentAvailable = false;
+    buildInput.mergePrAvailable = false;
   }
 
   try {
@@ -427,6 +431,7 @@ async function reloadFromRegistry(): Promise<void> {
     buildInput.syncAvailable = caps.some((c) => c.id === STACK_SYNC_ID);
     buildInput.resolveConflictsAvailable = caps.some((c) => c.id === STACK_RESOLVE_CONFLICTS_ID);
     buildInput.openAgentAvailable = caps.some((c) => c.id === STACK_OPEN_AGENT_ID);
+    buildInput.mergePrAvailable = caps.some((c) => c.id === STACK_MERGE_PR_ID);
     if (caps.some((c) => c.id === STACK_PRS_ID)) {
       await subscribePrs();
     } else {
@@ -497,6 +502,14 @@ function setOpeningAgent(branch: string, on: boolean): void {
   if (on) set.add(branch);
   else set.delete(branch);
   buildInput.openingAgents = [...set];
+}
+
+/** Add/remove a branch from the in-flight set so its Merge button spins. */
+function setMergingPr(branch: string, on: boolean): void {
+  const set = new Set(buildInput.mergingPrs ?? []);
+  if (on) set.add(branch);
+  else set.delete(branch);
+  buildInput.mergingPrs = [...set];
 }
 
 /** Add/remove a service from the in-flight set so its row buttons spin. */
@@ -870,6 +883,62 @@ async function openAgent(request: OpenAgentRequest): Promise<void> {
     showNotice({ tone: "bad", text: `Open agent failed: ${errorMessage(err)}` });
   } finally {
     setOpeningAgent(request.headRefName, false);
+    pushState();
+  }
+}
+
+/**
+ * Invoke `stack.merge-pr` for a mergeable PR (the per-row "Merge" button). A
+ * merge is outward-facing and hard to reverse, so we confirm with a native
+ * dialog first; on confirm, marks the branch in-flight (its button spins),
+ * merges, toasts the outcome, and refreshes the overview so the merged PR drops
+ * out of the panel. Awaited by the renderer (via `ipcMain.handle`) so the button
+ * clears its spinner once done. No-op if the action is unavailable or already
+ * running for that branch.
+ */
+async function mergePr(request: MergePrRequest): Promise<void> {
+  if (!client || !buildInput.mergePrAvailable) return;
+  if (buildInput.mergingPrs?.includes(request.headRefName)) return;
+
+  // Confirm before merging — the click alone shouldn't fire an irreversible,
+  // outward-facing action. Default button is Cancel (index 1) for safety.
+  const confirmOptions = {
+    type: "question" as const,
+    buttons: ["Merge", "Cancel"],
+    defaultId: 0,
+    cancelId: 1,
+    message: `Merge PR #${request.number}?`,
+    detail: `This merges ${request.headRefName} on GitHub and can't be easily undone.`,
+  };
+  const { response } =
+    panel && !panel.isDestroyed()
+      ? await dialog.showMessageBox(panel, confirmOptions)
+      : await dialog.showMessageBox(confirmOptions);
+  if (response !== 0) return;
+
+  setMergingPr(request.headRefName, true);
+  pushState();
+  try {
+    const result = (await client.invoke({
+      id: STACK_MERGE_PR_ID,
+      input: {
+        repo: request.repo,
+        number: request.number,
+        headRefName: request.headRefName,
+      },
+    })) as { ok?: boolean; message?: string } | null;
+    if (result?.ok === false) {
+      showNotice({ tone: "bad", text: result.message ?? `Couldn't merge PR #${request.number}.` });
+    } else {
+      showNotice({ tone: "ok", text: result?.message ?? `Merged PR #${request.number}.` });
+      // The merged PR should drop out on the next read — refresh now so the
+      // panel reflects it immediately rather than waiting for the poll.
+      await refresh();
+    }
+  } catch (err) {
+    showNotice({ tone: "bad", text: `Merge failed: ${errorMessage(err)}` });
+  } finally {
+    setMergingPr(request.headRefName, false);
     pushState();
   }
 }
@@ -1373,6 +1442,7 @@ function registerIpc(): void {
     resolveConflicts(request),
   );
   ipcMain.handle(Channels.openAgent, (_event, request: OpenAgentRequest) => openAgent(request));
+  ipcMain.handle(Channels.mergePr, (_event, request: MergePrRequest) => mergePr(request));
   // Clipboard writes go through main (Electron's clipboard) rather than the
   // renderer's navigator.clipboard, which a non-activating panel can't rely on.
   ipcMain.on(Channels.copyText, (_event, text: string) => {

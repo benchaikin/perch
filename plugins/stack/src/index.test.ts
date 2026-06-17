@@ -106,6 +106,50 @@ test("StackConfig defaults stackDirection to bottom-to-top and parses an overrid
   assert.throws(() => config.parse({ stackDirection: "sideways" }));
 });
 
+test("stack.merge-pr is a single-PR action, distinct from the stack-wide merge", () => {
+  const mergePr = plugin.capabilities["merge-pr"]!;
+  const merge = plugin.capabilities.merge!;
+  assert.ok(mergePr, "merge-pr action is registered");
+  assert.equal(mergePr.kind, "action");
+  // It must NOT collide with or replace the stack-wide merge.
+  assert.ok(merge, "the stack-wide merge action still exists");
+  assert.notEqual(mergePr, merge);
+  // Like the other actions, it's not exposed to MCP (agents drive gh directly).
+  assert.notEqual(mergePr.expose?.mcp, true);
+});
+
+test("stack.merge-pr requires a PR number in its input schema", () => {
+  const mergePr = plugin.capabilities["merge-pr"]!;
+  const input = mergePr.input!;
+  // `number` is required — a bare object is rejected…
+  assert.throws(() => input.parse({}));
+  // …and a number (with the optional repo/headRefName) parses.
+  assert.doesNotThrow(() => input.parse({ number: 7 }));
+  assert.doesNotThrow(() => input.parse({ number: 7, repo: "r", headRefName: "feat-x" }));
+});
+
+test("StackConfig defaults mergeMethod to squash and parses/rejects overrides", () => {
+  const config = plugin.config!;
+  assert.equal((config.parse({}) as { mergeMethod: string }).mergeMethod, "squash");
+  assert.equal(
+    (config.parse({ mergeMethod: "rebase" }) as { mergeMethod: string }).mergeMethod,
+    "rebase",
+  );
+  assert.throws(() => config.parse({ mergeMethod: "fast-forward" }));
+});
+
+test("the plugin declares a valid mergeMethod settings descriptor", () => {
+  const settings = plugin.settings!;
+  const field = settings.find((f) => f.key === "mergeMethod")!;
+  assert.ok(field, "mergeMethod field is declared");
+  assert.equal(field.type, "enum");
+  assert.equal(field.default, "squash");
+  assert.deepEqual(
+    field.options?.map((o) => o.value),
+    ["squash", "merge", "rebase"],
+  );
+});
+
 test("the plugin declares a valid stackDirection settings descriptor", () => {
   assert.equal(plugin.name, "Stack");
   const settings = plugin.settings!;

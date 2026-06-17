@@ -30,6 +30,27 @@ export interface MergeOptions {
 }
 
 /**
+ * A single-PR merge strategy passed to `gh pr merge` (`--squash`/`--merge`/
+ * `--rebase`). Squash is the default — it keeps trunk history linear, matching
+ * the most common repo setting.
+ */
+export type MergeMethod = "squash" | "merge" | "rebase";
+
+/**
+ * Options for {@link StackProvider.mergePr} — a single PR merge by number,
+ * distinct from the stack-wide {@link StackProvider.merge}. `repo` resolves to a
+ * `-R owner/repo` flag (or the targeting cwd); `method` defaults to `"squash"`.
+ */
+export interface MergePrOptions {
+  /** The PR number to merge. */
+  number: number;
+  /** Configured repo selector — `-R owner/repo`, or targeted by cwd. */
+  repo?: string;
+  /** Merge strategy; defaults to `"squash"`. */
+  method?: MergeMethod;
+}
+
+/**
  * A stack backend. `view` is the only method implemented in M4; the rest are
  * the M6 action wrappers, declared now so the interface is the full §8.1
  * contract.
@@ -44,6 +65,13 @@ export interface StackProvider {
   push(repo?: string): Promise<void>;
   add(name?: string): Promise<void>;
   merge(opts: MergeOptions): Promise<void>;
+  /**
+   * Merge ONE PR by number (`gh pr merge`), the per-PR complement of the
+   * stack-wide {@link merge}. Throws on a non-zero exit so the caller can
+   * surface GitHub's rejection (not mergeable, pending checks, branch
+   * protection) verbatim. gh re-checks mergeability server-side at merge time.
+   */
+  mergePr(opts: MergePrOptions): Promise<void>;
   checkout(ref: string | number): Promise<void>;
   link(refs: Array<string | number>): Promise<void>;
   unstack(): Promise<void>;
