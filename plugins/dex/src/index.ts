@@ -34,6 +34,7 @@ import {
   runRemoveBlocker,
 } from "./blocker.js";
 import { type DeleteInput, type DeleteResult, runDelete } from "./delete.js";
+import { type NewInput, type NewResult, runNew } from "./new.js";
 import { LandBoard, landNotifications, runLand } from "./land.js";
 import { dexNotifications } from "./notify.js";
 import { defaultExec, DexProvider, type Exec } from "./provider.js";
@@ -58,6 +59,8 @@ export { resolveBlockerStore, runAddBlocker, runRemoveBlocker } from "./blocker.
 export type { BlockerDeps, BlockerInput, BlockerResult } from "./blocker.js";
 export { locateTaskStore, runDelete } from "./delete.js";
 export type { DeleteDeps, DeleteInput, DeleteResult } from "./delete.js";
+export { newTaskPrompt, newTaskTitle, resolveNewRepo, runNew } from "./new.js";
+export type { NewDeps, NewInput, NewResult } from "./new.js";
 export {
   defaultFsProbe,
   evidenceFor,
@@ -144,6 +147,17 @@ const SpawnInputSchema = z.object({
 /** The `dex.delete` action input: a task id, with an optional explicit repo override. */
 const DeleteInputSchema = z.object({
   id: z.string(),
+  repo: z.string().optional(),
+});
+
+/**
+ * The `dex.new` action input: a free-form description, with an optional target
+ * (a `project` basename the GUI passes, or an explicit `repo` path) so the author
+ * agent's `dex create` lands in the right store.
+ */
+const NewInputSchema = z.object({
+  description: z.string(),
+  project: z.string().optional(),
   repo: z.string().optional(),
 });
 
@@ -367,6 +381,39 @@ export default definePlugin({
           exec: execOverride ?? defaultExec,
           dexBin: cfg.dexBin ?? "dex",
           repos,
+          log: ctx.log,
+        });
+      },
+    }),
+
+    /**
+     * Create a dex task from a free-form description by spawning a Claude agent IN
+     * the target repo's directory, seeded to read the code and run `dex create` —
+     * the complement of `dex.spawn` (which spawns an agent FOR an existing task;
+     * this spawns one to CREATE a task). The agent's cwd is the resolved repo so
+     * its `dex create` writes to that repo's store with no `--storage-path`. The
+     * repo is `input.repo` when given, else `input.project` mapped against the
+     * configured repos, else the sole configured repo, else the daemon's cwd store
+     * (same precedence helpers as `spawn`). Daemon-side; MCP-exposed (yielding
+     * `perch dex new --description "..."` + a typed tool). The task is authored
+     * asynchronously — it appears on the next `dex.tasks` refresh. Never throws:
+     * any failure returns `{ ok:false, message }`.
+     */
+    new: action<NewInput, DexConfig, NewResult>({
+      summary: "Spawn an agent in a repo to author a new dex task from a description",
+      input: NewInputSchema,
+      expose: { mcp: true },
+      run: ({ input, ctx }): Promise<NewResult> => {
+        const cfg = configOf(ctx.config);
+        // Same repo precedence as `dex.tasks`/`dex.spawn`: `dirs` → global.repos.
+        const repos = effectiveDirs(cfg.dirs ?? [], ctx.global);
+        return runNew(input, {
+          repos,
+          // The fallback launch dir when no repo resolves (no repos configured):
+          // the daemon's own cwd, whose `.dex` store `dex.tasks` reads in that case.
+          cwd: process.cwd(),
+          terminal: terminalConfigOf(ctx.global),
+          spawn: spawnOpenSpawn,
           log: ctx.log,
         });
       },

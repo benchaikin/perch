@@ -68,6 +68,9 @@ const bridge: PerchBridge = {
   dexRemoveBlocker(request) {
     return ipcRenderer.invoke(Channels.dexRemoveBlocker, request);
   },
+  dexNew(request) {
+    return ipcRenderer.invoke(Channels.dexNew, request);
+  },
 };
 
 contextBridge.exposeInMainWorld("perch", bridge);

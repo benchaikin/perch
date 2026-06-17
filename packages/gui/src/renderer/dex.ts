@@ -44,6 +44,26 @@ const spawningDexIds = new Set<string>();
 /** True while the top-level "spawn all ready" launch is in flight (disables the button). */
 let spawningAllDex = false;
 /**
+ * Whether the "New task from a description" composer is armed (the + control was
+ * clicked) — an inline textarea the non-activating panel can rely on instead of a
+ * `window.prompt` (the same reason the delete-confirm is in-renderer). Tracked at
+ * module scope (not in pushed state) so the armed composer + its draft survive
+ * re-renders (e.g. a background board poll mid-type).
+ */
+let composingNewTask = false;
+/** The in-progress description text, preserved across re-renders so a poll can't wipe it. */
+let newTaskDraft = "";
+/** The selected target project (multi-repo only); undefined defaults to the first. */
+let newTaskProject: string | undefined;
+/** True while the author-agent launch is in flight (disables the composer, shows a spinner). */
+let newTaskInFlight = false;
+/**
+ * Set when the composer is freshly armed so it grabs focus ONCE on the next render
+ * — not on every render, so a background board poll mid-type doesn't steal focus
+ * or reset the cursor.
+ */
+let newTaskJustArmed = false;
+/**
  * Dex task ids whose trash control has been armed (a first click) and is awaiting
  * a confirm/cancel — an in-renderer confirmation affordance, since the
  * non-activating panel can't rely on a `window.confirm` dialog. Tracked here (not
@@ -581,6 +601,198 @@ async function runDexSpawnReady(): Promise<void> {
 }
 
 /**
+ * The distinct project labels present on the board, in first-seen order — the
+ * targets the New-task composer offers when more than one dex repo has tasks
+ * (so the author agent's `dex create` lands in an unambiguous store). Tasks from
+ * the daemon's own cwd store carry no project, so a single-store board yields `[]`
+ * (the composer then needs no selector — the daemon resolves the sole repo).
+ */
+function dexProjects(section: DexSection): string[] {
+  const seen = new Set<string>();
+  for (const row of section.rows) {
+    if (row.project) seen.add(row.project);
+  }
+  return [...seen];
+}
+
+/**
+ * The project the New-task composer submits, given the board's distinct projects:
+ * none when there are zero (single store — the daemon resolves the sole repo), the
+ * lone project when there's exactly one (unambiguous, so no selector is shown), or
+ * the user's pick (defaulting to the first) when several repos have tasks.
+ */
+function newTaskTargetProject(projects: string[]): string | undefined {
+  if (projects.length === 0) return undefined;
+  if (projects.length === 1) return projects[0];
+  return newTaskProject ?? projects[0];
+}
+
+/**
+ * The "New task from a description" control: a + button that arms the inline
+ * composer (toggling it closed if already open). The create-a-task counterpart to
+ * the per-row spawn play button — that spawns an agent FOR a task; this spawns one
+ * to AUTHOR a task. Click doesn't bubble to the section/row open-detail.
+ */
+function dexNewBtnEl(): HTMLElement {
+  const btn = document.createElement("button");
+  btn.className = `icon-btn dex-new${composingNewTask ? " dex-new-active" : ""}`;
+  btn.title = "New task from a description";
+  btn.setAttribute("aria-label", btn.title);
+  const i = document.createElement("i");
+  i.className = "fa-solid fa-plus";
+  btn.append(i);
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    composingNewTask = !composingNewTask;
+    if (composingNewTask) {
+      newTaskJustArmed = true; // focus the textarea once, on the next render
+    } else {
+      // Closing via the toggle discards the draft (matching the ✗ cancel).
+      newTaskDraft = "";
+      newTaskProject = undefined;
+    }
+    requestRender();
+  });
+  return btn;
+}
+
+/**
+ * Build the armed New-task composer: an inline textarea (an affordance the
+ * non-activating panel can rely on, unlike `window.prompt`), an optional project
+ * selector (only when several repos have tasks, so the target store is
+ * unambiguous), and submit (✓) / cancel (✗) controls. Enter submits, Shift+Enter
+ * inserts a newline, Esc cancels; an empty/whitespace description disables submit;
+ * an in-flight launch shows a spinner and disables the controls. The draft text is
+ * mirrored into module state on every keystroke so a background board poll's
+ * re-render can't wipe it.
+ */
+function dexNewComposerEl(projects: string[]): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "dex-new-composer";
+  // Clicks inside the composer must never bubble to a row/section open-detail.
+  wrap.addEventListener("click", (e) => e.stopPropagation());
+
+  const canSubmit = (): boolean => !newTaskInFlight && newTaskDraft.trim().length > 0;
+
+  // Build the submit button first so the textarea's input handler can toggle its
+  // disabled state directly (no full re-render — that would steal focus mid-type).
+  const submit = document.createElement("button");
+  submit.className = "icon-btn dex-new-submit";
+  submit.disabled = !canSubmit();
+  submit.title = newTaskInFlight ? "Spawning the author agent…" : "Create task (Enter)";
+  submit.setAttribute("aria-label", submit.title);
+  const si = document.createElement("i");
+  si.className = newTaskInFlight ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-check";
+  submit.append(si);
+  submit.addEventListener("click", () => void runDexNew(projects));
+
+  const textarea = document.createElement("textarea");
+  textarea.className = "dex-new-input";
+  textarea.placeholder =
+    "Describe the task you want — an agent will read the code and author it.";
+  textarea.rows = 3;
+  textarea.value = newTaskDraft;
+  textarea.disabled = newTaskInFlight;
+  textarea.addEventListener("input", () => {
+    newTaskDraft = textarea.value;
+    submit.disabled = !canSubmit();
+  });
+  textarea.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault(); // Enter submits; Shift+Enter falls through to a newline.
+      void runDexNew(projects);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      cancelDexNew();
+    }
+  });
+  wrap.append(textarea);
+
+  const controls = document.createElement("div");
+  controls.className = "dex-new-controls";
+
+  // A project selector only when several repos' tasks share the board, so the
+  // target store is unambiguous; one (or zero) project needs no choice.
+  if (projects.length > 1) {
+    const select = document.createElement("select");
+    select.className = "dex-new-project";
+    select.disabled = newTaskInFlight;
+    select.title = "Target repository";
+    const selected = newTaskProject ?? projects[0];
+    for (const p of projects) {
+      const opt = document.createElement("option");
+      opt.value = p;
+      opt.textContent = p;
+      if (p === selected) opt.selected = true;
+      select.append(opt);
+    }
+    select.addEventListener("change", () => {
+      newTaskProject = select.value;
+    });
+    controls.append(select);
+  }
+
+  const cancel = document.createElement("button");
+  cancel.className = "icon-btn dex-new-cancel";
+  cancel.disabled = newTaskInFlight;
+  cancel.title = "Cancel (Esc)";
+  cancel.setAttribute("aria-label", cancel.title);
+  const xi = document.createElement("i");
+  xi.className = "fa-solid fa-xmark";
+  cancel.append(xi);
+  cancel.addEventListener("click", () => cancelDexNew());
+
+  controls.append(submit, cancel);
+  wrap.append(controls);
+
+  // Grab focus once, when the composer is freshly armed (queued so the element is
+  // in the DOM first). Not on every render, so a board poll mid-type can't steal it.
+  if (newTaskJustArmed) {
+    newTaskJustArmed = false;
+    queueMicrotask(() => {
+      textarea.focus();
+      const end = textarea.value.length;
+      textarea.setSelectionRange(end, end);
+    });
+  }
+
+  return wrap;
+}
+
+/**
+ * Drive the New-task composer's submit: launch the author agent for the trimmed
+ * draft (with the resolved target project), mark it in flight so the next render
+ * shows a spinner + disables the controls, then on completion close the composer
+ * and clear the draft (re-rendering at each step). Guards against a second launch
+ * while one is in flight, and against an empty description. The success/error
+ * notice is pushed from main via panel state.
+ */
+async function runDexNew(projects: string[]): Promise<void> {
+  const description = newTaskDraft.trim();
+  if (!description || newTaskInFlight) return;
+  newTaskInFlight = true;
+  requestRender();
+  try {
+    await window.perch.dexNew({ description, project: newTaskTargetProject(projects) });
+    // The launch resolved (the agent is authoring the task) — close + reset.
+    composingNewTask = false;
+    newTaskDraft = "";
+    newTaskProject = undefined;
+  } finally {
+    newTaskInFlight = false;
+    requestRender();
+  }
+}
+
+/** Close the New-task composer and discard its draft (the ✗ cancel / Esc). */
+function cancelDexNew(): void {
+  composingNewTask = false;
+  newTaskDraft = "";
+  newTaskProject = undefined;
+  requestRender();
+}
+
+/**
  * Build the Dex section header: the tree/graph view-mode toggle, a top-level
  * "spawn all ready" button when any tasks are ready, plus — when there are
  * epics — an expand/collapse-all toggle over them.
@@ -590,6 +802,11 @@ function dexHeaderEl(epicIds: string[], mode: DexViewMode, readyCount: number): 
   header.className = "repo-header dex-header";
 
   header.append(dexViewToggleEl(mode));
+
+  // "New task from a description": arms an inline composer that spawns an agent to
+  // author a task. Sits by the spawn-all rocket — the create-a-task counterpart to
+  // spawn (which spawns an agent FOR an existing task).
+  header.append(dexNewBtnEl());
 
   // Fleet launch: spawn an agent for every ready task at once. Hidden when
   // nothing is ready (no-op would just toast "no ready tasks").
@@ -650,8 +867,12 @@ export function dexSectionEl(
   }
 
   // Plugin present but nothing open (e.g. everything's completed) — show an
-  // empty state rather than a blank pane, so the tab still reads as "Dex".
+  // empty state rather than a blank pane, so the tab still reads as "Dex". The
+  // header (and its New-task composer) still render, so the first task can be
+  // authored from an empty board.
   if (section.rows.length === 0) {
+    el.append(dexHeaderEl([], mode, 0));
+    if (composingNewTask) el.append(dexNewComposerEl([]));
     const empty = document.createElement("div");
     empty.className = "message";
     empty.textContent = "No open tasks";
@@ -664,6 +885,11 @@ export function dexSectionEl(
   const epicIds = section.rows.filter((r) => r.isEpic).map((r) => r.id);
   const readyCount = section.rows.filter(canSpawnDex).length;
   el.append(dexHeaderEl(epicIds, mode, readyCount));
+
+  // The armed New-task composer sits between the header and the rows, full-width.
+  // Its project selector offers the distinct projects on the board (so a
+  // multi-repo target is unambiguous).
+  if (composingNewTask) el.append(dexNewComposerEl(dexProjects(section)));
 
   // Graph mode walks the blocker edges (`blockedBy`) instead of the task tree;
   // tree mode is the original pre-ordered render, completely unchanged.

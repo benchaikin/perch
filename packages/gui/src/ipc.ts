@@ -134,6 +134,13 @@ export const Channels = {
    * inverse of {@link Channels.dexAddBlocker}.
    */
   dexRemoveBlocker: "perch:dex-remove-blocker",
+  /**
+   * Renderer → main `invoke`: author a new dex task from a free-form description
+   * (payload: a {@link DexNewRequest}). Main runs `dex.new` (which spawns an agent
+   * in the target repo to write the task) and resolves when the launch finishes,
+   * so the composer can clear its in-flight state; the outcome is toasted from main.
+   */
+  dexNew: "perch:dex-new",
 } as const;
 
 /** Renderer → main payload to add/remove a dex dependency (blocker) edge. */
@@ -142,6 +149,18 @@ export interface DexBlockerRequest {
   blockedId: string;
   /** The task it depends on (the blocker). Drop A onto B ⇒ blockedId B, blockerId A. */
   blockerId: string;
+}
+
+/** Renderer → main payload to author a new dex task from a description. */
+export interface DexNewRequest {
+  /** Free-form description of the task; an agent expands it into a well-formed task. */
+  description: string;
+  /**
+   * The target project (a repo basename) when more than one dex repo has tasks, so
+   * the author agent's `dex create` lands in the right store. Omitted when there's a
+   * single (or no) project — the daemon resolves the sole repo (or its cwd store).
+   */
+  project?: string;
 }
 
 /**
@@ -223,6 +242,14 @@ export interface PerchBridge {
    * {@link PerchBridge.dexAddBlocker}.
    */
   dexRemoveBlocker(request: DexBlockerRequest): Promise<void>;
+  /**
+   * Ask the main process to author a new dex task from a free-form description —
+   * it spawns an agent in the target repo to read the code and run `dex create`.
+   * Resolves when the launch finishes (or fails), so the caller can clear its
+   * in-flight UI; the success/error notice is pushed via panel state. The task is
+   * authored asynchronously and appears on the next board refresh.
+   */
+  dexNew(request: DexNewRequest): Promise<void>;
 }
 
 declare global {

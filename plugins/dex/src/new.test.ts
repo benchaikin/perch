@@ -1,0 +1,171 @@
+/**
+ * Unit tests for the `dex.new` action's pure helpers + the `runNew`
+ * orchestration. The terminal launcher (`spawn`/`writeScript`) is stubbed, so
+ * nothing spawns a real process — we assert the repo resolution, the bootstrap
+ * prompt, the window title, the safely-quoted `claude` launch command, and the
+ * graceful failure paths. Mirrors `spawn.test.ts`.
+ */
+import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import {
+  newTaskPrompt,
+  newTaskTitle,
+  resolveNewRepo,
+  runNew,
+  type NewDeps,
+} from "./new.js";
+
+test("resolveNewRepo: explicit repo wins as given", () => {
+  assert.deepEqual(resolveNewRepo({ repo: "/explicit/path" }, ["/work/perch"]), {
+    repo: "/explicit/path",
+  });
+});
+
+test("resolveNewRepo: a project maps to its repo by basename", () => {
+  assert.deepEqual(resolveNewRepo({ project: "perch" }, ["/work/perch", "/work/other"]), {
+    repo: "/work/perch",
+  });
+});
+
+test("resolveNewRepo: an unknown project is a clean error", () => {
+  const r = resolveNewRepo({ project: "ghost" }, ["/work/perch"]);
+  assert.ok("error" in r && /no configured repo/.test(r.error));
+});
+
+test("resolveNewRepo: a single configured repo needs no project (zero-click)", () => {
+  assert.deepEqual(resolveNewRepo({}, ["/work/perch"]), { repo: "/work/perch" });
+});
+
+test("resolveNewRepo: no repos configured → undefined (caller uses its cwd store)", () => {
+  assert.deepEqual(resolveNewRepo({}, []), { repo: undefined });
+});
+
+test("resolveNewRepo: multiple repos with no project/repo is a clean ambiguity error", () => {
+  const r = resolveNewRepo({}, ["/work/perch", "/work/other"]);
+  assert.ok("error" in r && /multiple dex repos/.test(r.error));
+});
+
+test("newTaskTitle: `dex new · <snippet>`, bare when blank, truncated when long", () => {
+  assert.equal(newTaskTitle("Add a logout button"), "dex new · Add a logout button");
+  assert.equal(newTaskTitle("   "), "dex new");
+  // Whitespace is collapsed so a multi-line description still reads on one line.
+  assert.equal(newTaskTitle("Add\n\n  a   button"), "dex new · Add a button");
+  const long = "A really long task description that goes well past the readable title limit";
+  const title = newTaskTitle(long);
+  assert.ok(title.startsWith("dex new · "));
+  assert.ok(title.endsWith("…"));
+  assert.ok(title.length < `dex new · ${long}`.length);
+});
+
+test("newTaskPrompt: embeds the description and instructs `dex create` (no implementation)", () => {
+  const prompt = newTaskPrompt("Add a logout button to the header");
+  assert.ok(prompt.includes("Add a logout button to the header"));
+  assert.ok(prompt.includes("dex create"));
+  // It authors, not implements — the prompt says so explicitly.
+  assert.match(prompt, /Do NOT implement/);
+});
+
+// ----- runNew orchestration (seams stubbed) ---------------------------------
+
+/** A fake terminal spawn that records it fired (see `spawn.test.ts`). */
+function fakeSpawn(): { spawn: NewDeps["spawn"]; calls: number } {
+  let calls = 0;
+  const spawn = (() => {
+    calls += 1;
+    return { on: () => {}, unref: () => {} };
+  }) as unknown as NewDeps["spawn"];
+  return {
+    spawn,
+    get calls() {
+      return calls;
+    },
+  };
+}
+
+/** A `writeScript` stub that records the command without touching disk. */
+function fakeWriteScript(): { writeScript: NewDeps["writeScript"]; commands: string[] } {
+  const commands: string[] = [];
+  return {
+    writeScript: (_label, command) => {
+      commands.push(command);
+      return "/tmp/perch-terminal/fake.sh";
+    },
+    commands,
+  };
+}
+
+function deps(over: Partial<NewDeps> = {}): NewDeps {
+  return {
+    repos: ["/work/perch"],
+    cwd: "/daemon/cwd",
+    terminal: {},
+    ...over,
+  };
+}
+
+test("runNew: rejects an empty/whitespace description before launching", async () => {
+  const term = fakeSpawn();
+  const res = await runNew({ description: "   " }, deps({ spawn: term.spawn }));
+  assert.equal(res.ok, false);
+  assert.match(res.message, /description is required/);
+  assert.equal(term.calls, 0);
+});
+
+test("runNew: happy path — launches an auto-mode agent in the sole repo with the seeded prompt", async () => {
+  const term = fakeSpawn();
+  const script = fakeWriteScript();
+  const res = await runNew(
+    { description: "Add a logout button" },
+    deps({ spawn: term.spawn, writeScript: script.writeScript }),
+  );
+  assert.equal(res.ok, true);
+  assert.equal(res.repo, "/work/perch");
+  assert.equal(term.calls, 1);
+  assert.equal(script.commands.length, 1);
+  // The window title (description snippet) is set first, then the cd+exec claude
+  // line in the resolved repo, in auto mode, with the seeded prompt.
+  assert.match(
+    script.commands[0]!,
+    /^printf '\\033\]0;%s\\007' 'dex new · Add a logout button'\n/,
+  );
+  assert.match(
+    script.commands[0]!,
+    /\ncd '\/work\/perch' && exec claude --permission-mode auto '/,
+  );
+  assert.ok(script.commands[0]!.includes("dex create"));
+  assert.ok(script.commands[0]!.includes("Add a logout button"));
+});
+
+test("runNew: an explicit project targets that repo's directory", async () => {
+  const script = fakeWriteScript();
+  const res = await runNew(
+    { description: "Do a thing", project: "other" },
+    deps({ repos: ["/work/perch", "/work/other"], spawn: fakeSpawn().spawn, writeScript: script.writeScript }),
+  );
+  assert.equal(res.ok, true);
+  assert.equal(res.repo, "/work/other");
+  assert.match(script.commands[0]!, /\ncd '\/work\/other' && exec claude/);
+});
+
+test("runNew: no configured repos falls back to the daemon's cwd store", async () => {
+  const script = fakeWriteScript();
+  const res = await runNew(
+    { description: "Do a thing" },
+    deps({ repos: [], cwd: "/daemon/cwd", spawn: fakeSpawn().spawn, writeScript: script.writeScript }),
+  );
+  assert.equal(res.ok, true);
+  assert.equal(res.repo, "/daemon/cwd");
+  assert.match(script.commands[0]!, /\ncd '\/daemon\/cwd' && exec claude/);
+});
+
+test("runNew: multiple repos with no target is a clean ambiguity error, nothing launched", async () => {
+  const term = fakeSpawn();
+  const res = await runNew(
+    { description: "Do a thing" },
+    deps({ repos: ["/work/perch", "/work/other"], spawn: term.spawn, writeScript: fakeWriteScript().writeScript }),
+  );
+  assert.equal(res.ok, false);
+  assert.match(res.message, /multiple dex repos/);
+  assert.equal(term.calls, 0);
+});
