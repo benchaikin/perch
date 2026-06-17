@@ -244,3 +244,34 @@ test(
     );
   },
 );
+
+test(
+  "renderer bundle carries the task detail inline editor",
+  { skip: !existsSync(bundlePath) ? "bundle not built (run pnpm build first)" : false },
+  () => {
+    const bundle = readFileSync(bundlePath, "utf8");
+    // The Edit button that flips the detail into edit mode, plus the inline
+    // input/textarea classes the editor renders (no window.prompt).
+    assert.ok(
+      bundle.includes("dex-edit-btn"),
+      "expected the `dex-edit-btn` button class in the renderer bundle",
+    );
+    assert.ok(
+      bundle.includes("dex-edit-name"),
+      "expected the `dex-edit-name` input class in the renderer bundle",
+    );
+    assert.ok(
+      bundle.includes("dex-edit-description"),
+      "expected the `dex-edit-description` textarea class in the renderer bundle",
+    );
+    // The Save/Cancel controls and the bridge call the save wires up.
+    assert.ok(
+      bundle.includes("dex-edit-save"),
+      "expected the `dex-edit-save` button class in the renderer bundle",
+    );
+    assert.ok(
+      bundle.includes("dexEdit"),
+      "expected the `dexEdit` bridge call in the renderer bundle",
+    );
+  },
+);

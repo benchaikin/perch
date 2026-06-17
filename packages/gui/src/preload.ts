@@ -62,6 +62,9 @@ const bridge: PerchBridge = {
   dexDelete(id) {
     return ipcRenderer.invoke(Channels.dexDelete, id);
   },
+  dexEdit(request) {
+    return ipcRenderer.invoke(Channels.dexEdit, request);
+  },
   dexAddBlocker(request) {
     return ipcRenderer.invoke(Channels.dexAddBlocker, request);
   },

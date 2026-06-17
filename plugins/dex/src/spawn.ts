@@ -290,6 +290,28 @@ export class DexRunner {
     args.push("edit", blockedId, op === "add" ? "--add-blocker" : "--remove-blocker", blockerId);
     return this.exec(this.dexBin, args);
   }
+
+  /**
+   * Edit a task's metadata via `dex [--storage-path P] edit <id> [-n ...] [-d ...]
+   * [-p ...]` — only the fields present in `fields` become flags, so an unchanged
+   * field is never sent (a no-op edit composes to a bare `edit <id>`, which the
+   * caller skips). Resolves with the CLI's stdout; rejects (surfacing stderr) on
+   * failure. An empty `description` clears it (allowed); name/priority validity is
+   * the caller's concern (it rejects an empty name before reaching here).
+   */
+  async edit(
+    id: string,
+    fields: { name?: string; description?: string; priority?: number },
+    storagePath?: string,
+  ): Promise<string> {
+    const args: string[] = [];
+    if (storagePath) args.push("--storage-path", storagePath);
+    args.push("edit", id);
+    if (fields.name !== undefined) args.push("-n", fields.name);
+    if (fields.description !== undefined) args.push("-d", fields.description);
+    if (fields.priority !== undefined) args.push("-p", String(fields.priority));
+    return this.exec(this.dexBin, args);
+  }
 }
 
 /** Dependencies for {@link runSpawn} — the seams the action injects, tests stub. */

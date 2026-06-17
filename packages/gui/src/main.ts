@@ -39,6 +39,7 @@ import { shouldShowNotification, toNotifyOptions } from "./notify.js";
 import {
   Channels,
   type DexBlockerRequest,
+  type DexEditRequest,
   type DexNewRequest,
   type MergePrRequest,
   type OpenAgentRequest,
@@ -690,6 +691,35 @@ async function deleteDex(id: string): Promise<void> {
     }
   } catch (err) {
     showNotice({ tone: "bad", text: `Delete task ${id} failed: ${errorMessage(err)}` });
+  } finally {
+    pushState();
+  }
+}
+
+/**
+ * Edit a dex task's metadata via the dex plugin's `edit` action, then refresh the
+ * board and toast the outcome. Driven by the detail screen's inline editor; the
+ * request carries only the fields the user changed. Awaited by the renderer (via
+ * `ipcMain.handle`) so the editor clears its in-flight state when the work
+ * finishes. On success the board is re-fetched immediately so the detail view
+ * reflects the new name/description without waiting for the next poll. The daemon
+ * surfaces a rejected (blank) name as a clear `{ ok:false, message }`, toasted here.
+ */
+async function editDex(request: DexEditRequest): Promise<void> {
+  if (!client) return;
+  try {
+    const result = (await client.invoke({ id: "dex.edit", input: request })) as {
+      ok?: boolean;
+      message?: string;
+    } | null;
+    if (result && result.ok === false) {
+      showNotice({ tone: "bad", text: result.message ?? `Edit task ${request.id} failed.` });
+    } else {
+      showNotice({ tone: "ok", text: result?.message ?? `Updated task ${request.id}.` });
+      await refreshDexBoard();
+    }
+  } catch (err) {
+    showNotice({ tone: "bad", text: `Edit task ${request.id} failed: ${errorMessage(err)}` });
   } finally {
     pushState();
   }
@@ -1460,6 +1490,7 @@ function registerIpc(): void {
   ipcMain.handle(Channels.dexSpawn, (_event, id: string) => spawnDex(id));
   ipcMain.handle(Channels.dexSpawnReady, () => spawnDexReady());
   ipcMain.handle(Channels.dexDelete, (_event, id: string) => deleteDex(id));
+  ipcMain.handle(Channels.dexEdit, (_event, request: DexEditRequest) => editDex(request));
   ipcMain.handle(Channels.dexAddBlocker, (_event, request: DexBlockerRequest) =>
     addDexBlocker(request),
   );

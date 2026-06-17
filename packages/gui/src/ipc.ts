@@ -120,6 +120,13 @@ export const Channels = {
    */
   dexDelete: "perch:dex-delete",
   /**
+   * Renderer → main `invoke`: edit a dex task's metadata (payload: a
+   * {@link DexEditRequest} — the id plus the changed name/description/priority).
+   * Main runs `dex.edit`, refreshes the board, and resolves when the edit
+   * finishes, so the renderer can leave edit mode; the outcome is toasted from main.
+   */
+  dexEdit: "perch:dex-edit",
+  /**
    * Renderer → main `invoke`: wire a dependency edge between two dex tasks (payload:
    * a {@link DexBlockerRequest}). Main runs `dex.add-blocker`, refreshes the board,
    * and resolves when the edit finishes, so the renderer can clear its drop state;
@@ -142,6 +149,19 @@ export const Channels = {
    */
   dexNew: "perch:dex-new",
 } as const;
+
+/**
+ * Renderer → main payload to edit a dex task's metadata. `id` identifies the
+ * task; each editable field is optional — only the fields the user actually
+ * changed are present, so an unchanged field is never sent to `dex edit`. An
+ * empty `description` is a deliberate clear; a blank `name` is rejected daemon-side.
+ */
+export interface DexEditRequest {
+  id: string;
+  name?: string;
+  description?: string;
+  priority?: number;
+}
 
 /** Renderer → main payload to add/remove a dex dependency (blocker) edge. */
 export interface DexBlockerRequest {
@@ -227,6 +247,13 @@ export interface PerchBridge {
    * in-progress UI; the success/error notice is pushed via panel state.
    */
   dexDelete(id: string): Promise<void>;
+  /**
+   * Ask the main process to edit a dex task's metadata (name/description/priority).
+   * Only the changed fields are sent. Resolves when the edit finishes (or fails)
+   * and the board has refreshed, so the caller can leave edit mode; the
+   * success/error notice is pushed via panel state.
+   */
+  dexEdit(request: DexEditRequest): Promise<void>;
   /**
    * Ask the main process to add a dependency (blocker) edge between two dex tasks
    * — `blockedId` becomes blocked by `blockerId`. Resolves when the edit finishes
