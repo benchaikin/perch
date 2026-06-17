@@ -28,16 +28,27 @@ export function byId(id: string): HTMLElement {
   return el;
 }
 
-/** Build a status chip element, optionally led by a (spinning) Font Awesome icon. */
+/**
+ * Build a status chip element, optionally led by a (spinning) Font Awesome icon.
+ *
+ * When the chip carries an `href`, it renders as an actionable variant: a real
+ * `<button>` (focusable + Enter/Space-activatable for free) styled as a chip,
+ * with a pointer/hover/focus affordance and an accessible name, that opens the
+ * URL via `window.perch.openPr`. The click is stopped from bubbling so it does
+ * not also fire the enclosing row's open handler. Plain chips render exactly as
+ * before — a passive `<span>`.
+ */
 export function chipEl(chip: {
   label: string;
   tone: string;
   hint: string;
   icon?: string;
   spin?: boolean;
+  href?: string;
+  actionLabel?: string;
 }): HTMLElement {
-  const el = document.createElement("span");
-  el.className = `chip ${chip.tone}`;
+  const el = document.createElement(chip.href ? "button" : "span");
+  el.className = `chip ${chip.tone}${chip.href ? " action" : ""}`;
   el.title = chip.hint;
   if (chip.icon) {
     const i = document.createElement("i");
@@ -45,6 +56,15 @@ export function chipEl(chip: {
     el.append(i, ` ${chip.label}`);
   } else {
     el.textContent = chip.label;
+  }
+  if (chip.href) {
+    const href = chip.href;
+    if (chip.actionLabel) el.setAttribute("aria-label", chip.actionLabel);
+    el.addEventListener("click", (e) => {
+      // The row itself also opens the PR; stop here so we don't double-fire it.
+      e.stopPropagation();
+      window.perch.openPr(href);
+    });
   }
   return el;
 }

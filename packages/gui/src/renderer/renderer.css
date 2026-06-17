@@ -974,6 +974,25 @@ body {
   white-space: nowrap;
 }
 
+/* Actionable chip (carries an href): a real <button> styled to match a chip,
+   with a click-to-open affordance. Reset the button chrome so it reads as a
+   chip, then add the pointer / hover / focus cues. Plain chips stay passive. */
+.chip.action {
+  font: inherit;
+  font-size: 10px;
+  line-height: inherit;
+  border: none;
+  margin: 0;
+  cursor: pointer;
+}
+.chip.action:hover {
+  text-decoration: underline;
+}
+.chip.action:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .chip.ok {
   color: var(--ok);
 }
