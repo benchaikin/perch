@@ -2,9 +2,9 @@
  * Shared dex-task identity colors — a stable, deterministic id → color mapping,
  * used by every surface that wants to give a dex task a recognizable identity
  * accent: the GUI tints a task's id chip with it; the worktrees board tints a
- * linked worktree; the terminal launcher feeds it (as RGB) to AppleScript so an
- * agent's window matches its task. Lives in the SDK so all three author against
- * ONE mapping — same id, same color, everywhere.
+ * linked worktree; the terminal launcher feeds it (as RGB) to iTerm2's tab-color
+ * escape (OSC 6) so an agent's window tab matches its task. Lives in the SDK so
+ * all three author against ONE mapping — same id, same color, everywhere.
  *
  * The mapping is a stable string hash of the id indexed into a curated,
  * color-blind-friendly palette (Tableau 10): well-separated mid-tone hues that
@@ -105,8 +105,8 @@ export function dexTaskColorCss(id: string): string {
 
 /**
  * RGB adapter: the task's color as 0–255 channels. The form the terminal
- * launcher feeds to AppleScript, which wants 16-bit channels — scale each by
- * 257 (`0–255` → `0–65535`) at that call site.
+ * launcher feeds to iTerm2's OSC 6 tab-color escape, which takes 0–255 channels
+ * directly (no scaling).
  */
 export function dexTaskColorRgb(id: string): DexRgb {
   return dexTaskColor(id).rgb;

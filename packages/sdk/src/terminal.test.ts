@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { dexTaskColorRgb } from "./dex-color.js";
 import {
   applyTemplate,
   DEFAULT_TERMINAL,
@@ -110,6 +111,20 @@ test("resolveTabColorCommand: iTerm2 gets an OSC 6 tab-color printf; others / cu
     ),
     undefined,
   );
+});
+
+test("resolveTabColorCommand: terminal tab uses the SAME shared color as the GUI for a task id", () => {
+  // Cross-surface lock: the terminal tab must tint to exactly the channels the
+  // dex/worktrees GUI renders for the same task id — both go through the one
+  // shared `dexTaskColor` source. A future change that gives the terminal its
+  // own color derivation (or drifts the GUI's) breaks this.
+  for (const id of ["8ovqrfk8", "rlzkjoz5", "2b7x2x9r", "task-001", ""]) {
+    const { r, g, b } = dexTaskColorRgb(id);
+    const cmd = resolveTabColorCommand({ terminalApp: "iTerm2" }, dexTaskColorRgb(id));
+    assert.match(cmd!, new RegExp(`red;brightness;${r}\\\\a`), `red for ${JSON.stringify(id)}`);
+    assert.match(cmd!, new RegExp(`green;brightness;${g}\\\\a`), `green for ${JSON.stringify(id)}`);
+    assert.match(cmd!, new RegExp(`blue;brightness;${b}\\\\a`), `blue for ${JSON.stringify(id)}`);
+  }
 });
 
 test("resolveTabColorCommand: channels clamp + round to 0–255", () => {
