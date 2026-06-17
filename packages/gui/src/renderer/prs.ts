@@ -86,20 +86,23 @@ function resolveConflictsBtnEl(row: PrRow): HTMLElement {
  */
 function openAgentBtnEl(row: PrRow): HTMLElement {
   const btn = document.createElement("button");
-  // A quieter secondary button — it's general-purpose, not the recommended
-  // action like Resolve conflicts. `open-agent-btn` is a marker class.
-  btn.className = "btn btn-sm open-agent-btn";
+  // A quieter, icon-only secondary control — it's general-purpose, not a
+  // recommended action like Resolve conflicts (which keeps its text label).
+  // `open-agent-btn` is a marker class. No visible text, so `title` +
+  // `aria-label` carry the description (mirrors the dex worktree button).
+  btn.className = "icon-btn open-agent-btn";
   const inFlight = openingAgents.includes(row.branch);
   btn.disabled = inFlight;
   btn.title = `Open a free-form Claude agent session on this PR's branch (${row.repo})`;
+  btn.setAttribute("aria-label", btn.title);
   if (inFlight) {
     const spinner = document.createElement("i");
     spinner.className = "fa-solid fa-circle-notch fa-spin";
-    btn.append(spinner, " Opening…");
+    btn.append(spinner);
   } else {
     const glyph = document.createElement("i");
     glyph.className = "fa-solid fa-robot";
-    btn.append(glyph, " Open agent");
+    btn.append(glyph);
     btn.addEventListener("click", (e) => {
       // Don't open the PR in the browser; just spawn the agent.
       e.stopPropagation();
