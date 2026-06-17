@@ -1,7 +1,9 @@
 /**
  * The `dex.new` action's machinery: spawn a Claude Code agent IN A DEX REPO's
- * directory, seeded to turn a free-form description into a well-formed dex task
- * (it reads the code, then runs `dex create`). The complement of `dex.spawn` —
+ * directory, seeded to turn a free-form description into well-formed dex work —
+ * either a single task or, when the description warrants it, a parent epic with
+ * dependency-ordered sub-tasks (it reads the code, then runs `dex create`). The
+ * complement of `dex.spawn` —
  * where spawn launches an agent FOR an existing task, this launches one to
  * CREATE a task.
  *
@@ -92,22 +94,41 @@ export function resolveNewRepo(
 
 /**
  * The bootstrap prompt for the author agent: it reads the relevant code, then
- * runs `dex create` in the repo to write a well-formed task. The agent's cwd IS
- * the repo, so `dex create` targets the right store with no `--storage-path`. The
- * description is embedded verbatim (the launcher shell-quotes the whole prompt, so
+ * runs `dex create` in the repo to write well-formed work — a single task for a
+ * focused change, or a parent epic with dependency-ordered sub-tasks for a large
+ * one. The agent judges the scope itself. The agent's cwd IS the repo, so `dex
+ * create` targets the right store with no `--storage-path`. The description is
+ * embedded verbatim (the launcher shell-quotes the whole prompt, so
  * backticks/quotes inside it don't expand).
  */
 export function newTaskPrompt(description: string): string {
   return (
-    `Here is a rough description of a task to create:\n\n${description}\n\n` +
-    `Turn it into a SINGLE well-formed dex task for THIS repository (your cwd). First ` +
-    `read the relevant code to ground the task in how things actually work here — find ` +
-    `the real reuse points, the files to touch, and the gotchas. Then create the task by ` +
-    `running \`dex create\` in this directory (so it lands in this repo's .dex store), ` +
-    `giving it a concise imperative name and a rich description that follows this repo's ` +
-    `existing task conventions: the WHY, the key design, reuse pointers, guards/edge ` +
-    `cases, and acceptance criteria. After creating it, run \`dex show <id> --full\` to ` +
-    `verify it was created and reads well. Do NOT implement the task — only author it.`
+    `Here is a rough description of work to create as dex task(s):\n\n${description}\n\n` +
+    `Author this as well-formed dex work for THIS repository (your cwd). First read the ` +
+    `relevant code to ground the work in how things actually work here — find the real ` +
+    `reuse points, the files to touch, and the gotchas.\n\n` +
+    `Then JUDGE THE SCOPE of the description and choose ONE of:\n` +
+    `1. SINGLE TASK (default — prefer this): for a focused, independently-mergeable ` +
+    `change, create one task with \`dex create\` in this directory (so it lands in this ` +
+    `repo's .dex store).\n` +
+    `2. EPIC + SUB-TASKS: only when the description genuinely spans multiple ` +
+    `independently-mergeable pieces (a multi-PR effort), create a parent "epic" task ` +
+    `FIRST with \`dex create\` to get its id, then break the work into small, mergeable ` +
+    `sub-tasks — each created with \`dex create --parent <epic-id>\` and wired with ` +
+    `\`--blocked-by <ids>\` (using the real child ids \`dex create\` returns, so you ` +
+    `never reference an id that does not exist yet) to encode the dependency order. ` +
+    `Use \`-p/--priority\` where ordering within a level matters. The parent carries ` +
+    `the epic-level WHY, design, and a dependency-ordered TASK BREAKDOWN; each child ` +
+    `carries its own.\n\n` +
+    `Do NOT over-decompose: a small or focused description must produce ONE task — only ` +
+    `reach for an epic when the work clearly does not fit in a single PR.\n\n` +
+    `Whatever you create, give each task a concise imperative name and a rich ` +
+    `description that follows this repo's existing task conventions: the WHY, the key ` +
+    `design, reuse pointers, guards/edge cases, and acceptance criteria. After creating, ` +
+    `run \`dex show <id> --full\` to verify each task was created and reads well; for an ` +
+    `epic, also confirm the parent/child tree and the blocked-by edges read correctly ` +
+    `(e.g. \`dex list <epic-id>\` or \`dex show <epic-id> --full\`). Do NOT implement ` +
+    `the work — only author it.`
   );
 }
 

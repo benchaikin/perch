@@ -66,6 +66,20 @@ test("newTaskPrompt: embeds the description and instructs `dex create` (no imple
   assert.match(prompt, /Do NOT implement/);
 });
 
+test("newTaskPrompt: offers both the single-task and the epic/sub-task path", () => {
+  const prompt = newTaskPrompt("Port the renderer to React across the app");
+  // It judges scope rather than forcing a single task.
+  assert.match(prompt, /scope/i);
+  assert.doesNotMatch(prompt, /SINGLE well-formed dex task/);
+  // The epic path names the real mechanism: --parent and --blocked-by sub-tasks.
+  assert.match(prompt, /epic/i);
+  assert.match(prompt, /--parent/);
+  assert.match(prompt, /--blocked-by/);
+  assert.match(prompt, /sub-task/i);
+  // …but biases toward a single task so trivial requests don't explode into fake epics.
+  assert.match(prompt, /over-decompose/i);
+});
+
 // ----- runNew orchestration (seams stubbed) ---------------------------------
 
 /** A fake terminal spawn that records it fired (see `spawn.test.ts`). */
