@@ -572,18 +572,29 @@ body {
 .dex-id.copied {
   color: var(--ok);
 }
-/* Identity accent for an OPEN (unblocked, unfinished) task: the chip is tinted
-   with the task's stable color (set per-row as --task-color / --task-color-rgb
-   from the shared dexTaskColor). A faint fill plus a colored inset ring — the
-   ring uses box-shadow so it never shifts the row's layout. This is an identity
-   marker (which task), orthogonal to the health dot (how the task is doing); the
-   id text keeps its own color so it stays legible on both themes. The .copied
-   green confirmation still wins, since it sets `color` directly. The same accent
-   rides the worktree row's task chip, so a worktree reads as its task's color. */
+/* Solid identity dot for an OPEN (unblocked, unfinished) task: a small filled
+   circle in the task's stable color (set inline from the shared dexTaskColor),
+   the PRIMARY at-a-glance cue that matches a task to its linked worktree. Sized
+   to mirror the `.tab-dot` status dot, and leads both the dex row's id chip and
+   the worktree row's task chip so the two visibly share one "team color". Solid
+   fill reads clearly on both themes. */
+.dex-task-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+/* Identity accent for an OPEN task's chip: a faint fill tinted with the task's
+   stable color (set per-row as --task-color-rgb from the shared dexTaskColor),
+   backing the solid `.dex-task-dot` that now carries the strong signal. This is
+   an identity marker (which task), orthogonal to the health dot (how the task is
+   doing); the id text keeps its own color so it stays legible on both themes.
+   The .copied green confirmation still wins, since it sets `color` directly. The
+   same tint rides the worktree row's task chip, so a worktree reads as its
+   task's color. */
 .dex-id.dex-open,
 .worktree-task.dex-open {
   background: rgba(var(--task-color-rgb), 0.16);
-  box-shadow: inset 0 0 0 1px rgba(var(--task-color-rgb), 0.55);
 }
 .dex-detail-label {
   font-size: 11px;
