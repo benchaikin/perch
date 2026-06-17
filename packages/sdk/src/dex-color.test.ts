@@ -62,9 +62,30 @@ test("adapters: css is the hex, rgb is the rgb", () => {
 });
 
 test("palette: entries are well-formed and all distinct", () => {
-  assert.ok(DEX_TASK_PALETTE.length >= 6, "enough hues to spread tasks across");
+  // Materially larger than the original Tableau 10 so concurrent tasks rarely
+  // collide (>= ~20 hues halves the per-pair collision probability).
+  assert.ok(DEX_TASK_PALETTE.length >= 20, "enough hues to spread tasks across");
   for (const hex of DEX_TASK_PALETTE) assert.match(hex, HEX);
   assert.equal(new Set(DEX_TASK_PALETTE).size, DEX_TASK_PALETTE.length, "no duplicate hues");
+});
+
+test("palette: every hue is a mid-tone accent, legible on both themes", () => {
+  // The curated guarantee: no entry is so light it washes out on the light
+  // theme nor so dark it disappears on the dark theme. Check WCAG relative
+  // luminance (0 = black, 1 = white) stays in a mid band for every entry. The
+  // legacy light pink (#ff9da7) is the most extreme inherited entry, so the band
+  // is set wide enough to include it.
+  const channel = (c: number) => {
+    const s = c / 255;
+    return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  for (const hex of DEX_TASK_PALETTE) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    const lum = 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+    assert.ok(lum >= 0.1 && lum <= 0.65, `${hex} luminance ${lum.toFixed(3)} in mid band`);
+  }
 });
 
 test("dexTaskColor: a handful of sample ids spread across multiple colors", () => {
