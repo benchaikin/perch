@@ -622,6 +622,65 @@ body {
 .dex-header .icon-btn {
   margin-left: 0;
 }
+/* The armed New-task control reads as active (accent) while its composer is open,
+   so the + visibly toggles. */
+.dex-header .dex-new-active {
+  color: var(--accent);
+}
+
+/* The "New task from a description" composer: an inline textarea + project
+   selector + submit/cancel cluster, sitting between the header and the task rows.
+   A non-activating panel can't use window.prompt, so the description is typed here
+   (same reason the delete-confirm is in-renderer). */
+.dex-new-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+}
+.dex-new-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--fg);
+  background: var(--hover-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+.dex-new-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.dex-new-input::placeholder {
+  color: var(--muted);
+}
+/* The composer's controls hug the trailing edge (selector + submit/cancel). */
+.dex-new-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+.dex-new-controls .icon-btn {
+  margin-left: 0;
+}
+.dex-new-project {
+  font: inherit;
+  font-size: 11px;
+  color: var(--fg);
+  background: var(--hover-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+/* Submit reads as the "go" action (accent on hover); cancel stays neutral. */
+.dex-new-composer .dex-new-submit:hover:not(:disabled) {
+  color: var(--accent);
+}
 
 /* Task detail view (replaces the list when a task is selected). */
 .dex-detail {

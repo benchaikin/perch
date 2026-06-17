@@ -198,6 +198,28 @@ test(
 );
 
 test(
+  "renderer bundle carries the New-task-from-description composer",
+  { skip: !existsSync(bundlePath) ? "bundle not built (run pnpm build first)" : false },
+  () => {
+    const bundle = readFileSync(bundlePath, "utf8");
+    // The + control + its armed inline composer — the author-a-task affordance.
+    assert.ok(
+      bundle.includes("dex-new-composer"),
+      "expected the `dex-new-composer` class in the renderer bundle",
+    );
+    assert.ok(
+      bundle.includes("New task from a description"),
+      "expected the New-task control's hint in the bundle",
+    );
+    // The bridge call the composer's submit wires up reaches the bundle.
+    assert.ok(
+      bundle.includes("dexNew"),
+      "expected the `dexNew` bridge call in the renderer bundle",
+    );
+  },
+);
+
+test(
   "renderer bundle carries the top-level spawn-all-ready button",
   { skip: !existsSync(bundlePath) ? "bundle not built (run pnpm build first)" : false },
   () => {

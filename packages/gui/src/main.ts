@@ -39,6 +39,7 @@ import { shouldShowNotification, toNotifyOptions } from "./notify.js";
 import {
   Channels,
   type DexBlockerRequest,
+  type DexNewRequest,
   type MergePrRequest,
   type OpenAgentRequest,
   type ResolveConflictsRequest,
@@ -755,6 +756,33 @@ async function removeDexBlocker(request: DexBlockerRequest): Promise<void> {
   }
 }
 
+/**
+ * Author a new dex task from a free-form description via the dex plugin's `new`
+ * action — it spawns an agent in the target repo to read the code and run `dex
+ * create` — then toast the outcome. Awaited by the renderer (via `ipcMain.handle`)
+ * so the composer clears its in-flight state when the launch finishes. The task is
+ * authored asynchronously by that agent, so it appears on the next board poll
+ * rather than immediately — no eager refresh here (it'd race the agent).
+ */
+async function newDexTask(request: DexNewRequest): Promise<void> {
+  if (!client) return;
+  try {
+    const result = (await client.invoke({ id: "dex.new", input: request })) as {
+      ok?: boolean;
+      message?: string;
+    } | null;
+    if (result && result.ok === false) {
+      showNotice({ tone: "bad", text: result.message ?? "Couldn't start the task author." });
+    } else {
+      showNotice({ tone: "ok", text: result?.message ?? "Spawned an agent to author the task." });
+    }
+  } catch (err) {
+    showNotice({ tone: "bad", text: `New task failed: ${errorMessage(err)}` });
+  } finally {
+    pushState();
+  }
+}
+
 /** Re-invoke `dex.tasks` so the board reflects a just-deleted task immediately. */
 async function refreshDexBoard(): Promise<void> {
   if (!client) return;
@@ -1438,6 +1466,7 @@ function registerIpc(): void {
   ipcMain.handle(Channels.dexRemoveBlocker, (_event, request: DexBlockerRequest) =>
     removeDexBlocker(request),
   );
+  ipcMain.handle(Channels.dexNew, (_event, request: DexNewRequest) => newDexTask(request));
   ipcMain.handle(Channels.resolveConflicts, (_event, request: ResolveConflictsRequest) =>
     resolveConflicts(request),
   );
