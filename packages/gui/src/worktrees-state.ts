@@ -11,7 +11,6 @@
  * knows the wire shape of `worktrees.list`'s output, not the plugin's internals.
  */
 
-import type { DexStatus } from "./dex-state.js";
 import type { LinkedTask } from "./worktree-task-link.js";
 
 /** Canonical capability id of the worktrees read the section renders. */
@@ -58,7 +57,7 @@ export interface WorktreeList {
  * no matching task exists (or the dex board is missing).
  */
 export interface WorktreeRow extends Worktree {
-  task?: { id: string; name: string; status: DexStatus };
+  task?: LinkedTask;
 }
 
 /** Tallies for the tab badge / header summary. */

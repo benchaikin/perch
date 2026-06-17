@@ -574,8 +574,10 @@ body {
    ring uses box-shadow so it never shifts the row's layout. This is an identity
    marker (which task), orthogonal to the health dot (how the task is doing); the
    id text keeps its own color so it stays legible on both themes. The .copied
-   green confirmation still wins, since it sets `color` directly. */
-.dex-id.dex-open {
+   green confirmation still wins, since it sets `color` directly. The same accent
+   rides the worktree row's task chip, so a worktree reads as its task's color. */
+.dex-id.dex-open,
+.worktree-task.dex-open {
   background: rgba(var(--task-color-rgb), 0.16);
   box-shadow: inset 0 0 0 1px rgba(var(--task-color-rgb), 0.55);
 }

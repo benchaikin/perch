@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 
+import type { DexRgb } from "./dex-color.js";
 import type { SettingsField } from "./index.js";
 
 /**
@@ -48,6 +49,23 @@ export const TERMINAL_APP_TEMPLATES = {
 
 /** A known terminal app name (a key of {@link TERMINAL_APP_TEMPLATES}). */
 export type TerminalApp = keyof typeof TERMINAL_APP_TEMPLATES;
+
+/**
+ * Per-app AppleScript clause that tints the just-opened window to an identity
+ * color — appended after the launch template (so it runs once the window
+ * exists). `{rgb}` is replaced with an AppleScript `{r, g, b}` list in 0–65535
+ * channels. Only the AppleScript terminals (Terminal.app, iTerm2) get a clause;
+ * the others (kitty/WezTerm/Ghostty/tmux) and custom templates have none, so
+ * coloring is a graceful no-op there rather than a broken command. This is how a
+ * spawned agent's window matches its dex task's color (see
+ * {@link dexTaskColorRgb}); callers without a color leave the launch untouched.
+ */
+export const TERMINAL_COLOR_CLAUSES: Partial<Record<TerminalApp, string>> = {
+  Terminal: `-e 'tell application "Terminal" to set background color of front window to {rgb}'`,
+  iTerm2:
+    `-e 'tell application "iTerm" to tell current session of current window ` +
+    `to set background color to {rgb}'`,
+};
 
 /** The cross-plugin terminal preference (lives at `global.terminal`). */
 export const GlobalTerminalConfig = z.object({
@@ -114,6 +132,46 @@ export function resolveTerminalTemplate(cfg: GlobalTerminalConfig): string {
   return DEFAULT_TERMINAL;
 }
 
+/**
+ * Resolve the per-app color clause for the chosen terminal, mirroring
+ * {@link resolveTerminalTemplate}'s precedence: a custom `logTerminal` template
+ * is opaque to us, so it gets no clause (no-op); a known `terminalApp` gets its
+ * clause (may be undefined); otherwise we default to Terminal.app's. `undefined`
+ * means "this terminal has no color hook" — color is skipped, not forced.
+ */
+export function resolveTerminalColorClause(cfg: GlobalTerminalConfig): string | undefined {
+  if (cfg.logTerminal) return undefined;
+  if (cfg.terminalApp && cfg.terminalApp in TERMINAL_APP_TEMPLATES) {
+    return TERMINAL_COLOR_CLAUSES[cfg.terminalApp as TerminalApp];
+  }
+  return TERMINAL_COLOR_CLAUSES.Terminal;
+}
+
+const RGB_PLACEHOLDER = "{rgb}";
+
+/** Scale a 0–255 RGB channel to AppleScript's 0–65535 range (×257), clamped. */
+function to16Bit(channel: number): number {
+  const c = Math.max(0, Math.min(255, Math.round(channel)));
+  return c * 257;
+}
+
+/**
+ * Append the terminal's color clause (with `rgb` filled in) to a resolved launch
+ * command, tinting the window to the task's identity color. When the terminal
+ * has no color hook (see {@link resolveTerminalColorClause}) the launch is
+ * returned unchanged — a clean degrade for kitty/WezTerm/Ghostty/tmux/custom.
+ */
+export function appendTerminalColor(
+  launch: string,
+  cfg: GlobalTerminalConfig,
+  rgb: DexRgb,
+): string {
+  const clause = resolveTerminalColorClause(cfg);
+  if (!clause) return launch;
+  const list = `{${to16Bit(rgb.r)}, ${to16Bit(rgb.g)}, ${to16Bit(rgb.b)}}`;
+  return `${launch} ${clause.split(RGB_PLACEHOLDER).join(list)}`;
+}
+
 const CMD_PLACEHOLDER = "{cmd}";
 
 /** Substitute `cmd` into every `{cmd}` placeholder of `template` (literal replace). */
@@ -155,6 +213,12 @@ export interface SpawnInTerminalOptions {
   terminal: GlobalTerminalConfig;
   /** A short label for the temp-script filename, log lines, and result message. */
   label: string;
+  /**
+   * Optional identity color to tint the opened window to (e.g. a dex task's
+   * {@link dexTaskColorRgb}). Applied only on terminals with a color hook
+   * (Terminal.app / iTerm2); a no-op elsewhere. Omit to launch uncolored.
+   */
+  tabColor?: DexRgb;
   /** Optional log sink. */
   log?: (message: string) => void;
   /** Injected spawn (tests stub it); defaults to `child_process.spawn`. */
@@ -176,7 +240,8 @@ export function spawnInTerminal(opts: SpawnInTerminalOptions): { ok: boolean; me
   const writeScript = opts.writeScript ?? defaultWriteScript;
   try {
     const scriptPath = writeScript(opts.label, opts.command);
-    const launch = applyTemplate(template, `sh ${scriptPath}`);
+    const base = applyTemplate(template, `sh ${scriptPath}`);
+    const launch = opts.tabColor ? appendTerminalColor(base, opts.terminal, opts.tabColor) : base;
     const child = spawnFn("sh", ["-c", launch], { detached: true, stdio: "ignore" });
     child.on("error", (err: Error) => opts.log?.(`terminal launch failed: ${err.message}`));
     child.unref();

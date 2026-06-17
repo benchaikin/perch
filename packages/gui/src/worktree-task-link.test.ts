@@ -58,6 +58,7 @@ test("matches a worktree's taskId to a dex task in both directions", () => {
     id: "t1",
     name: "Build the thing",
     status: "in-progress",
+    blockedByCount: 0,
   });
   assert.deepEqual(link.worktreeByTaskId.get("t1"), {
     path: "/wt/a",
@@ -79,6 +80,20 @@ test("carries repo / ahead / behind onto the task→worktree summary", () => {
   assert.equal(summary?.repo, "alpha");
   assert.equal(summary?.ahead, 3);
   assert.equal(summary?.behind, 1);
+});
+
+test("carries the task's blocker count onto the worktree→task facet", () => {
+  const link = linkWorktreesAndTasks(
+    wlist(
+      wt({ name: "open", path: "/wt/open", taskId: "t1" }),
+      wt({ name: "blocked", path: "/wt/blocked", taskId: "t2" }),
+    ),
+    board(task({ id: "t1", blockedByCount: 0 }), task({ id: "t2", blockedByCount: 2 })),
+  );
+  // The count flows through so a consumer can tell an open task from a blocked
+  // one (the worktree row colors only open tasks).
+  assert.equal(link.taskByWorktreePath.get("/wt/open")?.blockedByCount, 0);
+  assert.equal(link.taskByWorktreePath.get("/wt/blocked")?.blockedByCount, 2);
 });
 
 test("no match when a worktree's taskId has no corresponding task", () => {
