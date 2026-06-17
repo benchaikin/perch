@@ -534,6 +534,18 @@ body {
   letter-spacing: 0;
   font-weight: 400;
 }
+/* The launch-agent button on the task detail page: left-aligned (override the
+   shared .btn.btn-sm right-push) like the back button, sized to its label, and
+   tinted with the start-green accent + play glyph so it reads as a "go" action. */
+.dex-detail .btn.btn-sm.dex-detail-spawn {
+  margin-left: 0;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ok);
+  border-color: var(--ok);
+}
 .dex-detail-head {
   display: flex;
   align-items: baseline;

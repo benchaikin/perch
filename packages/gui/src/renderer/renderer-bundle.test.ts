@@ -158,5 +158,10 @@ test(
       bundle.includes("dexSpawn"),
       "expected the `dexSpawn` bridge call in the renderer bundle",
     );
+    // The detail-page twin of the row button — same spawn path, its own class.
+    assert.ok(
+      bundle.includes("dex-detail-spawn"),
+      "expected the `dex-detail-spawn` button class in the renderer bundle",
+    );
   },
 );
