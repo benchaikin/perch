@@ -10,6 +10,10 @@ import { dexTaskColorRgb } from "./dex-color.js";
 import {
   applyTemplate,
   DEFAULT_TERMINAL,
+  FOCUS_OR_SPAWN_TEMPLATES,
+  focusableApp,
+  focusTitleLiteral,
+  resolveSpawnTemplate,
   resolveTabColorCommand,
   resolveTerminalTemplate,
   resolveTitleCommand,
@@ -235,6 +239,100 @@ test("spawnInTerminal: title alone prepends just the title line", () => {
     },
   });
   assert.equal(scripted, `printf '\\033]0;%s\\007' 'dex abc123'\nexec claude`);
+});
+
+test("FOCUS_OR_SPAWN_TEMPLATES: only Terminal + iTerm2; each carries {cmd} and {title}", () => {
+  assert.deepEqual(Object.keys(FOCUS_OR_SPAWN_TEMPLATES).sort(), ["Terminal", "iTerm2"]);
+  for (const template of Object.values(FOCUS_OR_SPAWN_TEMPLATES)) {
+    assert.match(template!, /\{cmd\}/);
+    assert.match(template!, /\{title\}/);
+  }
+});
+
+test("focusableApp: iTerm2 itself; unset/unknown/Custom → Terminal; unsupported app / custom template → none", () => {
+  assert.equal(focusableApp({ terminalApp: "iTerm2" }), "iTerm2");
+  // Terminal.app is the implicit default, and it's focusable.
+  assert.equal(focusableApp({}), "Terminal");
+  assert.equal(focusableApp({ terminalApp: "Terminal" }), "Terminal");
+  assert.equal(focusableApp({ terminalApp: "Custom" }), "Terminal");
+  assert.equal(focusableApp({ terminalApp: "nonsense" }), "Terminal");
+  // A listed-but-not-AppleScript-drivable app → none (falls back to plain spawn).
+  assert.equal(focusableApp({ terminalApp: "kitty" }), undefined);
+  // A custom launcher template is opaque to us → none.
+  assert.equal(focusableApp({ terminalApp: "iTerm2", logTerminal: "MINE {cmd}" }), undefined);
+});
+
+test("resolveSpawnTemplate: a marker on a focusable terminal picks the raise-or-spawn template", () => {
+  assert.deepEqual(resolveSpawnTemplate({ terminalApp: "iTerm2" }, "/wt"), {
+    template: FOCUS_OR_SPAWN_TEMPLATES.iTerm2,
+    focusable: true,
+  });
+  assert.deepEqual(resolveSpawnTemplate({}, "/wt"), {
+    template: FOCUS_OR_SPAWN_TEMPLATES.Terminal,
+    focusable: true,
+  });
+  // No marker → the plain always-new-window template, never the focus one.
+  assert.deepEqual(resolveSpawnTemplate({ terminalApp: "iTerm2" }), {
+    template: TERMINAL_APP_TEMPLATES.iTerm2,
+    focusable: false,
+  });
+  // Marker but unsupported terminal → plain template, not focusable.
+  assert.deepEqual(resolveSpawnTemplate({ terminalApp: "kitty" }, "/wt"), {
+    template: TERMINAL_APP_TEMPLATES.kitty,
+    focusable: false,
+  });
+});
+
+test("focusTitleLiteral: escapes for the AppleScript string AND the shell single-quote", () => {
+  assert.equal(focusTitleLiteral("/repo-worktrees/abc-x"), "/repo-worktrees/abc-x");
+  // A double quote is AppleScript-escaped (\"); the shell single-quote keeps it literal.
+  assert.equal(focusTitleLiteral('/a"b'), '/a\\"b');
+  // A backslash is doubled for the AppleScript parser.
+  assert.equal(focusTitleLiteral("/a\\b"), "/a\\\\b");
+  // A single quote breaks out of the `-e '…'` shell arg, so it gets the POSIX dance.
+  assert.equal(focusTitleLiteral("/it's"), "/it'\\''s");
+});
+
+test("spawnInTerminal: a focusMarker switches to raise-or-spawn and substitutes the title", () => {
+  let launch = "";
+  const res = spawnInTerminal({
+    command: "exec claude",
+    terminal: { terminalApp: "Terminal" },
+    label: "dex-abc",
+    focusMarker: "/repo-worktrees/abc-x",
+    spawn: ((_cmd: string, args: string[]) => {
+      launch = args[1]!;
+      return { on() {}, unref() {} } as never;
+    }) as never,
+    writeScript: () => "/tmp/perch-terminal/dex-abc.sh",
+  });
+  assert.equal(res.ok, true);
+  // The raise-or-spawn launcher: raise an existing window for this marker first…
+  assert.match(launch, /if custom title of t is "\/repo-worktrees\/abc-x" then/);
+  // …else open a new one and tag it with the same marker.
+  assert.match(launch, /set custom title of t to "\/repo-worktrees\/abc-x"/);
+  assert.match(launch, /do script "sh \/tmp\/perch-terminal\/dex-abc\.sh"/);
+  // No placeholder is left unsubstituted.
+  assert.ok(!launch.includes("{title}"), "expected {title} fully substituted");
+});
+
+test("spawnInTerminal: a focusMarker on a terminal without a focus hook spawns plainly", () => {
+  let launch = "";
+  spawnInTerminal({
+    command: "exec claude",
+    terminal: { terminalApp: "kitty" },
+    label: "dex-abc",
+    focusMarker: "/repo-worktrees/abc-x",
+    spawn: ((_cmd: string, args: string[]) => {
+      launch = args[1]!;
+      return { on() {}, unref() {} } as never;
+    }) as never,
+    writeScript: () => "/tmp/x.sh",
+  });
+  // The plain kitty launcher — no raise logic, no leftover title placeholder.
+  assert.match(launch, /kitty/);
+  assert.ok(!launch.includes("custom title"), "kitty must not get the raise-or-spawn template");
+  assert.ok(!launch.includes("{title}"), "no title placeholder to leak");
 });
 
 test("spawnInTerminal: a spawn throw is caught and reported ok:false", () => {

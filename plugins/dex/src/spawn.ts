@@ -493,6 +493,10 @@ export async function runSpawn(input: SpawnInput, deps: SpawnDeps): Promise<Spaw
     // matches the task's dex row + linked worktree across the fleet (a no-op on
     // terminals without a tab-color hook).
     tabColor: dexTaskColorRgb(id),
+    // Tag the window with the worktree path so a later "jump to agent" (the
+    // worktree-open control, keyed by the same path) raises THIS live session
+    // rather than spawning a new shell on top of it.
+    focusMarker: worktreePath,
     log: deps.log,
     spawn: deps.spawn,
     writeScript: deps.writeScript,
