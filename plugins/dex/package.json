@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@perch/core": "workspace:*",
+    "@perch/plugin-worktrees": "workspace:*",
     "@perch/sdk": "workspace:*"
   }
 }

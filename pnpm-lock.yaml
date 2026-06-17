@@ -137,6 +137,9 @@ importers:
       '@perch/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@perch/plugin-worktrees':
+        specifier: workspace:*
+        version: link:../worktrees
       '@perch/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
