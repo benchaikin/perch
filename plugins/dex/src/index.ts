@@ -27,6 +27,7 @@ import {
 } from "@perch/sdk";
 
 import { buildDexBoard, DexBoard, type DexGroup, parseRawTasks } from "./normalize.js";
+import { type DeleteInput, type DeleteResult, runDelete } from "./delete.js";
 import { LandBoard, landNotifications, runLand } from "./land.js";
 import { dexNotifications } from "./notify.js";
 import { defaultExec, DexProvider, type Exec } from "./provider.js";
@@ -38,8 +39,17 @@ import {
   type SpawnResult,
 } from "./spawn.js";
 
-export { buildDexBoard, DexBoard, DexStatus, DexTaskView, parseRawTasks, RawDexTask } from "./normalize.js";
+export {
+  buildDexBoard,
+  DexBoard,
+  DexStatus,
+  DexTaskView,
+  parseRawTasks,
+  RawDexTask,
+} from "./normalize.js";
 export type { DexGroup } from "./normalize.js";
+export { locateTaskStore, runDelete } from "./delete.js";
+export type { DeleteDeps, DeleteInput, DeleteResult } from "./delete.js";
 export {
   defaultFsProbe,
   evidenceFor,
@@ -119,6 +129,12 @@ export type DexConfig = z.infer<typeof DexConfig>;
 
 /** The `dex.spawn` action input: a task id, with an optional explicit repo override. */
 const SpawnInputSchema = z.object({
+  id: z.string(),
+  repo: z.string().optional(),
+});
+
+/** The `dex.delete` action input: a task id, with an optional explicit repo override. */
+const DeleteInputSchema = z.object({
   id: z.string(),
   repo: z.string().optional(),
 });
@@ -301,6 +317,37 @@ export default definePlugin({
           repos,
           terminal: terminalConfigOf(ctx.global),
           spawn: spawnOpenSpawn,
+          log: ctx.log,
+        });
+      },
+    }),
+
+    /**
+     * Delete a dex task from whichever monitored repo's store holds it — the
+     * board's destructive counterpart to `spawn`, projecting the `dex` CLI's
+     * `delete`/`rm`/`remove` onto perch's surfaces so a mistaken/duplicate/abandoned
+     * task can be cleared without dropping to the CLI. The store is `input.repo`'s
+     * when given, else found by probing the configured stores (same precedence as
+     * `spawn`). Runs `dex delete <id> --force` (non-interactive; cascades subtasks,
+     * matching `dex rm -f`). Daemon-side; MCP-exposed (yielding `perch dex delete
+     * <id>` + a typed tool). Never throws: any failure returns `{ ok:false, message }`.
+     *
+     * The GUI gates this behind a confirmation and warns when the task has a live
+     * worktree/agent — state the daemon board doesn't track — so a running agent is
+     * never silently orphaned; the CLI/MCP path is an explicit power-user action.
+     */
+    delete: action<DeleteInput, DexConfig, DeleteResult>({
+      summary: "Delete a dex task from the store that holds it",
+      input: DeleteInputSchema,
+      expose: { mcp: true },
+      run: ({ input, ctx }): Promise<DeleteResult> => {
+        const cfg = configOf(ctx.config);
+        // Same repo precedence as `dex.tasks`/`dex.spawn`: `dirs` → global.repos.
+        const repos = effectiveDirs(cfg.dirs ?? [], ctx.global);
+        return runDelete(input, {
+          exec: execOverride ?? defaultExec,
+          dexBin: cfg.dexBin ?? "dex",
+          repos,
           log: ctx.log,
         });
       },

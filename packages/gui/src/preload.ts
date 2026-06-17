@@ -50,6 +50,9 @@ const bridge: PerchBridge = {
   dexSpawnReady() {
     return ipcRenderer.invoke(Channels.dexSpawnReady);
   },
+  dexDelete(id) {
+    return ipcRenderer.invoke(Channels.dexDelete, id);
+  },
 };
 
 contextBridge.exposeInMainWorld("perch", bridge);

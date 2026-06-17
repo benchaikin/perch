@@ -194,10 +194,13 @@ export class GitRunner {
    * no per-worktree `info/exclude`). A relative result is anchored to the worktree.
    */
   async infoExcludePath(worktree: string): Promise<string> {
-    const out = await this.exec(
-      this.gitBin,
-      ["-C", worktree, "rev-parse", "--git-path", "info/exclude"],
-    );
+    const out = await this.exec(this.gitBin, [
+      "-C",
+      worktree,
+      "rev-parse",
+      "--git-path",
+      "info/exclude",
+    ]);
     const path = out.trim();
     return isAbsolute(path) ? path : join(worktree, path);
   }
@@ -241,6 +244,19 @@ export class DexRunner {
     } catch {
       // Marking in-progress is optional; degrade gracefully.
     }
+  }
+
+  /**
+   * `dex [--storage-path P] delete <id> --force`; resolves with the CLI's stdout,
+   * rejects (surfacing stderr) on failure. `--force` keeps the call non-interactive
+   * — `dex delete` otherwise prompts when a task has subtasks, which would hang the
+   * daemon's `execFile` (no TTY on stdin) — and matches `dex rm -f`'s cascade.
+   */
+  async delete(id: string, storagePath?: string): Promise<string> {
+    const args: string[] = [];
+    if (storagePath) args.push("--storage-path", storagePath);
+    args.push("delete", id, "--force");
+    return this.exec(this.dexBin, args);
   }
 }
 

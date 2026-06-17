@@ -133,6 +133,15 @@ let selectedDexId: string | undefined;
 const spawningDexIds = new Set<string>();
 /** True while the top-level "spawn all ready" launch is in flight (disables the button). */
 let spawningAllDex = false;
+/**
+ * Dex task ids whose trash control has been armed (a first click) and is awaiting
+ * a confirm/cancel — an in-renderer confirmation affordance, since the
+ * non-activating panel can't rely on a `window.confirm` dialog. Tracked here (not
+ * in pushed state) so the armed state survives re-renders.
+ */
+const confirmingDeleteDexIds = new Set<string>();
+/** Dex task ids whose delete has been confirmed and is still in flight (spinner). */
+const deletingDexIds = new Set<string>();
 /** The last rendered state, replayed when the active tab changes (a click). */
 let lastState: PanelState | undefined;
 
@@ -597,7 +606,13 @@ const AGENT_MARKER: Record<
   AgentState,
   { label: string; tone: string; icon: string; spin?: boolean; hint: string }
 > = {
-  running: { label: "running", tone: "dex-active", icon: "play", spin: true, hint: "Agent running" },
+  running: {
+    label: "running",
+    tone: "dex-active",
+    icon: "play",
+    spin: true,
+    hint: "Agent running",
+  },
   blocked: {
     label: "blocked",
     tone: "warn",
@@ -761,6 +776,10 @@ function dexRowEl(row: DexRow): HTMLElement {
   // A ready, unblocked, unworked task gets a start button that spawns an agent.
   if (canSpawnDex(row)) el.append(dexSpawnBtnEl(row.id));
 
+  // Every task gets a trash control (a confirmed delete), so a mistaken/duplicate
+  // task can be cleared straight from the row.
+  el.append(dexDeleteControlEl(row));
+
   el.addEventListener("click", () => {
     selectedDexId = row.id;
     if (lastState) render(lastState);
@@ -852,7 +871,13 @@ function dexDetailEl(row: DexRow): HTMLElement {
   // A ready, unblocked, unworked task gets a launch button right here — the
   // detail-page twin of the per-row start button. canSpawnDex already excludes
   // tasks with a live agent/worktree, so the agent marker above stands in then.
-  if (canSpawnDex(row)) wrap.append(dexDetailSpawnBtnEl(row.id));
+  // The labeled delete control sits alongside it (the detail-page twin of the
+  // per-row trash button).
+  const actions = document.createElement("div");
+  actions.className = "dex-detail-actions";
+  if (canSpawnDex(row)) actions.append(dexDetailSpawnBtnEl(row.id));
+  actions.append(dexDeleteControlEl(row, true));
+  wrap.append(actions);
 
   if (row.description) wrap.append(dexBodyEl(row.description));
   if (row.result) {
@@ -1095,6 +1120,7 @@ function dexGraphRowEl(row: DexRow, depth: number): HTMLElement {
   if (row.agent) el.append(dexAgentMarkerEl(row.agent));
   if (row.worktree) el.append(dexWorktreeEl(row.worktree));
   if (canSpawnDex(row)) el.append(dexSpawnBtnEl(row.id));
+  el.append(dexDeleteControlEl(row));
 
   el.addEventListener("click", () => {
     selectedDexId = row.id;
@@ -1289,6 +1315,130 @@ async function runDexSpawn(id: string): Promise<void> {
     await window.perch.dexSpawn(id);
   } finally {
     spawningDexIds.delete(id);
+    if (lastState) render(lastState);
+  }
+}
+
+/**
+ * The extra warning a delete confirmation carries when removing the task would
+ * leave something behind the daemon board can't clean up: a live worktree/agent
+ * (which `dex delete` doesn't touch — deleting the task would orphan it) and/or
+ * subtasks (a `--force` delete cascades to them). Returns `undefined` for a plain
+ * leaf task with no live work, so its confirmation stays unadorned.
+ */
+function dexDeleteWarning(row: DexRow): string | undefined {
+  const parts: string[] = [];
+  if (row.worktree || row.agent) {
+    parts.push("it has a live worktree/agent that won't be removed");
+  }
+  if (row.isEpic) parts.push("its subtasks will also be deleted");
+  return parts.length > 0 ? `Warning: ${parts.join("; ")}.` : undefined;
+}
+
+/**
+ * The delete control for a dex task: a trash button that arms an in-renderer
+ * confirmation (a confirm ✓ + cancel ✗ pair) rather than a `window.confirm`
+ * dialog the non-activating panel can't rely on. While the delete is in flight the
+ * control shows a spinner. The confirm step's tooltip surfaces
+ * {@link dexDeleteWarning} so a worktree/agent or cascading subtasks are flagged
+ * before the (irreversible) delete — never a silent orphan. `labeled` spells the
+ * actions out for the roomier detail page; the compact row uses icon-only buttons.
+ * Clicks never bubble to the row's open-detail.
+ */
+function dexDeleteControlEl(row: DexRow, labeled = false): HTMLElement {
+  const id = row.id;
+  const wrap = document.createElement("span");
+  // In a compact row the control hugs the trailing edge. When a spawn button or
+  // worktree indicator precedes it, their own `margin-left:auto` already pushes the
+  // trailing cluster right; otherwise the control itself anchors that push.
+  const anchor = !labeled && !canSpawnDex(row) && row.worktree === undefined;
+  wrap.className = `chips dex-delete${anchor ? " dex-delete-anchor" : ""}`;
+
+  if (deletingDexIds.has(id)) {
+    const btn = document.createElement("button");
+    btn.className = labeled ? "btn btn-sm dex-delete-btn" : "icon-btn dex-delete-btn";
+    btn.disabled = true;
+    btn.title = "Deleting…";
+    btn.setAttribute("aria-label", btn.title);
+    const i = document.createElement("i");
+    i.className = "fa-solid fa-circle-notch fa-spin";
+    btn.append(i, ...(labeled ? [" Deleting…"] : []));
+    wrap.append(btn);
+    return wrap;
+  }
+
+  if (!confirmingDeleteDexIds.has(id)) {
+    const btn = document.createElement("button");
+    btn.className = labeled ? "btn btn-sm dex-delete-btn" : "icon-btn dex-delete-btn";
+    btn.title = "Delete task";
+    btn.setAttribute("aria-label", btn.title);
+    const i = document.createElement("i");
+    i.className = "fa-solid fa-trash-can";
+    btn.append(i, ...(labeled ? [" Delete"] : []));
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      confirmingDeleteDexIds.add(id);
+      if (lastState) render(lastState);
+    });
+    wrap.append(btn);
+    return wrap;
+  }
+
+  // Armed: a confirm + cancel pair. The confirm tooltip flags any worktree/agent
+  // or cascading subtasks; the destructive `bad` tint marks it as the live action.
+  const warning = dexDeleteWarning(row);
+  const confirm = document.createElement("button");
+  confirm.className = labeled ? "btn btn-sm dex-delete-confirm" : "icon-btn dex-delete-confirm";
+  confirm.title = warning ? `Confirm delete — ${warning}` : "Confirm delete (irreversible)";
+  confirm.setAttribute("aria-label", confirm.title);
+  const ci = document.createElement("i");
+  ci.className = "fa-solid fa-check";
+  confirm.append(ci, ...(labeled ? [" Confirm"] : []));
+  confirm.addEventListener("click", (e) => {
+    e.stopPropagation();
+    void runDexDelete(id);
+  });
+
+  const cancel = document.createElement("button");
+  cancel.className = labeled ? "btn btn-sm dex-delete-cancel" : "icon-btn dex-delete-cancel";
+  cancel.title = "Cancel";
+  cancel.setAttribute("aria-label", cancel.title);
+  const xi = document.createElement("i");
+  xi.className = "fa-solid fa-xmark";
+  cancel.append(xi, ...(labeled ? [" Cancel"] : []));
+  cancel.addEventListener("click", (e) => {
+    e.stopPropagation();
+    confirmingDeleteDexIds.delete(id);
+    if (lastState) render(lastState);
+  });
+
+  // An inline warning glyph next to the confirm pair, so the caveat reads without
+  // hovering for the tooltip.
+  if (warning) {
+    const warn = document.createElement("i");
+    warn.className = "fa-solid fa-triangle-exclamation dex-delete-warn";
+    warn.title = warning;
+    wrap.append(warn);
+  }
+  wrap.append(confirm, cancel);
+  return wrap;
+}
+
+/**
+ * Drive a confirmed dex delete: clear the armed-confirm state, mark the id
+ * in-flight so the next render shows a spinner, run the delete, then clear the
+ * in-flight mark (re-rendering at each step). The board refresh + success/error
+ * notice are driven from main via panel state once the delete resolves.
+ */
+async function runDexDelete(id: string): Promise<void> {
+  if (deletingDexIds.has(id)) return;
+  confirmingDeleteDexIds.delete(id);
+  deletingDexIds.add(id);
+  if (lastState) render(lastState);
+  try {
+    await window.perch.dexDelete(id);
+  } finally {
+    deletingDexIds.delete(id);
     if (lastState) render(lastState);
   }
 }

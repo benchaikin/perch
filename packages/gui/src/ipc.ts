@@ -60,6 +60,12 @@ export const Channels = {
    * finishes, so the button can clear its in-progress state.
    */
   dexSpawnReady: "perch:dex-spawn-ready",
+  /**
+   * Renderer → main `invoke`: delete a dex task (payload: the task id). Main runs
+   * `dex.delete`, refreshes the board, and resolves when the delete finishes, so
+   * the renderer can clear its in-progress state; the outcome is toasted from main.
+   */
+  dexDelete: "perch:dex-delete",
 } as const;
 
 /**
@@ -101,6 +107,12 @@ export interface PerchBridge {
    * its in-progress UI; the "Spawned N of M" notice is pushed via panel state.
    */
   dexSpawnReady(): Promise<void>;
+  /**
+   * Ask the main process to delete a dex task (by id). Resolves when the delete
+   * finishes (or fails) and the board has refreshed, so the caller can clear its
+   * in-progress UI; the success/error notice is pushed via panel state.
+   */
+  dexDelete(id: string): Promise<void>;
 }
 
 declare global {
