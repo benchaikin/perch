@@ -580,6 +580,16 @@ async function openWorktree(path: string): Promise<void> {
   }
 }
 
+/** Spawn an agent for a ready dex task via the dex plugin's `spawn` action. */
+async function spawnDex(id: string): Promise<void> {
+  if (!client) return;
+  try {
+    await client.invoke({ id: "dex.spawn", input: { id } });
+  } catch (err) {
+    showNotice({ tone: "bad", text: `Spawn agent failed: ${errorMessage(err)}` });
+  }
+}
+
 /** Show a transient status toast; auto-dismiss after a few seconds. */
 function showNotice(notice: Notice): void {
   buildInput.notice = notice;
@@ -1107,6 +1117,7 @@ function registerIpc(): void {
   );
   ipcMain.on(Channels.serviceLogs, (_event, name: string) => void serviceLogs(name));
   ipcMain.on(Channels.worktreeOpen, (_event, path: string) => void openWorktree(path));
+  ipcMain.on(Channels.dexSpawn, (_event, id: string) => void spawnDex(id));
   // Clipboard writes go through main (Electron's clipboard) rather than the
   // renderer's navigator.clipboard, which a non-activating panel can't rely on.
   ipcMain.on(Channels.copyText, (_event, text: string) => {

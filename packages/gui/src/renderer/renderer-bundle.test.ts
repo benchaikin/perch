@@ -115,3 +115,25 @@ test(
     );
   },
 );
+
+test(
+  "renderer bundle carries the ready-row start button",
+  { skip: !existsSync(bundlePath) ? "bundle not built (run pnpm build first)" : false },
+  () => {
+    const bundle = readFileSync(bundlePath, "utf8");
+    // The start button class + its hint — the spawn-an-agent affordance.
+    assert.ok(
+      bundle.includes("dex-spawn"),
+      "expected the `dex-spawn` button class in the renderer bundle",
+    );
+    assert.ok(
+      bundle.includes("Start an agent for this task"),
+      "expected the `Start an agent for this task` hint in the bundle",
+    );
+    // The bridge call the button wires up reaches the bundle.
+    assert.ok(
+      bundle.includes("dexSpawn"),
+      "expected the `dexSpawn` bridge call in the renderer bundle",
+    );
+  },
+);

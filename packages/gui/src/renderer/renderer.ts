@@ -481,6 +481,22 @@ function dexMarkerTone(row: DexRow): string {
 }
 
 /**
+ * Whether a task is ready to hand to a fresh agent: it's an unblocked `ready`
+ * row (no active blockers) that isn't already being worked — no live worktree
+ * or agent. Such rows get a start button that runs `dex.spawn` (creates the
+ * `dex/<id>-<slug>` worktree + seeds an agent). Exported for a unit test, since
+ * the row DOM build itself has no jsdom harness.
+ */
+export function canSpawnDex(row: DexRow): boolean {
+  return (
+    row.status === "ready" &&
+    row.blockedByCount === 0 &&
+    row.worktree === undefined &&
+    row.agent === undefined
+  );
+}
+
+/**
  * Full class string for a task's status marker `<i>`: the health tone, the
  * status-shaped Font Awesome glyph, and `fa-spin` for in-progress (the spinner
  * actually spins). Shared by the list row and the detail header so they match.
@@ -700,6 +716,9 @@ function dexRowEl(row: DexRow): HTMLElement {
   // When a live git worktree is linked to this task, surface it (branch + git
   // health) with an open-in-terminal affordance.
   if (row.worktree) el.append(dexWorktreeEl(row.worktree));
+
+  // A ready, unblocked, unworked task gets a start button that spawns an agent.
+  if (canSpawnDex(row)) el.append(dexSpawnBtnEl(row.id));
 
   el.addEventListener("click", () => {
     selectedDexId = row.id;
@@ -948,6 +967,7 @@ function dexGraphRowEl(row: DexRow, depth: number): HTMLElement {
   }
   if (row.agent) el.append(dexAgentMarkerEl(row.agent));
   if (row.worktree) el.append(dexWorktreeEl(row.worktree));
+  if (canSpawnDex(row)) el.append(dexSpawnBtnEl(row.id));
 
   el.addEventListener("click", () => {
     selectedDexId = row.id;
@@ -1093,6 +1113,28 @@ function appendWorktreeHealthChips(chips: HTMLElement, w: WorktreeHealthFacet): 
     ab.textContent = `↑${w.ahead ?? 0} ↓${w.behind ?? 0}`;
     chips.append(ab);
   }
+}
+
+/**
+ * The start control for a ready dex row: a compact play button that runs
+ * `dex.spawn` (`window.perch.dexSpawn`) to create the task's worktree and launch
+ * a seeded agent in the user's terminal. Fire-and-forget; the click doesn't
+ * bubble to the row's open-detail. Only rendered for {@link canSpawnDex} rows.
+ */
+function dexSpawnBtnEl(id: string): HTMLElement {
+  const btn = document.createElement("button");
+  btn.className = "icon-btn dex-spawn";
+  btn.title = "Start an agent for this task";
+  btn.setAttribute("aria-label", "Start an agent for this task");
+  const i = document.createElement("i");
+  i.className = "fa-solid fa-play";
+  btn.append(i);
+  btn.addEventListener("click", (e) => {
+    // Don't open the task detail; just spawn the agent.
+    e.stopPropagation();
+    window.perch.dexSpawn(id);
+  });
+  return btn;
 }
 
 /**
