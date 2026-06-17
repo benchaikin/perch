@@ -328,7 +328,11 @@ export {
 export {
   applyTemplate,
   DEFAULT_TERMINAL,
+  focusableApp,
+  FOCUS_OR_SPAWN_TEMPLATES,
+  focusTitleLiteral,
   GlobalTerminalConfig,
+  resolveSpawnTemplate,
   resolveTabColorCommand,
   resolveTerminalTemplate,
   resolveTitleCommand,

@@ -51,6 +51,63 @@ export const TERMINAL_APP_TEMPLATES = {
 export type TerminalApp = keyof typeof TERMINAL_APP_TEMPLATES;
 
 /**
+ * Raise-or-spawn launchers for the terminals we can drive via AppleScript
+ * (Terminal.app, iTerm2). Where {@link TERMINAL_APP_TEMPLATES} *always* opens a
+ * fresh window, these first scan the app's windows for a tab/session whose sticky
+ * title equals `{title}` and, finding one, raise THAT window — so "jump to the
+ * agent already running here" focuses the live session instead of spawning a new
+ * shell that disconnects from it (and can step on the worktree). Only when no
+ * marked window exists do they open a new one, *tagging* it with `{title}` (a
+ * sticky `custom title` / session `name`, which terminal output can't clobber) so
+ * the next jump finds it. Each carries both `{cmd}` and `{title}` placeholders.
+ *
+ * Limited to Terminal.app + iTerm2 (the AppleScript-scriptable apps Perch already
+ * tints); kitty/WezTerm/Ghostty/tmux and custom templates have no entry here and
+ * fall back to the plain (always-new-window) launcher.
+ */
+export const FOCUS_OR_SPAWN_TEMPLATES: Partial<Record<TerminalApp, string>> = {
+  Terminal:
+    `osascript ` +
+    `-e 'tell application "Terminal"' ` +
+    `-e 'activate' ` +
+    `-e 'repeat with w in windows' ` +
+    `-e 'repeat with t in tabs of w' ` +
+    `-e 'try' ` +
+    `-e 'if custom title of t is "{title}" then' ` +
+    `-e 'set selected of t to true' ` +
+    `-e 'set frontmost of w to true' ` +
+    `-e 'return' ` +
+    `-e 'end if' ` +
+    `-e 'end try' ` +
+    `-e 'end repeat' ` +
+    `-e 'end repeat' ` +
+    `-e 'set t to do script "{cmd}"' ` +
+    `-e 'set custom title of t to "{title}"' ` +
+    `-e 'end tell'`,
+  iTerm2:
+    `osascript ` +
+    `-e 'tell application "iTerm"' ` +
+    `-e 'activate' ` +
+    `-e 'repeat with w in windows' ` +
+    `-e 'repeat with t in tabs of w' ` +
+    `-e 'repeat with s in sessions of t' ` +
+    `-e 'if name of s is "{title}" then' ` +
+    `-e 'select t' ` +
+    `-e 'select w' ` +
+    `-e 'return' ` +
+    `-e 'end if' ` +
+    `-e 'end repeat' ` +
+    `-e 'end repeat' ` +
+    `-e 'end repeat' ` +
+    `-e 'set newWindow to (create window with default profile)' ` +
+    `-e 'tell current session of newWindow' ` +
+    `-e 'write text "{cmd}"' ` +
+    `-e 'set name to "{title}"' ` +
+    `-e 'end tell' ` +
+    `-e 'end tell'`,
+};
+
+/**
  * Per-app shell snippet that tints only the window's tab/header bar (not the
  * whole background) to an identity color. Prepended to the inner command so it
  * runs inside the live session. iTerm2 exposes a tab color via its OSC 6 escape
@@ -128,6 +185,53 @@ export function resolveTerminalTemplate(cfg: GlobalTerminalConfig): string {
     return TERMINAL_APP_TEMPLATES[cfg.terminalApp as TerminalApp];
   }
   return DEFAULT_TERMINAL;
+}
+
+/**
+ * The terminal app a raise-or-spawn launch targets, or `undefined` when the
+ * chosen terminal can't be driven that way (so the caller spawns plainly).
+ * Mirrors {@link resolveTerminalTemplate}'s precedence: a custom `logTerminal`
+ * template is opaque to us → none; a terminal with a {@link FOCUS_OR_SPAWN_TEMPLATES}
+ * entry (iTerm2) → itself; an unknown/unset/Custom app resolves to the Terminal.app
+ * default (which is focusable); any other listed-but-unsupported app (kitty, …) → none.
+ */
+export function focusableApp(cfg: GlobalTerminalConfig): TerminalApp | undefined {
+  if (cfg.logTerminal) return undefined;
+  const app = cfg.terminalApp;
+  if (app && app in FOCUS_OR_SPAWN_TEMPLATES) return app as TerminalApp;
+  // Unset / unknown / "Custom" all fall back to Terminal.app, which is focusable.
+  if (!app || !(app in TERMINAL_APP_TEMPLATES)) return "Terminal";
+  return undefined;
+}
+
+/**
+ * Resolve the launcher for a spawn: a raise-or-spawn template (with a `{title}`
+ * placeholder) when a focus `marker` is given AND the chosen terminal supports it,
+ * else the plain always-new-window template. `focusable` tells the caller whether
+ * the `{title}` placeholder still needs substituting.
+ */
+export function resolveSpawnTemplate(
+  cfg: GlobalTerminalConfig,
+  marker?: string,
+): { template: string; focusable: boolean } {
+  if (marker !== undefined) {
+    const app = focusableApp(cfg);
+    const template = app && FOCUS_OR_SPAWN_TEMPLATES[app];
+    if (template) return { template, focusable: true };
+  }
+  return { template: resolveTerminalTemplate(cfg), focusable: false };
+}
+
+/**
+ * Escape a focus marker so it can be dropped into a `{title}` placeholder, which
+ * sits inside an AppleScript `"…"` string nested inside a single-quoted `osascript
+ * -e '…'` shell argument. Two layers: AppleScript (escape `\` then `"`), then the
+ * shell single-quote (a literal `'` becomes the POSIX `'\''` dance) so a marker
+ * with a quote can't break out of either. Pure + unit-testable.
+ */
+export function focusTitleLiteral(marker: string): string {
+  const apple = marker.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return apple.replaceAll("'", `'\\''`);
 }
 
 /** Clamp a 0–255 RGB channel to an integer in range (iTerm2's OSC 6 uses 0–255). */
@@ -276,6 +380,16 @@ export interface SpawnInTerminalOptions {
    * templates or an empty title. A long-running process may later overwrite it.
    */
   title?: string;
+  /**
+   * Optional stable identity for this terminal (typically the worktree path).
+   * When set on a focus-capable terminal (Terminal.app / iTerm2), the launch
+   * becomes *raise-or-spawn*: it first raises an existing window already tagged
+   * with this marker (so jumping to a running agent focuses its live session
+   * instead of opening a new shell), and otherwise opens a new window tagged with
+   * it. A no-op on terminals without an AppleScript focus hook — they spawn as
+   * before. Omit to always open a new window.
+   */
+  focusMarker?: string;
   /** Optional log sink. */
   log?: (message: string) => void;
   /** Injected spawn (tests stub it); defaults to `child_process.spawn`. */
@@ -292,7 +406,9 @@ export interface SpawnInTerminalOptions {
  * interpreted as written.
  */
 export function spawnInTerminal(opts: SpawnInTerminalOptions): { ok: boolean; message: string } {
-  const template = resolveTerminalTemplate(opts.terminal);
+  // A focus marker upgrades the launch to raise-or-spawn on the terminals that
+  // can be driven via AppleScript; otherwise this is the plain new-window template.
+  const { template, focusable } = resolveSpawnTemplate(opts.terminal, opts.focusMarker);
   const spawnFn = opts.spawn ?? nodeSpawn;
   const writeScript = opts.writeScript ?? defaultWriteScript;
   try {
@@ -305,7 +421,11 @@ export function spawnInTerminal(opts: SpawnInTerminalOptions): { ok: boolean; me
     const tabColor = opts.tabColor && resolveTabColorCommand(opts.terminal, opts.tabColor);
     const command = [title, tabColor, opts.command].filter(Boolean).join("\n");
     const scriptPath = writeScript(opts.label, command);
-    const launch = applyTemplate(template, `sh ${scriptPath}`);
+    let launch = applyTemplate(template, `sh ${scriptPath}`);
+    // Substitute the (escaped) marker into the raise-or-spawn template's `{title}`.
+    if (focusable && opts.focusMarker !== undefined) {
+      launch = launch.split("{title}").join(focusTitleLiteral(opts.focusMarker));
+    }
     const child = spawnFn("sh", ["-c", launch], { detached: true, stdio: "ignore" });
     child.on("error", (err: Error) => opts.log?.(`terminal launch failed: ${err.message}`));
     child.unref();

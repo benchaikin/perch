@@ -210,6 +210,11 @@ export default definePlugin({
           command: buildShellInDir(input.path),
           terminal: terminalConfigOf(ctx.global),
           label: `worktree ${name}`,
+          // Key the window to this worktree so a jump raises a session already
+          // running here (e.g. a live agent spawned by `dex.spawn`) instead of
+          // opening a fresh shell that disconnects from it; falls back to a new
+          // window when none is found (or the terminal has no focus hook).
+          focusMarker: input.path,
           log: ctx.log,
           spawn: openSpawn,
         });
