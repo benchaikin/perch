@@ -149,6 +149,23 @@ export function evidenceFor(pr: LandPr): string {
   return `Merged PR ${num}: ${title} (${url}) — merge commit ${sha}`;
 }
 
+/**
+ * The `git status --porcelain` lines that count as a dirty tree, dropping the
+ * perch-created `.dex` store link. That symlink is the worktree's pointer at the
+ * shared dex store; a repo's `.dex/` gitignore (directory-only) doesn't match a
+ * symlink, so git reports a lone `?? .dex`. Newer worktrees exclude it on spawn,
+ * but ones created before that fix still carry it — and a merged worktree mustn't
+ * be flagged forever over a link perch itself dropped. Anything else still counts.
+ */
+export function meaningfulDirt(porcelain: string): string[] {
+  return porcelain
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length > 0)
+    // Porcelain v1: 2 status chars, a space, then the path (`.dex` needs no quoting).
+    .filter((line) => line.slice(3) !== ".dex");
+}
+
 /** Dependencies for {@link runLand} — the seams the capability injects, tests stub. */
 export interface LandDeps {
   exec: Exec;
@@ -316,7 +333,7 @@ export async function runLand(deps: LandDeps): Promise<LandBoard> {
       flag("merged, but its worktree status couldn't be read", pr);
       continue;
     }
-    if (dirt.trim().length > 0) {
+    if (meaningfulDirt(dirt).length > 0) {
       flag("merged, but the worktree has uncommitted changes — land it by hand", pr);
       continue;
     }

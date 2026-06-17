@@ -10,8 +10,8 @@
  * so the pure bits (slug, repo resolution, git args, the launch command) unit-test
  * directly with stubs.
  */
-import { basename, dirname, join } from "node:path";
-import { lstat, symlink } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join } from "node:path";
+import { appendFile, lstat, readFile, symlink } from "node:fs/promises";
 import type { spawn as nodeSpawn } from "node:child_process";
 
 import {
@@ -168,6 +168,20 @@ export class GitRunner {
   worktreeAdd(repo: string, branch: string, path: string, base: string): Promise<string> {
     return this.exec(this.gitBin, worktreeAddArgs(repo, branch, path, base));
   }
+
+  /**
+   * Absolute path to the `info/exclude` git honors for `worktree` — resolved via
+   * `git rev-parse --git-path`, which points at the shared common git dir (git has
+   * no per-worktree `info/exclude`). A relative result is anchored to the worktree.
+   */
+  async infoExcludePath(worktree: string): Promise<string> {
+    const out = await this.exec(
+      this.gitBin,
+      ["-C", worktree, "rev-parse", "--git-path", "info/exclude"],
+    );
+    const path = out.trim();
+    return isAbsolute(path) ? path : join(worktree, path);
+  }
 }
 
 /** A dex runner around the {@link Exec} seam (the `show`/`start` subcommands). */
@@ -238,6 +252,10 @@ export interface FsOps {
   exists(path: string): Promise<boolean>;
   /** Create a symlink at `linkPath` pointing to `target`. */
   symlink(target: string, linkPath: string): Promise<void>;
+  /** Read a UTF-8 text file; rejects if it doesn't exist. */
+  readFile(path: string): Promise<string>;
+  /** Append text to a file, creating it if absent. */
+  appendFile(path: string, data: string): Promise<void>;
 }
 
 /** The real {@link FsOps}, backed by `node:fs/promises`. */
@@ -253,6 +271,8 @@ export const defaultFsOps: FsOps = {
     }
   },
   symlink: (target, linkPath) => symlink(target, linkPath),
+  readFile: (path) => readFile(path, "utf8"),
+  appendFile: (path, data) => appendFile(path, data),
 };
 
 /**
@@ -300,6 +320,44 @@ export async function linkDexStore(
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     log?.(`couldn't link dex store into ${worktreePath}: ${detail}`);
+  }
+}
+
+/** The git-exclude pattern for the perch-dropped `.dex` link — root-anchored. */
+export const DEX_EXCLUDE_PATTERN = "/.dex";
+
+/**
+ * Best-effort: teach git to ignore the perch-created `.dex` link in this worktree
+ * by adding `/.dex` to its `info/exclude`. A repo's `.gitignore` ignores the store
+ * as `.dex/` — a DIRECTORY-only pattern — but in a worktree `.dex` is a SYMLINK
+ * (git sees a file), so that pattern misses it and `git status` reports `?? .dex`.
+ * That lone untracked entry is what trips auto-land's clean-tree guard and leaves
+ * merged worktrees un-reaped, so we exclude it at the source. Idempotent (skips if
+ * the pattern is already present) and never throws — excluding is an optimization,
+ * not a correctness requirement (the land guard tolerates a lone `.dex` too).
+ */
+export async function excludeDexLink(
+  worktreePath: string,
+  git: GitRunner,
+  fs: FsOps,
+  log?: (message: string) => void,
+): Promise<void> {
+  try {
+    const excludePath = await git.infoExcludePath(worktreePath);
+    let existing = "";
+    try {
+      existing = await fs.readFile(excludePath);
+    } catch {
+      // No exclude file yet (fresh repo, or unreadable) — appendFile creates it.
+    }
+    if (existing.split(/\r?\n/).some((line) => line.trim() === DEX_EXCLUDE_PATTERN)) return;
+    // Don't glue our pattern onto a final line that lacks a trailing newline.
+    const prefix = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
+    await fs.appendFile(excludePath, `${prefix}${DEX_EXCLUDE_PATTERN}\n`);
+    log?.(`excluded ${DEX_EXCLUDE_PATTERN} in ${excludePath}`);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    log?.(`couldn't exclude .dex link in ${worktreePath}: ${detail}`);
   }
 }
 
@@ -394,7 +452,11 @@ export async function runSpawn(input: SpawnInput, deps: SpawnDeps): Promise<Spaw
   // The worktree is a sibling dir with no `.dex`; link the source repo's store in
   // so the spawned agent's `dex show <id>` (and the user's dex commands) resolve
   // without a `--storage-path`. Best-effort — never blocks the launch.
-  await linkDexStore(worktreePath, resolvedRepo, deps.fs ?? defaultFsOps, deps.log);
+  const fs = deps.fs ?? defaultFsOps;
+  await linkDexStore(worktreePath, resolvedRepo, fs, deps.log);
+  // …and exclude that link from git, so its lone `?? .dex` never reads as a dirty
+  // tree and blocks auto-land from reaping the worktree once its PR merges.
+  await excludeDexLink(worktreePath, git, fs, deps.log);
 
   // Worktree exists: optionally mark in-progress (best-effort), then launch.
   await dex.start(id, storagePathOf(resolvedRepo));

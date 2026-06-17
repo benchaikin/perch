@@ -14,6 +14,7 @@ import {
   evidenceFor,
   inferBuild,
   landNotifications,
+  meaningfulDirt,
   runLand,
   type FsProbe,
   type LandBoard,
@@ -229,6 +230,30 @@ test("runLand: merged but DIRTY tree → flagged, never reaped", async () => {
   assert.equal(board.flagged.length, 1);
   assert.match(board.flagged[0]!.reason, /uncommitted changes/);
   assert.equal(calls.some((c) => c.args.includes("remove")), false);
+});
+
+test("meaningfulDirt: drops a lone perch-created `.dex` link, keeps real changes", () => {
+  // The store link git won't ignore (a symlink vs the repo's dir-only `.dex/`).
+  assert.deepEqual(meaningfulDirt("?? .dex\n"), []);
+  assert.deepEqual(meaningfulDirt(""), []);
+  // Real edits alongside the link still count as dirt.
+  assert.deepEqual(meaningfulDirt("?? .dex\n M src/x.ts\n"), [" M src/x.ts"]);
+  // A path that merely starts with `.dex` is not the link — keep it.
+  assert.deepEqual(meaningfulDirt("?? .dexrc\n"), ["?? .dexrc"]);
+});
+
+test("runLand: merged + a lone `.dex` link (pre-fix worktree) → still reaps", async () => {
+  const wt = "/work/perch-worktrees/abc12-foo";
+  const { exec, calls } = stub({
+    worktrees: porcelain("/work/perch", [{ path: wt, branch: "dex/abc12-foo" }]),
+    prByBranch: { "dex/abc12-foo": mergedWithCi },
+    // A worktree spawned before the exclude fix carries the untracked `.dex`.
+    dirtByPath: { [wt]: "?? .dex\n" },
+  });
+  const board = await runLand(deps(exec));
+  assert.equal(board.flagged.length, 0);
+  assert.equal(board.reaped.length, 1);
+  assert.ok(calls.some((c) => c.args.includes("remove")));
 });
 
 test("runLand: never touches the main worktree even if it somehow matched", async () => {
