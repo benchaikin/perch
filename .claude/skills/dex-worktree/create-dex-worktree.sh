@@ -64,6 +64,15 @@ fi
 # which would NOT match — so we never rely on that here.)
 git worktree add -b "$branch" "$path" "$base" >&2
 
+# Link the repo's dex store into the worktree so `dex` resolves the shared store
+# from inside it. A worktree is a sibling dir with no `.dex` of its own, and dex
+# has no storage env var — so otherwise `dex show <id>` from the worktree fails.
+# `.dex/` is gitignored, so the symlink never dirties the tree. Best-effort.
+if [[ -d "$repo_root/.dex" && ! -e "$path/.dex" ]]; then
+  ln -s "$repo_root/.dex" "$path/.dex" 2>/dev/null \
+    && echo "linked dex store: $path/.dex -> $repo_root/.dex" >&2 || true
+fi
+
 echo "branch=$branch" >&2
 echo "base=$base" >&2
 echo "path=$path" >&2

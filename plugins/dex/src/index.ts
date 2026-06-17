@@ -40,18 +40,21 @@ export {
   branchFor,
   buildClaudeLaunch,
   bootstrapPrompt,
+  defaultFsOps,
   deriveSlug,
+  dexStoreLinkSpec,
   DexRunner,
   findTask,
   GitRunner,
   isValidTaskId,
+  linkDexStore,
   resolveRepo,
   runSpawn,
   storagePathOf as spawnStoragePathOf,
   worktreeAddArgs,
   worktreePathFor,
 } from "./spawn.js";
-export type { SpawnDeps, SpawnInput, SpawnResult } from "./spawn.js";
+export type { FsOps, SpawnDeps, SpawnInput, SpawnResult } from "./spawn.js";
 
 /**
  * Per-plugin config (`plugins.dex`). All optional: `plugins.dex = {}` monitors

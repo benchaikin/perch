@@ -1,9 +1,10 @@
 /**
  * Unit tests for the `dex.spawn` action's pure helpers + the `runSpawn`
- * orchestration. The `dex`/`git` CLIs (the `Exec` seam) and the terminal launcher
- * (`spawn`/`writeScript`) are stubbed, so nothing spawns a real process or touches
- * disk — we assert the composed slug/branch/path, the git args, the safely-quoted
- * `claude` launch command, and the graceful failure paths.
+ * orchestration. The `dex`/`git` CLIs (the `Exec` seam), the terminal launcher
+ * (`spawn`/`writeScript`), and the filesystem (`FsOps`) are stubbed, so nothing
+ * spawns a real process or touches disk — we assert the composed slug/branch/path,
+ * the git args, the safely-quoted `claude` launch command, the dex-store symlink,
+ * and the graceful failure paths.
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -13,7 +14,10 @@ import {
   bootstrapPrompt,
   buildClaudeLaunch,
   deriveSlug,
+  dexStoreLinkSpec,
+  type FsOps,
   isValidTaskId,
+  linkDexStore,
   resolveRepo,
   runSpawn,
   type SpawnDeps,
@@ -48,6 +52,24 @@ test("branchFor / worktreePathFor: convention with and without a slug", () => {
     worktreePathFor("/work/perch", "abc12", ""),
     "/work/perch-worktrees/abc12-task",
   );
+});
+
+test("dexStoreLinkSpec: a `.dex` in the worktree pointing at <repo>/.dex", () => {
+  assert.deepEqual(dexStoreLinkSpec("/work/perch-worktrees/abc12-x", "/work/perch"), {
+    linkPath: "/work/perch-worktrees/abc12-x/.dex",
+    target: "/work/perch/.dex",
+  });
+});
+
+test("linkDexStore: a symlink error is swallowed (best-effort, never throws)", async () => {
+  let call = 0;
+  const fs: FsOps = {
+    // First probe (the source store) exists; second (the link path) doesn't —
+    // so it attempts the symlink, which then fails.
+    exists: () => Promise.resolve(call++ === 0),
+    symlink: () => Promise.reject(new Error("EPERM")),
+  };
+  await assert.doesNotReject(linkDexStore("/wt", "/repo", fs));
 });
 
 test("resolveRepo: explicit repo wins as given", () => {
@@ -174,6 +196,30 @@ function execStub(opts: {
   return { exec, calls };
 }
 
+/**
+ * A fake {@link FsOps} that records the symlinks it's asked to make and reports a
+ * fixed set of paths as already existing. Lets a test prove the store gets linked
+ * (or skipped) without touching disk.
+ */
+function fakeFs(existing: string[] = []): {
+  fs: FsOps;
+  links: Array<{ target: string; linkPath: string }>;
+} {
+  const present = new Set(existing);
+  const links: Array<{ target: string; linkPath: string }> = [];
+  return {
+    fs: {
+      exists: (p) => Promise.resolve(present.has(p)),
+      symlink: (target, linkPath) => {
+        links.push({ target, linkPath });
+        present.add(linkPath);
+        return Promise.resolve();
+      },
+    },
+    links,
+  };
+}
+
 function deps(exec: Exec, over: Partial<SpawnDeps> = {}): SpawnDeps {
   return {
     exec,
@@ -181,6 +227,9 @@ function deps(exec: Exec, over: Partial<SpawnDeps> = {}): SpawnDeps {
     gitBin: "git",
     repos: ["/work/perch"],
     terminal: {},
+    // A no-touch fs by default (nothing exists ⇒ linking is skipped); tests that
+    // exercise the store-link pass an explicit `fakeFs`.
+    fs: { exists: () => Promise.resolve(false), symlink: () => Promise.resolve() },
     ...over,
   };
 }
@@ -228,6 +277,42 @@ test("runSpawn: happy path — finds the task's store, creates the worktree, lau
 
   // `dex start` was fired (best-effort) after the worktree existed.
   assert.ok(calls.some((c) => c.cmd === "dex" && c.args.includes("start")));
+});
+
+test("runSpawn: links the repo's dex store into the worktree so the agent finds it", async () => {
+  const { exec } = execStub({ tasks: { "/work/perch/.dex": { name: "Task" } } });
+  const ff = fakeFs(["/work/perch/.dex"]); // the source store exists
+  const res = await runSpawn(
+    { id: "abc12" },
+    deps(exec, { spawn: fakeSpawn().spawn, writeScript: fakeWriteScript().writeScript, fs: ff.fs }),
+  );
+  assert.equal(res.ok, true);
+  // `.dex` in the worktree → the source repo's store, so `dex show <id>` resolves.
+  assert.deepEqual(ff.links, [
+    { target: "/work/perch/.dex", linkPath: "/work/perch-worktrees/abc12-task/.dex" },
+  ]);
+});
+
+test("runSpawn: doesn't clobber a `.dex` already in the worktree", async () => {
+  const { exec } = execStub({ tasks: { "/work/perch/.dex": { name: "Task" } } });
+  const ff = fakeFs(["/work/perch/.dex", "/work/perch-worktrees/abc12-task/.dex"]);
+  const res = await runSpawn(
+    { id: "abc12" },
+    deps(exec, { spawn: fakeSpawn().spawn, writeScript: fakeWriteScript().writeScript, fs: ff.fs }),
+  );
+  assert.equal(res.ok, true);
+  assert.equal(ff.links.length, 0); // link path already present → left alone
+});
+
+test("runSpawn: skips linking when the repo has no dex store", async () => {
+  const { exec } = execStub({ tasks: { "/work/perch/.dex": { name: "Task" } } });
+  const ff = fakeFs([]); // source store absent ⇒ nothing to link
+  const res = await runSpawn(
+    { id: "abc12" },
+    deps(exec, { spawn: fakeSpawn().spawn, writeScript: fakeWriteScript().writeScript, fs: ff.fs }),
+  );
+  assert.equal(res.ok, true);
+  assert.equal(ff.links.length, 0);
 });
 
 test("runSpawn: explicit repo overrides the project mapping", async () => {
