@@ -12,6 +12,7 @@ import {
   DEFAULT_TERMINAL,
   resolveTabColorCommand,
   resolveTerminalTemplate,
+  resolveTitleCommand,
   shellQuote,
   spawnInTerminal,
   TERMINAL_APP_TEMPLATES,
@@ -156,6 +157,84 @@ test("spawnInTerminal: tabColor prepends the tab-color escape to the command; om
   assert.match(colored, /\nexec claude$/);
   // No color → the command is untouched (background stays neutral).
   assert.equal(run(), "exec claude");
+});
+
+test("resolveTitleCommand: OSC 0 printf for xterm-family terminals + the default", () => {
+  // Terminal.app/iTerm2/kitty/WezTerm/Ghostty all share the xterm OSC 0 path,
+  // with the title passed as a shell-quoted %s argument (injection-safe).
+  for (const terminalApp of ["Terminal", "iTerm2", "kitty", "WezTerm", "Ghostty"] as const) {
+    const cmd = resolveTitleCommand({ terminalApp }, "dex abc123 · Fix login");
+    assert.equal(cmd, `printf '\\033]0;%s\\007' 'dex abc123 · Fix login'`, terminalApp);
+  }
+  // No app chosen → defaults to Terminal.app's OSC 0.
+  assert.equal(resolveTitleCommand({}, "dex abc123"), `printf '\\033]0;%s\\007' 'dex abc123'`);
+});
+
+test("resolveTitleCommand: tmux uses its window-rename escape, not OSC 0", () => {
+  assert.equal(
+    resolveTitleCommand({ terminalApp: "tmux" }, "dex abc123"),
+    `printf '\\033k%s\\033\\\\' 'dex abc123'`,
+  );
+});
+
+test("resolveTitleCommand: custom template, empty title, and unknown app degrade to none", () => {
+  // A custom logTerminal template is opaque, so we don't touch the title.
+  assert.equal(
+    resolveTitleCommand({ terminalApp: "iTerm2", logTerminal: "MINE {cmd}" }, "dex abc123"),
+    undefined,
+  );
+  // Nothing to set for an empty title.
+  assert.equal(resolveTitleCommand({ terminalApp: "iTerm2" }, ""), undefined);
+  // An unknown app falls back to the Terminal default (which does have a title).
+  assert.equal(
+    resolveTitleCommand({ terminalApp: "nonsense" }, "dex abc123"),
+    `printf '\\033]0;%s\\007' 'dex abc123'`,
+  );
+});
+
+test("resolveTitleCommand: a title with single quotes is escaped the POSIX way", () => {
+  assert.equal(
+    resolveTitleCommand({ terminalApp: "iTerm2" }, "dex abc123 · it's broken"),
+    `printf '\\033]0;%s\\007' 'dex abc123 · it'\\''s broken'`,
+  );
+});
+
+test("spawnInTerminal: title + tabColor both prepend, title first, command last", () => {
+  let scripted = "";
+  spawnInTerminal({
+    command: "exec claude",
+    terminal: { terminalApp: "iTerm2" },
+    label: "x",
+    title: "dex abc123",
+    tabColor: { r: 78, g: 121, b: 167 },
+    spawn: (() => ({ on() {}, unref() {} }) as never) as never,
+    writeScript: (_label, command) => {
+      scripted = command;
+      return "/tmp/x.sh";
+    },
+  });
+  // Ordering: title line, then tab-color line, then the original command. (The
+  // tab-color clauses themselves are exercised in detail above.)
+  const lines = scripted.split("\n");
+  assert.match(lines[0]!, /^printf '\\033\]0;%s\\007' 'dex abc123'$/);
+  assert.match(lines[1]!, /^printf '\\033\]6;1;bg;red;brightness;78/);
+  assert.equal(lines[2], "exec claude");
+});
+
+test("spawnInTerminal: title alone prepends just the title line", () => {
+  let scripted = "";
+  spawnInTerminal({
+    command: "exec claude",
+    terminal: { terminalApp: "iTerm2" },
+    label: "x",
+    title: "dex abc123",
+    spawn: (() => ({ on() {}, unref() {} }) as never) as never,
+    writeScript: (_label, command) => {
+      scripted = command;
+      return "/tmp/x.sh";
+    },
+  });
+  assert.equal(scripted, `printf '\\033]0;%s\\007' 'dex abc123'\nexec claude`);
 });
 
 test("spawnInTerminal: a spawn throw is caught and reported ok:false", () => {

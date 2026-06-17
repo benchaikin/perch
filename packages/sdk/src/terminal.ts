@@ -165,6 +165,62 @@ export function resolveTabColorCommand(cfg: GlobalTerminalConfig, rgb: DexRgb): 
   return TERMINAL_TAB_COLOR[app]?.(rgb);
 }
 
+/**
+ * The xterm OSC 0 title escape (`ESC ] 0 ; <title> BEL`), wrapped in a POSIX
+ * `printf` so it can be written verbatim into the launch script and run inside
+ * the session. Terminal.app, iTerm2, kitty, WezTerm and Ghostty all honor it.
+ * The title is passed as a `printf` argument (shell-quoted) and rendered with
+ * `%s`, so an arbitrary task name can never inject extra escapes.
+ */
+function oscTitleCommand(title: string): string {
+  return `printf '\\033]0;%s\\007' ${shellQuote(title)}`;
+}
+
+/**
+ * tmux names the window via its own `ESC k <title> ESC \` sequence rather than
+ * OSC 0 (which tmux treats as the pane title, not the visible window name).
+ * Same `printf`-with-`%s` shape as {@link oscTitleCommand} so the title is
+ * injection-safe.
+ */
+function tmuxTitleCommand(title: string): string {
+  return `printf '\\033k%s\\033\\\\' ${shellQuote(title)}`;
+}
+
+/**
+ * Per-app shell snippet that sets the spawned window/tab TITLE. Prepended to the
+ * inner command so it runs inside the live session, mirroring
+ * {@link TERMINAL_TAB_COLOR}. Every supported terminal can set a title: the
+ * xterm OSC 0 path covers Terminal.app/iTerm2/kitty/WezTerm/Ghostty, and tmux
+ * gets its window-rename escape. (A long-running `claude` may later overwrite
+ * the title with its own — this sets it at launch, which is enough to tell a row
+ * of freshly-spawned agent windows apart.)
+ */
+export const TERMINAL_TITLE: Partial<Record<TerminalApp, (title: string) => string>> = {
+  Terminal: oscTitleCommand,
+  iTerm2: oscTitleCommand,
+  kitty: oscTitleCommand,
+  WezTerm: oscTitleCommand,
+  Ghostty: oscTitleCommand,
+  tmux: tmuxTitleCommand,
+};
+
+/**
+ * Resolve the per-app title-set command for the chosen terminal, mirroring
+ * {@link resolveTabColorCommand}'s precedence: a custom `logTerminal` template is
+ * opaque to us, so it gets none (no-op); a known `terminalApp` gets its builder;
+ * otherwise we default to Terminal.app's. An empty title also yields `undefined`
+ * (nothing to set). `undefined` means "don't touch the title" — degrading
+ * gracefully rather than emitting a stray escape.
+ */
+export function resolveTitleCommand(cfg: GlobalTerminalConfig, title: string): string | undefined {
+  if (cfg.logTerminal || !title) return undefined;
+  const app =
+    cfg.terminalApp && cfg.terminalApp in TERMINAL_APP_TEMPLATES
+      ? (cfg.terminalApp as TerminalApp)
+      : "Terminal";
+  return TERMINAL_TITLE[app]?.(title);
+}
+
 const CMD_PLACEHOLDER = "{cmd}";
 
 /** Substitute `cmd` into every `{cmd}` placeholder of `template` (literal replace). */
@@ -213,6 +269,13 @@ export interface SpawnInTerminalOptions {
    * Omit to launch uncolored.
    */
   tabColor?: DexRgb;
+  /**
+   * Optional window/tab title to set at launch (e.g. `dex abc12345 · Fix login`),
+   * so a row of agent windows is identifiable at a glance. Applied via the
+   * terminal's title escape on every supported terminal; a no-op for custom
+   * templates or an empty title. A long-running process may later overwrite it.
+   */
+  title?: string;
   /** Optional log sink. */
   log?: (message: string) => void;
   /** Injected spawn (tests stub it); defaults to `child_process.spawn`. */
@@ -233,11 +296,14 @@ export function spawnInTerminal(opts: SpawnInTerminalOptions): { ok: boolean; me
   const spawnFn = opts.spawn ?? nodeSpawn;
   const writeScript = opts.writeScript ?? defaultWriteScript;
   try {
-    // Tint the tab/header by prepending the terminal's tab-color escape to the
-    // inner command (a no-op on terminals without a hook — see
-    // {@link resolveTabColorCommand}), so the window background stays neutral.
+    // Prepend the per-terminal escapes (each a no-op on terminals without the
+    // hook) so they run inside the live session before the inner command: the
+    // title (so the window is self-identifying — see {@link resolveTitleCommand})
+    // and the tab-color tint (leaving the window background neutral — see
+    // {@link resolveTabColorCommand}).
+    const title = opts.title && resolveTitleCommand(opts.terminal, opts.title);
     const tabColor = opts.tabColor && resolveTabColorCommand(opts.terminal, opts.tabColor);
-    const command = tabColor ? `${tabColor}\n${opts.command}` : opts.command;
+    const command = [title, tabColor, opts.command].filter(Boolean).join("\n");
     const scriptPath = writeScript(opts.label, command);
     const launch = applyTemplate(template, `sh ${scriptPath}`);
     const child = spawnFn("sh", ["-c", launch], { detached: true, stdio: "ignore" });

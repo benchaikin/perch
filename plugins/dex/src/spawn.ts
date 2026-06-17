@@ -144,6 +144,20 @@ export function buildClaudeLaunch(worktreePath: string, prompt: string): string 
   return `cd ${shellQuote(worktreePath)} && exec claude --permission-mode auto ${shellQuote(prompt)}`;
 }
 
+/**
+ * The window title for a spawned agent: `dex <id> · <name>`, trimmed to a
+ * readable length, falling back to a bare `dex <id>` when the name has no usable
+ * text. The id is always present so a row of agent windows stays self-identifying
+ * (it's the same id encoded in the `dex/<id>-<slug>` branch).
+ */
+export function agentTitle(id: string, name: string, maxNameLength = 40): string {
+  const trimmed = name.trim();
+  if (!trimmed) return `dex ${id}`;
+  const short =
+    trimmed.length > maxNameLength ? `${trimmed.slice(0, maxNameLength - 1).trimEnd()}…` : trimmed;
+  return `dex ${id} · ${short}`;
+}
+
 /** A git runner around the {@link Exec} seam, mirroring `worktrees/provider`. */
 export class GitRunner {
   constructor(
@@ -470,6 +484,11 @@ export async function runSpawn(input: SpawnInput, deps: SpawnDeps): Promise<Spaw
     command: buildClaudeLaunch(worktreePath, bootstrapPrompt(id)),
     terminal: deps.terminal,
     label: `dex ${id}`,
+    // Title the agent's window with its dex id (+ name) so a row of agent
+    // terminals is identifiable at a glance and each ties back to its task —
+    // matching the per-task tab color. Falls back to the bare id when the name
+    // has no usable text.
+    title: agentTitle(id, name),
     // Tint the agent's window tab/header to the task's identity color so it
     // matches the task's dex row + linked worktree across the fleet (a no-op on
     // terminals without a tab-color hook).

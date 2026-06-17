@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  agentTitle,
   branchFor,
   bootstrapPrompt,
   buildClaudeLaunch,
@@ -183,6 +184,18 @@ test("buildClaudeLaunch: cd's into the quoted path and execs claude with a quote
 test("buildClaudeLaunch: single quotes in the path/prompt are POSIX-escaped", () => {
   const cmd = buildClaudeLaunch("/it's/here", "say 'hi'");
   assert.equal(cmd, `cd '/it'\\''s/here' && exec claude --permission-mode auto 'say '\\''hi'\\'''`);
+});
+
+test("agentTitle: `dex <id> · <name>`, bare id when the name is blank, truncated when long", () => {
+  assert.equal(agentTitle("abc12", "Fix login"), "dex abc12 · Fix login");
+  // No usable name → just the id (still self-identifying via the branch's id).
+  assert.equal(agentTitle("abc12", "   "), "dex abc12");
+  // A long name is trimmed to a readable length with an ellipsis.
+  const long = "A really long task name that goes well past the limit and keeps going";
+  const title = agentTitle("abc12", long);
+  assert.ok(title.startsWith("dex abc12 · "));
+  assert.ok(title.endsWith("…"));
+  assert.ok(title.length < `dex abc12 · ${long}`.length);
 });
 
 // ----- runSpawn orchestration (seams stubbed) -------------------------------
@@ -359,9 +372,15 @@ test("runSpawn: happy path — finds the task's store, creates the worktree, lau
   // The agent was launched once, cd'ing into the worktree + exec'ing claude.
   assert.equal(term.calls, 1);
   assert.equal(script.commands.length, 1);
+  // The window title (dex id + name) is set first, then the cd+exec claude line.
+  // (Default terminal is Terminal.app, which honors the OSC 0 title escape.)
   assert.match(
     script.commands[0]!,
-    /^cd '\/work\/perch-worktrees\/abc12-add-the-spawn-action' && exec claude --permission-mode auto '/,
+    /^printf '\\033\]0;%s\\007' 'dex abc12 · Add the spawn action'\n/,
+  );
+  assert.match(
+    script.commands[0]!,
+    /\ncd '\/work\/perch-worktrees\/abc12-add-the-spawn-action' && exec claude --permission-mode auto '/,
   );
 
   // `dex start` was fired (best-effort) after the worktree existed.
