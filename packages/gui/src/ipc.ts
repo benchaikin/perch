@@ -48,6 +48,8 @@ export const Channels = {
   setDexViewMode: "perch:set-dex-view-mode",
   /** Renderer → main: open a worktree dir (payload: the path). Main runs `worktrees.open`. */
   worktreeOpen: "perch:worktree-open",
+  /** Renderer → main: spawn an agent for a ready dex task (payload: the task id). Main runs `dex.spawn`. */
+  dexSpawn: "perch:dex-spawn",
 } as const;
 
 /**
@@ -77,6 +79,8 @@ export interface PerchBridge {
   setDexViewMode(mode: DexViewMode): void;
   /** Ask the main process to open a worktree directory (by path). */
   worktreeOpen(path: string): void;
+  /** Ask the main process to spawn an agent for a ready dex task (by id). */
+  dexSpawn(id: string): void;
 }
 
 declare global {

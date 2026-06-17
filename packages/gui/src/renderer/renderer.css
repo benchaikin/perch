@@ -295,6 +295,13 @@ body {
   font-size: 11px;
 }
 
+/* The start button on a ready dex row. Sits at the trailing edge (keep
+   .icon-btn's margin-left:auto) and is sized to match the in-row controls. */
+.dex-row .dex-spawn {
+  padding: 1px 4px;
+  font-size: 11px;
+}
+
 /* Collapsible worktree repo header button. Styled like a header but interactive:
    click toggles the repo's worktree rows. Resembles dex epic headers. */
 .worktree-repo-header-btn {
