@@ -43,6 +43,8 @@ import type { DexViewMode } from "./window-state.js";
 export const STACK_PRS_ID = "stack.prs";
 /** Canonical capability id of the hero Sync action. */
 export const STACK_SYNC_ID = "stack.sync";
+/** Canonical capability id of the per-PR resolve-conflicts action. */
+export const STACK_RESOLVE_CONFLICTS_ID = "stack.resolve-conflicts";
 
 /** Normalized CI rollup for a PR (mirrors the stack plugin's `CiStatus`). */
 export type CiStatus = "pass" | "fail" | "pending" | "none";
@@ -118,6 +120,10 @@ export interface PrRow {
   /** Web URL of the PR — the renderer makes the row clickable to open it. */
   url: string;
   branch: string;
+  /** The base branch this PR merges into — passed to the resolve-conflicts action. */
+  baseRefName: string;
+  /** The repo this PR belongs to (name) — passed to the resolve-conflicts action. */
+  repo: string;
   /** Status chips (CI / review / mergeable), already mapped to glyphs + tones. */
   chips: Chip[];
   /** True when this PR's base advanced past it — render a "needs rebase" badge. */
@@ -225,6 +231,16 @@ export interface PanelState {
   syncAvailable: boolean;
   /** Repos with a sync currently in flight — their Sync button shows progress. */
   syncing: string[];
+  /**
+   * Whether the resolve-conflicts action exists in the registry (gates the
+   * per-PR "Resolve conflicts" button on conflicting rows).
+   */
+  resolveConflictsAvailable: boolean;
+  /**
+   * Branch names with a resolve-conflicts spawn in flight — their button shows a
+   * spinner and disables, so a double-click can't double-spawn.
+   */
+  resolvingConflicts: string[];
   /** A transient status toast, when one is active. */
   notice?: Notice;
   /**
@@ -288,10 +304,14 @@ export interface BuildInput {
   daemonUp: boolean;
   /** Whether `stack.sync` is present in `registry.list`. */
   syncAvailable: boolean;
+  /** Whether `stack.resolve-conflicts` is present in `registry.list`. */
+  resolveConflictsAvailable?: boolean;
   /** A transient error message (e.g. an invoke failed). */
   error?: string;
   /** Repos with an in-flight sync. */
   syncing?: string[];
+  /** Branches with an in-flight resolve-conflicts spawn. */
+  resolvingConflicts?: string[];
   /** A transient status toast. */
   notice?: Notice;
   /** The latest `services.list` data, or `undefined` if none has arrived yet. */
@@ -393,8 +413,8 @@ export function prHealth(pr: PrInfo): Health {
   return (pr.humanReviewCommentCount ?? 0) > 0 ? "warn" : "ok";
 }
 
-/** Derive a single rendered PR row from a raw {@link PrInfo}. */
-export function toPrRow(pr: PrInfo): PrRow {
+/** Derive a single rendered PR row from a raw {@link PrInfo} in repo `repoName`. */
+export function toPrRow(pr: PrInfo, repoName: string): PrRow {
   const chips: Chip[] = [ciChip(pr.ciStatus ?? "none")];
   const review = reviewChip(pr.reviewDecision);
   if (review) chips.push(review);
@@ -405,6 +425,8 @@ export function toPrRow(pr: PrInfo): PrRow {
     title: pr.title,
     url: pr.url,
     branch: pr.headRefName,
+    baseRefName: pr.baseRefName,
+    repo: repoName,
     chips,
     needsRebase: pr.needsRebase ?? false,
     conflict: pr.conflict ?? false,
@@ -419,14 +441,14 @@ export function toPrRow(pr: PrInfo): PrRow {
  */
 function toGroupRow(group: PrGroup, repoName: string, direction: StackDirection): GroupRow {
   if (group.kind === "pr") {
-    return { kind: "pr", pr: toPrRow(group.pr) };
+    return { kind: "pr", pr: toPrRow(group.pr, repoName) };
   }
   // Stack layers always arrive bottom → top. For "bottom-to-top" (default) keep
   // that order so the base (#1) reads at the top, ascending to the tip; for
   // "top-to-bottom" reverse so the tip reads at the top. The renderer numbers
   // rows 1..N in array order, so reversing flips both row order and numbering.
   const ordered = direction === "top-to-bottom" ? [...group.layers].reverse() : group.layers;
-  const rows = ordered.map(toPrRow);
+  const rows = ordered.map((pr) => toPrRow(pr, repoName));
   const needsRebase = group.needsRebase ?? false;
   // Whole-stack health takes the worst layer (bad > warn > ok); a needed rebase
   // forces bad. Amber surfaces "some layer has comments to address" on the bar.
@@ -585,6 +607,10 @@ export function buildPanelState(input: BuildInput): PanelState {
   // every state (the section is self-hiding when process-compose is absent).
   const live = {
     syncing: input.syncing ?? [],
+    // Gated like `syncAvailable`: false while the daemon is down, else whatever
+    // the registry probe found. The in-flight branch set rides along too.
+    resolveConflictsAvailable: daemonUp ? !!input.resolveConflictsAvailable : false,
+    resolvingConflicts: input.resolvingConflicts ?? [],
     notice: input.notice,
     landableByTaskId,
     agentByTaskId,

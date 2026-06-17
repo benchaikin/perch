@@ -20,6 +20,9 @@ const bridge: PerchBridge = {
   sync(repo) {
     ipcRenderer.send(Channels.sync, repo);
   },
+  resolveConflicts(request) {
+    return ipcRenderer.invoke(Channels.resolveConflicts, request);
+  },
   openPr(url) {
     ipcRenderer.send(Channels.openPr, url);
   },

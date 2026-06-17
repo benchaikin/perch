@@ -107,6 +107,10 @@ function setRefreshSpinning(on: boolean): void {
 let syncAvailable = false;
 /** Repos with a sync in flight — their Sync button shows progress. */
 let syncingRepos: string[] = [];
+/** Whether the resolve-conflicts action exists (gates the per-PR conflict button). */
+let resolveConflictsAvailable = false;
+/** Branches with a resolve-conflicts spawn in flight — their button shows a spinner. */
+let resolvingConflicts: string[] = [];
 /**
  * The selected plugin tab's id, preserved across re-renders while that tab still
  * exists (else it falls back to the first tab — e.g. Services going away returns
@@ -197,6 +201,44 @@ function reviewCommentBadgeEl(count: number): HTMLElement {
 }
 
 /**
+ * Build the per-PR "Resolve conflicts" button, shown only on a conflicting row
+ * when the action exists. Clicking spins up an agent (via `stack.resolve-conflicts`)
+ * in a worktree on the PR's branch to rebase onto its base, resolve, and push —
+ * the one-click complement to the Sync action (which stops on a conflict). While
+ * the spawn is in flight the button disables and shows a spinner, and the click
+ * is stopped from bubbling to the row's open-in-browser handler.
+ */
+function resolveConflictsBtnEl(row: PrRow): HTMLElement {
+  const btn = document.createElement("button");
+  // Primary accent like the Sync button — it's the recommended action on a
+  // conflicting row. `resolve-conflicts-btn` is a marker class for targeting.
+  btn.className = "btn btn-primary btn-sm resolve-conflicts-btn";
+  const inFlight = resolvingConflicts.includes(row.branch);
+  btn.disabled = inFlight;
+  btn.title = `Spin up an agent to resolve this PR's merge conflict (${row.repo})`;
+  if (inFlight) {
+    const spinner = document.createElement("i");
+    spinner.className = "fa-solid fa-circle-notch fa-spin";
+    btn.append(spinner, " Resolving…");
+  } else {
+    const glyph = document.createElement("i");
+    glyph.className = "fa-solid fa-code-merge";
+    btn.append(glyph, " Resolve conflicts");
+    btn.addEventListener("click", (e) => {
+      // Don't open the PR in the browser; just spawn the agent.
+      e.stopPropagation();
+      void window.perch.resolveConflicts({
+        headRefName: row.branch,
+        baseRefName: row.baseRefName,
+        repo: row.repo,
+        number: row.number,
+      });
+    });
+  }
+  return btn;
+}
+
+/**
  * Build one PR row; clicking opens the PR in the browser. When `pos` is given
  * (a stacked PR), it shows the layer's position number instead of a dot.
  */
@@ -241,6 +283,10 @@ function prRowEl(row: PrRow, pos?: number): HTMLElement {
   // A merge conflict is already shown by the `⚠ merge` mergeable chip
   // (mergeable === "CONFLICTING"); don't double-indicate it with a `cf` badge.
   el.append(chips);
+
+  // A conflicting PR gets a one-click "Resolve conflicts" button that spins up
+  // an agent on its branch — hidden for clean PRs and when the action is absent.
+  if (row.conflict && resolveConflictsAvailable) el.append(resolveConflictsBtnEl(row));
 
   return el;
 }
@@ -1683,6 +1729,8 @@ function render(state: PanelState): void {
   lastState = state;
   syncAvailable = state.syncAvailable;
   syncingRepos = state.syncing;
+  resolveConflictsAvailable = state.resolveConflictsAvailable;
+  resolvingConflicts = state.resolvingConflicts;
 
   // Seed from the persisted tab on first render (activeTabId undefined), then
   // the renderer owns the selection. resolveActiveTab falls back to the first
