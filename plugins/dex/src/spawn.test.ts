@@ -519,6 +519,25 @@ test("runSpawn: a failing worktree-add surfaces a clear error and never launches
   assert.equal(term.calls, 0); // never launched the agent
 });
 
+test("runSpawn: an already-existing worktree is refused BEFORE marking in-progress", async () => {
+  const { exec, calls } = execStub({ tasks: { "/work/perch/.dex": { name: "Task" } } });
+  // The worktree path already exists on disk (a prior spawn). The pre-flight must
+  // catch it before `dex start`, so a re-spawn never orphans the task as
+  // in-progress-with-no-agent (dex has no `unstart` to roll the mark back).
+  const ff = fakeFs(["/work/perch-worktrees/abc12-task"]);
+  const term = fakeSpawn();
+  const res = await runSpawn(
+    { id: "abc12" },
+    deps(exec, { spawn: term.spawn, writeScript: fakeWriteScript().writeScript, fs: ff.fs }),
+  );
+  assert.equal(res.ok, false);
+  assert.match(res.message, /already exists/);
+  // Crucially: the task was NEVER marked in-progress, and nothing was launched.
+  assert.ok(!calls.some((c) => c.cmd === "dex" && c.args.includes("start")));
+  assert.ok(!calls.some((c) => c.cmd === "git" && c.args.includes("worktree")));
+  assert.equal(term.calls, 0);
+});
+
 test("runSpawn: default branch falls back to main when there's no origin/HEAD", async () => {
   const exec: Exec = (cmd, args) => {
     if (cmd === "dex" && args.includes("show")) return Promise.resolve(JSON.stringify({ name: "T" }));
@@ -598,6 +617,55 @@ test("runSpawnBatch: no ready tasks is a clean no-op (nothing launched)", async 
   assert.match(res.message, /No ready tasks/);
   assert.equal(term.calls, 0);
   assert.equal(calls.length, 0); // never probed a store
+});
+
+test("runSpawnBatch: runs spawns SEQUENTIALLY (never two in flight at once)", async () => {
+  // The dex store, git worktree dir, and terminal launcher all race under
+  // concurrency, so the batch must serialize. Prove it: an async exec stub that
+  // yields a microtask on every call tracks how many runSpawns are mid-flight —
+  // sequential ⇒ never more than one. (Under the old `Promise.all` this hit 3.)
+  let active = 0;
+  let maxActive = 0;
+  const exec: Exec = async (cmd, args) => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    await Promise.resolve(); // yield, so overlap (if any) is observable
+    try {
+      if (cmd === "dex" && args.includes("show")) return JSON.stringify({ name: "T" });
+      if (cmd === "git" && args[0] === "symbolic-ref") return "origin/main\n";
+      return "";
+    } finally {
+      active -= 1;
+    }
+  };
+  const res = await runSpawnBatch(
+    [
+      { id: "ready1", status: "ready", blockedByCount: 0 },
+      { id: "ready2", status: "ready", blockedByCount: 0 },
+      { id: "ready3", status: "ready", blockedByCount: 0 },
+    ],
+    deps(exec, { spawn: fakeSpawn().spawn, writeScript: fakeWriteScript().writeScript }),
+  );
+  assert.equal(res.spawned, 3);
+  assert.equal(maxActive, 1, "spawns must not overlap");
+});
+
+test("runSpawnBatch: the summary names which tasks failed (for the GUI toast)", async () => {
+  const { exec } = execStub({ tasks: { "/work/perch/.dex": { name: "Known" } } });
+  const wrapped: Exec = (cmd, args, o) =>
+    cmd === "dex" && args.includes("show") && args.includes("ghost1")
+      ? Promise.reject(new Error("not found"))
+      : exec(cmd, args, o);
+  const res = await runSpawnBatch(
+    [
+      { id: "good123", status: "ready", blockedByCount: 0 },
+      { id: "ghost1", status: "ready", blockedByCount: 0 },
+    ],
+    deps(wrapped, { spawn: fakeSpawn().spawn, writeScript: fakeWriteScript().writeScript }),
+  );
+  assert.equal(res.failed, 1);
+  // The failed id is in the message, so the toast says WHICH task failed.
+  assert.match(res.message, /1 failed: ghost1/);
 });
 
 test("runSpawnBatch: a per-task failure is isolated — others still spawn", async () => {
