@@ -403,9 +403,9 @@ export async function runSpawn(input: SpawnInput, deps: SpawnDeps): Promise<Spaw
     command: buildClaudeLaunch(worktreePath, bootstrapPrompt(id)),
     terminal: deps.terminal,
     label: `dex ${id}`,
-    // Tint the agent's window to the task's identity color so it matches the
-    // task's dex row + linked worktree across the fleet (a no-op on terminals
-    // without a color hook).
+    // Tint the agent's window tab/header to the task's identity color so it
+    // matches the task's dex row + linked worktree across the fleet (a no-op on
+    // terminals without a tab-color hook).
     tabColor: dexTaskColorRgb(id),
     log: deps.log,
     spawn: deps.spawn,
