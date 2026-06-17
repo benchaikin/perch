@@ -18,10 +18,13 @@ import {
   excludeDexLink,
   type FsOps,
   GitRunner,
+  isReadyToSpawn,
   isValidTaskId,
   linkDexStore,
   resolveRepo,
   runSpawn,
+  runSpawnBatch,
+  type SpawnCandidate,
   type SpawnDeps,
   worktreeAddArgs,
   worktreePathFor,
@@ -464,4 +467,94 @@ test("runSpawn: default branch falls back to main when there's no origin/HEAD", 
   );
   assert.equal(res.ok, true);
   assert.deepEqual(seenBase, ["main"]);
+});
+
+// ----- runSpawnBatch (the `dex.spawn-all` fleet launch) ---------------------
+
+test("isReadyToSpawn: only unblocked `ready` rows pass the gate", () => {
+  assert.equal(isReadyToSpawn({ id: "a", status: "ready", blockedByCount: 0 }), true);
+  assert.equal(isReadyToSpawn({ id: "b", status: "ready", blockedByCount: 2 }), false);
+  assert.equal(isReadyToSpawn({ id: "c", status: "in-progress", blockedByCount: 0 }), false);
+  assert.equal(isReadyToSpawn({ id: "d", status: "blocked", blockedByCount: 1 }), false);
+  assert.equal(isReadyToSpawn({ id: "e", status: "done", blockedByCount: 0 }), false);
+});
+
+test("runSpawnBatch: spawns every ready task (skipping blocked/started/done), in board order", async () => {
+  const { exec, calls } = execStub({
+    tasks: { "/work/perch/.dex": { name: "A task" } },
+    defaultBranch: "main",
+  });
+  const term = fakeSpawn();
+  const candidates: SpawnCandidate[] = [
+    { id: "ready1", status: "ready", blockedByCount: 0 },
+    { id: "blkd01", status: "ready", blockedByCount: 2 }, // active blockers → skip
+    { id: "wip001", status: "in-progress", blockedByCount: 0 }, // already started → skip
+    { id: "ready2", status: "ready", blockedByCount: 0 },
+    { id: "done01", status: "done", blockedByCount: 0 }, // completed → skip
+  ];
+  const res = await runSpawnBatch(
+    candidates,
+    deps(exec, { spawn: term.spawn, writeScript: fakeWriteScript().writeScript }),
+  );
+
+  assert.equal(res.ok, true);
+  assert.equal(res.spawned, 2);
+  assert.equal(res.failed, 0);
+  assert.deepEqual(
+    res.results.map((r) => r.id),
+    ["ready1", "ready2"],
+  );
+  assert.equal(term.calls, 2); // exactly the two ready tasks launched
+  // No worktree was ever created for a skipped task.
+  for (const skipped of ["blkd01", "wip001", "done01"]) {
+    assert.ok(
+      !calls.some((c) => c.cmd === "git" && c.args.some((a) => a.includes(skipped))),
+      `should not have touched ${skipped}`,
+    );
+  }
+});
+
+test("runSpawnBatch: no ready tasks is a clean no-op (nothing launched)", async () => {
+  const { exec, calls } = execStub({ tasks: { "/work/perch/.dex": { name: "T" } } });
+  const term = fakeSpawn();
+  const res = await runSpawnBatch(
+    [{ id: "wip001", status: "in-progress", blockedByCount: 0 }],
+    deps(exec, { spawn: term.spawn, writeScript: fakeWriteScript().writeScript }),
+  );
+  assert.equal(res.ok, true);
+  assert.equal(res.spawned, 0);
+  assert.equal(res.failed, 0);
+  assert.match(res.message, /No ready tasks/);
+  assert.equal(term.calls, 0);
+  assert.equal(calls.length, 0); // never probed a store
+});
+
+test("runSpawnBatch: a per-task failure is isolated — others still spawn", async () => {
+  // The store knows "good123" but not "ghost1", so that task's spawn fails
+  // (not-found) while the other succeeds.
+  const { exec } = execStub({
+    tasks: { "/work/perch/.dex": { name: "Known" } },
+  });
+  // Make "ghost1" unknown by routing it through a store with no entry: simplest
+  // is a custom exec that rejects `show` for ghost1.
+  const wrapped: Exec = (cmd, args, o) => {
+    if (cmd === "dex" && args.includes("show") && args.includes("ghost1")) {
+      return Promise.reject(new Error("not found"));
+    }
+    return exec(cmd, args, o);
+  };
+  const term = fakeSpawn();
+  const res = await runSpawnBatch(
+    [
+      { id: "good123", status: "ready", blockedByCount: 0 },
+      { id: "ghost1", status: "ready", blockedByCount: 0 },
+    ],
+    deps(wrapped, { spawn: term.spawn, writeScript: fakeWriteScript().writeScript }),
+  );
+  assert.equal(res.spawned, 1);
+  assert.equal(res.failed, 1);
+  assert.equal(res.ok, false);
+  assert.match(res.message, /1 failed/);
+  const ghost = res.results.find((r) => r.id === "ghost1");
+  assert.equal(ghost!.result.ok, false);
 });

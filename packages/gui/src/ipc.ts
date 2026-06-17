@@ -50,6 +50,8 @@ export const Channels = {
   worktreeOpen: "perch:worktree-open",
   /** Renderer → main: spawn an agent for a ready dex task (payload: the task id). Main runs `dex.spawn`. */
   dexSpawn: "perch:dex-spawn",
+  /** Renderer → main: spawn agents for every ready dex task at once (no payload). Main runs `dex.spawn-all`. */
+  dexSpawnReady: "perch:dex-spawn-ready",
 } as const;
 
 /**
@@ -81,6 +83,8 @@ export interface PerchBridge {
   worktreeOpen(path: string): void;
   /** Ask the main process to spawn an agent for a ready dex task (by id). */
   dexSpawn(id: string): void;
+  /** Ask the main process to spawn agents for every ready dex task at once. */
+  dexSpawnReady(): void;
 }
 
 declare global {

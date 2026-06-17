@@ -21,6 +21,7 @@ import {
   type GlobalTerminalConfig,
 } from "@perch/sdk";
 
+import type { DexStatus } from "./normalize.js";
 import type { Exec } from "./provider.js";
 
 /** The `dex.spawn` action input. */
@@ -490,4 +491,76 @@ export async function runSpawn(input: SpawnInput, deps: SpawnDeps): Promise<Spaw
     message: `Spawned agent for ${id} in ${worktreePath} (branch ${branch}).`,
     worktreePath,
   };
+}
+
+/** The minimal task shape {@link runSpawnBatch} reads to decide readiness. */
+export interface SpawnCandidate {
+  id: string;
+  status: DexStatus;
+  blockedByCount: number;
+}
+
+/**
+ * Whether a batch spawn should hand this task to a fresh agent: an unblocked
+ * `ready` row. This is the daemon-side half of the GUI's `canSpawnDex` gate —
+ * the worktree/agent checks live in the GUI (the daemon board tracks neither
+ * live worktrees nor running agent processes). It doesn't need to: a `ready`
+ * task hasn't been started, and {@link runSpawn} itself refuses a task whose
+ * worktree already exists (git's `worktree add` rejects the path), so a stray
+ * worktree is caught there and counted as a failure rather than half-created.
+ */
+export function isReadyToSpawn(task: SpawnCandidate): boolean {
+  return task.status === "ready" && task.blockedByCount === 0;
+}
+
+/** One task's outcome within a {@link SpawnBatchResult}. */
+export interface SpawnBatchEntry {
+  id: string;
+  result: SpawnResult;
+}
+
+/** The `dex.spawn-all` result: per-task outcomes plus a rolled-up summary. */
+export interface SpawnBatchResult {
+  /** True when every ready task spawned (or there were none to spawn). */
+  ok: boolean;
+  /** Number of agents successfully launched. */
+  spawned: number;
+  /** Number of ready tasks whose spawn failed. */
+  failed: number;
+  /** Per-task outcomes, in board order (ready tasks only). */
+  results: SpawnBatchEntry[];
+  /** A human-readable one-line summary. */
+  message: string;
+}
+
+/**
+ * Spawn an agent for every ready (unblocked) task in `tasks`, concurrently —
+ * the batch counterpart of {@link runSpawn} and the GUI's "spawn all ready"
+ * button. Filters to {@link isReadyToSpawn} candidates, runs {@link runSpawn}
+ * over them in parallel (each gets its own `dex/<id>-<slug>` worktree + seeded
+ * agent), and rolls the per-task outcomes into a summary. Never throws: each
+ * task's failure is captured in its own `SpawnResult`, so one bad task doesn't
+ * sink the rest.
+ */
+export async function runSpawnBatch(
+  tasks: ReadonlyArray<SpawnCandidate>,
+  deps: SpawnDeps,
+): Promise<SpawnBatchResult> {
+  const ready = tasks.filter(isReadyToSpawn);
+  const results = await Promise.all(
+    ready.map(
+      async (t): Promise<SpawnBatchEntry> => ({
+        id: t.id,
+        result: await runSpawn({ id: t.id }, deps),
+      }),
+    ),
+  );
+  const spawned = results.filter((r) => r.result.ok).length;
+  const failed = results.length - spawned;
+  const message =
+    ready.length === 0
+      ? "No ready tasks to spawn."
+      : `Spawned ${spawned} of ${ready.length} ready task${ready.length === 1 ? "" : "s"}` +
+        (failed > 0 ? ` (${failed} failed).` : ".");
+  return { ok: failed === 0, spawned, failed, results, message };
 }
