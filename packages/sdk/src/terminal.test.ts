@@ -7,15 +7,13 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  appendTerminalColor,
   applyTemplate,
   DEFAULT_TERMINAL,
-  resolveTerminalColorClause,
+  resolveTabColorCommand,
   resolveTerminalTemplate,
   shellQuote,
   spawnInTerminal,
   TERMINAL_APP_TEMPLATES,
-  TERMINAL_COLOR_CLAUSES,
   terminalConfigOf,
 } from "./terminal.js";
 
@@ -25,7 +23,10 @@ test("resolveTerminalTemplate: chosen app picks its preset", () => {
 });
 
 test("resolveTerminalTemplate: custom logTerminal overrides the app preset", () => {
-  assert.equal(resolveTerminalTemplate({ terminalApp: "iTerm2", logTerminal: "MINE {cmd}" }), "MINE {cmd}");
+  assert.equal(
+    resolveTerminalTemplate({ terminalApp: "iTerm2", logTerminal: "MINE {cmd}" }),
+    "MINE {cmd}",
+  );
 });
 
 test("resolveTerminalTemplate: empty / unknown / Custom → Terminal default", () => {
@@ -35,7 +36,10 @@ test("resolveTerminalTemplate: empty / unknown / Custom → Terminal default", (
 });
 
 test("applyTemplate substitutes every {cmd}", () => {
-  assert.equal(applyTemplate("run {cmd} ; echo {cmd}", "tail -f x"), "run tail -f x ; echo tail -f x");
+  assert.equal(
+    applyTemplate("run {cmd} ; echo {cmd}", "tail -f x"),
+    "run tail -f x ; echo tail -f x",
+  );
 });
 
 test("TERMINAL_APP_TEMPLATES: Terminal is the default; every preset carries {cmd}", () => {
@@ -49,7 +53,9 @@ test("shellQuote wraps + escapes single quotes the POSIX way", () => {
 });
 
 test("terminalConfigOf narrows ctx.global.terminal; {} on miss", () => {
-  assert.deepEqual(terminalConfigOf({ terminal: { terminalApp: "iTerm2" } }), { terminalApp: "iTerm2" });
+  assert.deepEqual(terminalConfigOf({ terminal: { terminalApp: "iTerm2" } }), {
+    terminalApp: "iTerm2",
+  });
   assert.deepEqual(terminalConfigOf({}), {});
   assert.deepEqual(terminalConfigOf(undefined), {});
   assert.deepEqual(terminalConfigOf({ terminal: "bad" }), {});
@@ -82,46 +88,59 @@ test("spawnInTerminal: routes the command through a temp script and spawns sh -c
   assert.match(calls[0]!.args[1]!, /tell application "iTerm"/);
 });
 
-test("resolveTerminalColorClause: AppleScript apps get a clause; others / custom none", () => {
-  assert.equal(resolveTerminalColorClause({ terminalApp: "iTerm2" }), TERMINAL_COLOR_CLAUSES.iTerm2);
-  assert.equal(resolveTerminalColorClause({ terminalApp: "Terminal" }), TERMINAL_COLOR_CLAUSES.Terminal);
-  // No app → Terminal.app default → its clause.
-  assert.equal(resolveTerminalColorClause({}), TERMINAL_COLOR_CLAUSES.Terminal);
-  // Terminals without a color hook, and custom templates, get nothing.
-  assert.equal(resolveTerminalColorClause({ terminalApp: "kitty" }), undefined);
-  assert.equal(resolveTerminalColorClause({ terminalApp: "iTerm2", logTerminal: "MINE {cmd}" }), undefined);
+test("resolveTabColorCommand: iTerm2 gets an OSC 6 tab-color printf; others / custom none", () => {
+  const cmd = resolveTabColorCommand({ terminalApp: "iTerm2" }, { r: 78, g: 121, b: 167 });
+  assert.match(cmd!, /^printf '/);
+  assert.match(cmd!, /\]6;1;bg;red;brightness;78\\a/);
+  assert.match(cmd!, /\]6;1;bg;green;brightness;121\\a/);
+  assert.match(cmd!, /\]6;1;bg;blue;brightness;167\\a/);
+  // Terminal.app has only a whole-window background, no tab-bar hook → none,
+  // both when chosen explicitly and as the no-app default.
+  assert.equal(
+    resolveTabColorCommand({ terminalApp: "Terminal" }, { r: 1, g: 2, b: 3 }),
+    undefined,
+  );
+  assert.equal(resolveTabColorCommand({}, { r: 1, g: 2, b: 3 }), undefined);
+  // Terminals without a hook, and custom templates, get nothing.
+  assert.equal(resolveTabColorCommand({ terminalApp: "kitty" }, { r: 1, g: 2, b: 3 }), undefined);
+  assert.equal(
+    resolveTabColorCommand(
+      { terminalApp: "iTerm2", logTerminal: "MINE {cmd}" },
+      { r: 1, g: 2, b: 3 },
+    ),
+    undefined,
+  );
 });
 
-test("appendTerminalColor: appends the clause with rgb scaled to 0–65535", () => {
-  const out = appendTerminalColor("osascript -e 'x'", { terminalApp: "iTerm2" }, { r: 0, g: 128, b: 255 });
-  assert.match(out, /^osascript -e 'x' /);
-  // 0×257=0, 128×257=32896, 255×257=65535.
-  assert.match(out, /set background color to \{0, 32896, 65535\}/);
+test("resolveTabColorCommand: channels clamp + round to 0–255", () => {
+  const cmd = resolveTabColorCommand({ terminalApp: "iTerm2" }, { r: -5, g: 127.6, b: 999 });
+  assert.match(cmd!, /red;brightness;0\\a/);
+  assert.match(cmd!, /green;brightness;128\\a/);
+  assert.match(cmd!, /blue;brightness;255\\a/);
 });
 
-test("appendTerminalColor: a colorless terminal leaves the launch unchanged", () => {
-  const launch = "open -na kitty --args sh -c 'x'";
-  assert.equal(appendTerminalColor(launch, { terminalApp: "kitty" }, { r: 1, g: 2, b: 3 }), launch);
-});
-
-test("spawnInTerminal: tabColor tints the window; omitting it leaves the launch bare", () => {
+test("spawnInTerminal: tabColor prepends the tab-color escape to the command; omitting it leaves it bare", () => {
   const run = (tabColor?: { r: number; g: number; b: number }) => {
-    let launched = "";
+    let scripted = "";
     spawnInTerminal({
-      command: "true",
+      command: "exec claude",
       terminal: { terminalApp: "iTerm2" },
       label: "x",
       tabColor,
-      spawn: ((_cmd: string, args: string[]) => {
-        launched = args[1]!;
-        return { on() {}, unref() {} } as never;
-      }) as never,
-      writeScript: () => "/tmp/x.sh",
+      spawn: (() => ({ on() {}, unref() {} }) as never) as never,
+      writeScript: (_label, command) => {
+        scripted = command;
+        return "/tmp/x.sh";
+      },
     });
-    return launched;
+    return scripted;
   };
-  assert.match(run({ r: 78, g: 121, b: 167 }), /set background color to \{/);
-  assert.doesNotMatch(run(), /set background color/);
+  const colored = run({ r: 78, g: 121, b: 167 });
+  assert.match(colored, /^printf '\\033\]6;1;bg;red;brightness;78/);
+  // The original command stays intact, on its own line after the escape.
+  assert.match(colored, /\nexec claude$/);
+  // No color → the command is untouched (background stays neutral).
+  assert.equal(run(), "exec claude");
 });
 
 test("spawnInTerminal: a spawn throw is caught and reported ok:false", () => {

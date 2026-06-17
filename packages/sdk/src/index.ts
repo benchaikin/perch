@@ -326,17 +326,16 @@ export {
 
 /** Shared terminal launcher + the cross-plugin terminal setting. */
 export {
-  appendTerminalColor,
   applyTemplate,
   DEFAULT_TERMINAL,
   GlobalTerminalConfig,
-  resolveTerminalColorClause,
+  resolveTabColorCommand,
   resolveTerminalTemplate,
   shellQuote,
   spawnInTerminal,
   TERMINAL_APP_TEMPLATES,
-  TERMINAL_COLOR_CLAUSES,
   TERMINAL_SETTINGS_FIELDS,
+  TERMINAL_TAB_COLOR,
   terminalConfigOf,
   type SpawnInTerminalOptions,
   type TerminalApp,

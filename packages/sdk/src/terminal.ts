@@ -51,20 +51,18 @@ export const TERMINAL_APP_TEMPLATES = {
 export type TerminalApp = keyof typeof TERMINAL_APP_TEMPLATES;
 
 /**
- * Per-app AppleScript clause that tints the just-opened window to an identity
- * color — appended after the launch template (so it runs once the window
- * exists). `{rgb}` is replaced with an AppleScript `{r, g, b}` list in 0–65535
- * channels. Only the AppleScript terminals (Terminal.app, iTerm2) get a clause;
- * the others (kitty/WezTerm/Ghostty/tmux) and custom templates have none, so
- * coloring is a graceful no-op there rather than a broken command. This is how a
- * spawned agent's window matches its dex task's color (see
- * {@link dexTaskColorRgb}); callers without a color leave the launch untouched.
+ * Per-app shell snippet that tints only the window's tab/header bar (not the
+ * whole background) to an identity color. Prepended to the inner command so it
+ * runs inside the live session. iTerm2 exposes a tab color via its OSC 6 escape
+ * (0–255 channels); Terminal.app has no tab-bar color hook — only a whole-window
+ * background, which is exactly the overwhelming tint we're moving away from — so
+ * it, like kitty/WezTerm/Ghostty/tmux and custom templates, gets none and
+ * degrades to a neutral, uncolored window. This is how a spawned agent's tab
+ * matches its dex task's color (see {@link dexTaskColorRgb}); callers without a
+ * color leave the command untouched.
  */
-export const TERMINAL_COLOR_CLAUSES: Partial<Record<TerminalApp, string>> = {
-  Terminal: `-e 'tell application "Terminal" to set background color of front window to {rgb}'`,
-  iTerm2:
-    `-e 'tell application "iTerm" to tell current session of current window ` +
-    `to set background color to {rgb}'`,
+export const TERMINAL_TAB_COLOR: Partial<Record<TerminalApp, (rgb: DexRgb) => string>> = {
+  iTerm2: itermTabColorCommand,
 };
 
 /** The cross-plugin terminal preference (lives at `global.terminal`). */
@@ -132,44 +130,39 @@ export function resolveTerminalTemplate(cfg: GlobalTerminalConfig): string {
   return DEFAULT_TERMINAL;
 }
 
+/** Clamp a 0–255 RGB channel to an integer in range (iTerm2's OSC 6 uses 0–255). */
+function channel8(value: number): number {
+  return Math.max(0, Math.min(255, Math.round(value)));
+}
+
 /**
- * Resolve the per-app color clause for the chosen terminal, mirroring
+ * iTerm2's OSC 6 tab-color escape, wrapped in a POSIX `printf` so it can be
+ * written verbatim into the launch script and run inside the session. Each
+ * channel is its own `…;bg;<color>;brightness;<0-255>` clause; ESC is `\033` and
+ * the BEL terminator is `\a`, both interpreted by `printf`. The result colors
+ * only the tab/header, leaving the window background at the profile default.
+ */
+function itermTabColorCommand(rgb: DexRgb): string {
+  const clause = (color: string, value: number) =>
+    `\\033]6;1;bg;${color};brightness;${channel8(value)}\\a`;
+  return `printf '${clause("red", rgb.r)}${clause("green", rgb.g)}${clause("blue", rgb.b)}'`;
+}
+
+/**
+ * Resolve the per-app tab-color command for the chosen terminal, mirroring
  * {@link resolveTerminalTemplate}'s precedence: a custom `logTerminal` template
- * is opaque to us, so it gets no clause (no-op); a known `terminalApp` gets its
- * clause (may be undefined); otherwise we default to Terminal.app's. `undefined`
- * means "this terminal has no color hook" — color is skipped, not forced.
+ * is opaque to us, so it gets none (no-op); a known `terminalApp` gets its
+ * builder (may be undefined); otherwise we default to Terminal.app's (none).
+ * `undefined` means "this terminal has no tab-color hook" — coloring is skipped,
+ * not forced.
  */
-export function resolveTerminalColorClause(cfg: GlobalTerminalConfig): string | undefined {
+export function resolveTabColorCommand(cfg: GlobalTerminalConfig, rgb: DexRgb): string | undefined {
   if (cfg.logTerminal) return undefined;
-  if (cfg.terminalApp && cfg.terminalApp in TERMINAL_APP_TEMPLATES) {
-    return TERMINAL_COLOR_CLAUSES[cfg.terminalApp as TerminalApp];
-  }
-  return TERMINAL_COLOR_CLAUSES.Terminal;
-}
-
-const RGB_PLACEHOLDER = "{rgb}";
-
-/** Scale a 0–255 RGB channel to AppleScript's 0–65535 range (×257), clamped. */
-function to16Bit(channel: number): number {
-  const c = Math.max(0, Math.min(255, Math.round(channel)));
-  return c * 257;
-}
-
-/**
- * Append the terminal's color clause (with `rgb` filled in) to a resolved launch
- * command, tinting the window to the task's identity color. When the terminal
- * has no color hook (see {@link resolveTerminalColorClause}) the launch is
- * returned unchanged — a clean degrade for kitty/WezTerm/Ghostty/tmux/custom.
- */
-export function appendTerminalColor(
-  launch: string,
-  cfg: GlobalTerminalConfig,
-  rgb: DexRgb,
-): string {
-  const clause = resolveTerminalColorClause(cfg);
-  if (!clause) return launch;
-  const list = `{${to16Bit(rgb.r)}, ${to16Bit(rgb.g)}, ${to16Bit(rgb.b)}}`;
-  return `${launch} ${clause.split(RGB_PLACEHOLDER).join(list)}`;
+  const app =
+    cfg.terminalApp && cfg.terminalApp in TERMINAL_APP_TEMPLATES
+      ? (cfg.terminalApp as TerminalApp)
+      : "Terminal";
+  return TERMINAL_TAB_COLOR[app]?.(rgb);
 }
 
 const CMD_PLACEHOLDER = "{cmd}";
@@ -214,9 +207,10 @@ export interface SpawnInTerminalOptions {
   /** A short label for the temp-script filename, log lines, and result message. */
   label: string;
   /**
-   * Optional identity color to tint the opened window to (e.g. a dex task's
-   * {@link dexTaskColorRgb}). Applied only on terminals with a color hook
-   * (Terminal.app / iTerm2); a no-op elsewhere. Omit to launch uncolored.
+   * Optional identity color to tint the opened window's tab/header bar to (e.g.
+   * a dex task's {@link dexTaskColorRgb}). Applied only on terminals with a
+   * tab-color hook (iTerm2); a no-op elsewhere, leaving the background neutral.
+   * Omit to launch uncolored.
    */
   tabColor?: DexRgb;
   /** Optional log sink. */
@@ -239,9 +233,13 @@ export function spawnInTerminal(opts: SpawnInTerminalOptions): { ok: boolean; me
   const spawnFn = opts.spawn ?? nodeSpawn;
   const writeScript = opts.writeScript ?? defaultWriteScript;
   try {
-    const scriptPath = writeScript(opts.label, opts.command);
-    const base = applyTemplate(template, `sh ${scriptPath}`);
-    const launch = opts.tabColor ? appendTerminalColor(base, opts.terminal, opts.tabColor) : base;
+    // Tint the tab/header by prepending the terminal's tab-color escape to the
+    // inner command (a no-op on terminals without a hook — see
+    // {@link resolveTabColorCommand}), so the window background stays neutral.
+    const tabColor = opts.tabColor && resolveTabColorCommand(opts.terminal, opts.tabColor);
+    const command = tabColor ? `${tabColor}\n${opts.command}` : opts.command;
+    const scriptPath = writeScript(opts.label, command);
+    const launch = applyTemplate(template, `sh ${scriptPath}`);
     const child = spawnFn("sh", ["-c", launch], { detached: true, stdio: "ignore" });
     child.on("error", (err: Error) => opts.log?.(`terminal launch failed: ${err.message}`));
     child.unref();
