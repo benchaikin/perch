@@ -347,11 +347,18 @@ export function shellQuote(word: string): string {
  * `claude` directly. `--permission-mode auto` lets a freshly-spawned agent act
  * without first toggling its mode by hand (the whole point of spawning it).
  *
+ * When `prompt` is omitted or empty, no prompt arg is appended at all (not an
+ * empty quoted string) — the agent drops into a live, agenda-free auto-mode
+ * session waiting for the user (the `stack.open-agent` flow).
+ *
  * Shared by every "spawn an agent in a worktree" flow (the dex spawn, the stack
- * resolve-conflicts action) so the launch command stays identical across them.
+ * resolve-conflicts action, the free-form open-agent action) so the launch
+ * command stays identical across them.
  */
-export function buildAgentLaunchCommand(worktreePath: string, prompt: string): string {
-  return `cd ${shellQuote(worktreePath)} && exec claude --permission-mode auto ${shellQuote(prompt)}`;
+export function buildAgentLaunchCommand(worktreePath: string, prompt?: string): string {
+  const base = `cd ${shellQuote(worktreePath)} && exec claude --permission-mode auto`;
+  const seed = prompt?.trim();
+  return seed ? `${base} ${shellQuote(seed)}` : base;
 }
 
 /**

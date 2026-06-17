@@ -23,6 +23,9 @@ const bridge: PerchBridge = {
   resolveConflicts(request) {
     return ipcRenderer.invoke(Channels.resolveConflicts, request);
   },
+  openAgent(request) {
+    return ipcRenderer.invoke(Channels.openAgent, request);
+  },
   openPr(url) {
     ipcRenderer.send(Channels.openPr, url);
   },

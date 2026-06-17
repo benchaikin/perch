@@ -36,7 +36,12 @@ import {
 import { GENERAL_TAB_ID } from "./settings/settings-tabs.js";
 import { DaemonUnavailableError, PerchClient } from "@perch/cli";
 import { shouldShowNotification, toNotifyOptions } from "./notify.js";
-import { Channels, type ResolveConflictsRequest, type ServiceActionRequest } from "./ipc.js";
+import {
+  Channels,
+  type OpenAgentRequest,
+  type ResolveConflictsRequest,
+  type ServiceActionRequest,
+} from "./ipc.js";
 import { addProc, procsFromConfig, removeProc, type Proc } from "./procs.js";
 import { addRepo, removeRepo, reposFromConfig, setDefault, toEntries } from "./repos.js";
 import { buildConfigPatch, buildGlobalConfigPatch } from "./settings-fields.js";
@@ -50,6 +55,7 @@ import {
 import {
   buildPanelState,
   landableDecisionCount,
+  STACK_OPEN_AGENT_ID,
   STACK_PRS_ID,
   STACK_RESOLVE_CONFLICTS_ID,
   STACK_SYNC_ID,
@@ -334,6 +340,7 @@ async function connect(): Promise<void> {
     const caps = await client.registryList();
     buildInput.syncAvailable = caps.some((c) => c.id === STACK_SYNC_ID);
     buildInput.resolveConflictsAvailable = caps.some((c) => c.id === STACK_RESOLVE_CONFLICTS_ID);
+    buildInput.openAgentAvailable = caps.some((c) => c.id === STACK_OPEN_AGENT_ID);
     servicesPresent = caps.some((c) => c.id === SERVICES_LIST_ID);
     dexPresent = caps.some((c) => c.id === DEX_TASKS_ID);
     buildInput.dexPresent = dexPresent;
@@ -342,6 +349,7 @@ async function connect(): Promise<void> {
   } catch {
     buildInput.syncAvailable = false;
     buildInput.resolveConflictsAvailable = false;
+    buildInput.openAgentAvailable = false;
   }
 
   try {
@@ -417,6 +425,7 @@ async function reloadFromRegistry(): Promise<void> {
     const caps = await client.registryList();
     buildInput.syncAvailable = caps.some((c) => c.id === STACK_SYNC_ID);
     buildInput.resolveConflictsAvailable = caps.some((c) => c.id === STACK_RESOLVE_CONFLICTS_ID);
+    buildInput.openAgentAvailable = caps.some((c) => c.id === STACK_OPEN_AGENT_ID);
     if (caps.some((c) => c.id === STACK_PRS_ID)) {
       await subscribePrs();
     } else {
@@ -479,6 +488,14 @@ function setResolvingConflicts(branch: string, on: boolean): void {
   if (on) set.add(branch);
   else set.delete(branch);
   buildInput.resolvingConflicts = [...set];
+}
+
+/** Add/remove a branch from the in-flight set so its Open-agent button spins. */
+function setOpeningAgent(branch: string, on: boolean): void {
+  const set = new Set(buildInput.openingAgents ?? []);
+  if (on) set.add(branch);
+  else set.delete(branch);
+  buildInput.openingAgents = [...set];
 }
 
 /** Add/remove a service from the in-flight set so its row buttons spin. */
@@ -752,6 +769,45 @@ async function resolveConflicts(request: ResolveConflictsRequest): Promise<void>
     showNotice({ tone: "bad", text: `Resolve conflicts failed: ${errorMessage(err)}` });
   } finally {
     setResolvingConflicts(request.headRefName, false);
+    pushState();
+  }
+}
+
+/**
+ * Invoke `stack.open-agent` for a PR (the per-row "Open agent" button). Marks the
+ * branch in-flight so its button spins, opens a free-form auto-mode Claude
+ * session in the PR's worktree, then toasts the outcome — the worktree creation +
+ * terminal launch is otherwise silent. Awaited by the renderer (via
+ * `ipcMain.handle`) so the button clears its spinner once the work finishes.
+ * No-op if the action is unavailable or already running for that branch.
+ */
+async function openAgent(request: OpenAgentRequest): Promise<void> {
+  if (!client || !buildInput.openAgentAvailable) return;
+  if (buildInput.openingAgents?.includes(request.headRefName)) return;
+
+  setOpeningAgent(request.headRefName, true);
+  pushState();
+  try {
+    const result = (await client.invoke({
+      id: STACK_OPEN_AGENT_ID,
+      input: {
+        repo: request.repo,
+        headRefName: request.headRefName,
+        number: request.number,
+      },
+    })) as { ok?: boolean; message?: string } | null;
+    if (result?.ok === false) {
+      showNotice({ tone: "bad", text: result.message ?? "Couldn't open an agent." });
+    } else {
+      showNotice({
+        tone: "ok",
+        text: result?.message ?? `Opened an agent session on ${request.headRefName}.`,
+      });
+    }
+  } catch (err) {
+    showNotice({ tone: "bad", text: `Open agent failed: ${errorMessage(err)}` });
+  } finally {
+    setOpeningAgent(request.headRefName, false);
     pushState();
   }
 }
@@ -1245,10 +1301,10 @@ function registerIpc(): void {
   ipcMain.handle(Channels.dexSpawn, (_event, id: string) => spawnDex(id));
   ipcMain.handle(Channels.dexSpawnReady, () => spawnDexReady());
   ipcMain.handle(Channels.dexDelete, (_event, id: string) => deleteDex(id));
-  ipcMain.handle(
-    Channels.resolveConflicts,
-    (_event, request: ResolveConflictsRequest) => resolveConflicts(request),
+  ipcMain.handle(Channels.resolveConflicts, (_event, request: ResolveConflictsRequest) =>
+    resolveConflicts(request),
   );
+  ipcMain.handle(Channels.openAgent, (_event, request: OpenAgentRequest) => openAgent(request));
   // Clipboard writes go through main (Electron's clipboard) rather than the
   // renderer's navigator.clipboard, which a non-activating panel can't rely on.
   ipcMain.on(Channels.copyText, (_event, text: string) => {
