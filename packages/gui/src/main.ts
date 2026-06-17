@@ -36,7 +36,7 @@ import {
 import { GENERAL_TAB_ID } from "./settings/settings-tabs.js";
 import { DaemonUnavailableError, PerchClient } from "@perch/cli";
 import { shouldShowNotification, toNotifyOptions } from "./notify.js";
-import { Channels, type ServiceActionRequest } from "./ipc.js";
+import { Channels, type ResolveConflictsRequest, type ServiceActionRequest } from "./ipc.js";
 import { addProc, procsFromConfig, removeProc, type Proc } from "./procs.js";
 import { addRepo, removeRepo, reposFromConfig, setDefault, toEntries } from "./repos.js";
 import { buildConfigPatch, buildGlobalConfigPatch } from "./settings-fields.js";
@@ -51,6 +51,7 @@ import {
   buildPanelState,
   landableDecisionCount,
   STACK_PRS_ID,
+  STACK_RESOLVE_CONFLICTS_ID,
   STACK_SYNC_ID,
   type BuildInput,
   type Notice,
@@ -332,6 +333,7 @@ async function connect(): Promise<void> {
   try {
     const caps = await client.registryList();
     buildInput.syncAvailable = caps.some((c) => c.id === STACK_SYNC_ID);
+    buildInput.resolveConflictsAvailable = caps.some((c) => c.id === STACK_RESOLVE_CONFLICTS_ID);
     servicesPresent = caps.some((c) => c.id === SERVICES_LIST_ID);
     dexPresent = caps.some((c) => c.id === DEX_TASKS_ID);
     buildInput.dexPresent = dexPresent;
@@ -339,6 +341,7 @@ async function connect(): Promise<void> {
     agentsPresent = caps.some((c) => c.id === AGENTS_LIST_ID);
   } catch {
     buildInput.syncAvailable = false;
+    buildInput.resolveConflictsAvailable = false;
   }
 
   try {
@@ -413,6 +416,7 @@ async function reloadFromRegistry(): Promise<void> {
   try {
     const caps = await client.registryList();
     buildInput.syncAvailable = caps.some((c) => c.id === STACK_SYNC_ID);
+    buildInput.resolveConflictsAvailable = caps.some((c) => c.id === STACK_RESOLVE_CONFLICTS_ID);
     if (caps.some((c) => c.id === STACK_PRS_ID)) {
       await subscribePrs();
     } else {
@@ -467,6 +471,14 @@ function setSyncing(repo: string, on: boolean): void {
   if (on) set.add(repo);
   else set.delete(repo);
   buildInput.syncing = [...set];
+}
+
+/** Add/remove a branch from the in-flight set so its Resolve-conflicts button spins. */
+function setResolvingConflicts(branch: string, on: boolean): void {
+  const set = new Set(buildInput.resolvingConflicts ?? []);
+  if (on) set.add(branch);
+  else set.delete(branch);
+  buildInput.resolvingConflicts = [...set];
 }
 
 /** Add/remove a service from the in-flight set so its row buttons spin. */
@@ -700,6 +712,46 @@ async function sync(repo: string): Promise<void> {
     showNotice({ tone: "bad", text: `Sync failed: ${errorMessage(err)}` });
   } finally {
     setSyncing(repo, false);
+    pushState();
+  }
+}
+
+/**
+ * Invoke `stack.resolve-conflicts` for a conflicting PR (the per-row "Resolve
+ * conflicts" button). Marks the branch in-flight so its button spins, spawns the
+ * agent, then toasts the outcome — the worktree creation + terminal launch is
+ * otherwise silent. Awaited by the renderer (via `ipcMain.handle`) so the button
+ * clears its spinner once the work finishes. No-op if the action is unavailable
+ * or already running for that branch.
+ */
+async function resolveConflicts(request: ResolveConflictsRequest): Promise<void> {
+  if (!client || !buildInput.resolveConflictsAvailable) return;
+  if (buildInput.resolvingConflicts?.includes(request.headRefName)) return;
+
+  setResolvingConflicts(request.headRefName, true);
+  pushState();
+  try {
+    const result = (await client.invoke({
+      id: STACK_RESOLVE_CONFLICTS_ID,
+      input: {
+        repo: request.repo,
+        headRefName: request.headRefName,
+        baseRefName: request.baseRefName,
+        number: request.number,
+      },
+    })) as { ok?: boolean; message?: string } | null;
+    if (result?.ok === false) {
+      showNotice({ tone: "bad", text: result.message ?? "Couldn't resolve conflicts." });
+    } else {
+      showNotice({
+        tone: "ok",
+        text: result?.message ?? `Spawned an agent to resolve conflicts on ${request.headRefName}.`,
+      });
+    }
+  } catch (err) {
+    showNotice({ tone: "bad", text: `Resolve conflicts failed: ${errorMessage(err)}` });
+  } finally {
+    setResolvingConflicts(request.headRefName, false);
     pushState();
   }
 }
@@ -1193,6 +1245,10 @@ function registerIpc(): void {
   ipcMain.handle(Channels.dexSpawn, (_event, id: string) => spawnDex(id));
   ipcMain.handle(Channels.dexSpawnReady, () => spawnDexReady());
   ipcMain.handle(Channels.dexDelete, (_event, id: string) => deleteDex(id));
+  ipcMain.handle(
+    Channels.resolveConflicts,
+    (_event, request: ResolveConflictsRequest) => resolveConflicts(request),
+  );
   // Clipboard writes go through main (Electron's clipboard) rather than the
   // renderer's navigator.clipboard, which a non-activating panel can't rely on.
   ipcMain.on(Channels.copyText, (_event, text: string) => {

@@ -15,8 +15,8 @@ import { appendFile, lstat, readFile, symlink } from "node:fs/promises";
 import type { spawn as nodeSpawn } from "node:child_process";
 
 import {
+  buildAgentLaunchCommand,
   dexTaskColorRgb,
-  shellQuote,
   spawnInTerminal,
   type GlobalTerminalConfig,
 } from "@perch/sdk";
@@ -139,9 +139,12 @@ export function bootstrapPrompt(id: string): string {
  * The session starts in auto mode (`--permission-mode auto`) so a freshly-spawned
  * agent can act without first toggling its permission mode by hand — the whole
  * point of spawning it is to let it run.
+ *
+ * Delegates to the SDK's {@link buildAgentLaunchCommand} so every agent-spawn
+ * flow (dex spawn, stack resolve-conflicts) shares one launch command.
  */
 export function buildClaudeLaunch(worktreePath: string, prompt: string): string {
-  return `cd ${shellQuote(worktreePath)} && exec claude --permission-mode auto ${shellQuote(prompt)}`;
+  return buildAgentLaunchCommand(worktreePath, prompt);
 }
 
 /**

@@ -341,6 +341,20 @@ export function shellQuote(word: string): string {
 }
 
 /**
+ * The inner command a spawned agent's terminal runs: `cd` into the worktree and
+ * `exec` an interactive `claude` seeded with `prompt`. The path and prompt are
+ * shell-quoted, and `exec` replaces the launcher's `sh` so Ctrl-C reaches
+ * `claude` directly. `--permission-mode auto` lets a freshly-spawned agent act
+ * without first toggling its mode by hand (the whole point of spawning it).
+ *
+ * Shared by every "spawn an agent in a worktree" flow (the dex spawn, the stack
+ * resolve-conflicts action) so the launch command stays identical across them.
+ */
+export function buildAgentLaunchCommand(worktreePath: string, prompt: string): string {
+  return `cd ${shellQuote(worktreePath)} && exec claude --permission-mode auto ${shellQuote(prompt)}`;
+}
+
+/**
  * Persist `command` to a small shell script in a Perch temp dir and return its
  * path. The launcher then interpolates only a quote-free `sh <path>`, so the
  * inner command's quoting lives in the script rather than nested into the

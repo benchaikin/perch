@@ -5,19 +5,37 @@
  * the action wrappers (sync, submit, push, add, merge, checkout, link,
  * unstack); M7 adds the cross-machine + base-ref fallback provider.
  */
-import { action, definePlugin, read, reposOf, validateSettingsDescriptor, z } from "@perch/sdk";
+import {
+  action,
+  definePlugin,
+  read,
+  reposOf,
+  terminalConfigOf,
+  validateSettingsDescriptor,
+  z,
+} from "@perch/sdk";
 
 import { ghStackProvider } from "./gh-provider.js";
 import { StackGraph } from "./graph.js";
 import { prNotifications } from "./notify.js";
 import { buildPrOverview, PrOverview, type StackDirection } from "./prs.js";
 import { reposResult, ReposResult, resolveRepoCwd } from "./repos.js";
+import {
+  runResolveConflicts,
+  type ResolveConflictsInput,
+  type ResolveConflictsResult,
+} from "./resolve-conflicts.js";
 import { resolveStackView } from "./resolve-view.js";
 
 export type { Exec, ExecOptions, MergeOptions, StackProvider, SyncResult } from "./provider.js";
 export { ghStackProvider } from "./gh-provider.js";
 export { baseRefProvider } from "./base-ref-provider.js";
 export { resolveStackView } from "./resolve-view.js";
+export {
+  runResolveConflicts,
+  type ResolveConflictsInput,
+  type ResolveConflictsResult,
+} from "./resolve-conflicts.js";
 export { CiStatus, StackGraph, StackLayer } from "./graph.js";
 export { allChains, chainContaining } from "./chains.js";
 export { prNotifications } from "./notify.js";
@@ -253,6 +271,40 @@ export default definePlugin({
         const message = "Stack synced onto trunk.";
         ctx.log(message);
         return { ok: true, conflict: false, message };
+      },
+    }),
+
+    /**
+     * Spin up an agent to resolve a conflicting PR's merge conflict — the
+     * complement of `sync`, which deliberately stops on a conflict. Checks out
+     * the PR's existing head branch in a worktree (reusing one already checked
+     * out, e.g. a dex-spawned PR) and launches a seeded `claude` to rebase onto
+     * the base, resolve, verify, and push. Perch never auto-merges; this only
+     * clears the conflict so the user can merge once the PR is green.
+     *
+     * The worktree lives next to the repo (`<repo>-worktrees/<branch>`), so the
+     * repo's directory — not just `gh`'s cwd — is needed; we resolve it the same
+     * way `stack.view` does, falling back to `process.cwd()` when no repos are
+     * configured. MCP stays off (matching the other actions; agents drive git
+     * directly).
+     */
+    "resolve-conflicts": action<ResolveConflictsInput, StackConfig, ResolveConflictsResult>({
+      summary: "Spin up an agent to resolve a conflicting PR's merge conflict",
+      // `headRefName` is required (the branch to fix); the rest are optional.
+      input: z.object({
+        repo: z.string().optional(),
+        headRefName: z.string(),
+        baseRefName: z.string().optional(),
+        number: z.number().int().optional(),
+      }),
+      run: ({ input, ctx }): Promise<ResolveConflictsResult> => {
+        const cwd = resolveRepoCwd(effectiveRepos(ctx.config, ctx.global), input.repo);
+        return runResolveConflicts(input, {
+          repoDir: cwd ?? process.cwd(),
+          gitBin: "git",
+          terminal: terminalConfigOf(ctx.global),
+          log: ctx.log,
+        });
       },
     }),
 

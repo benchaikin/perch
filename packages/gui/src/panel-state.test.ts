@@ -55,7 +55,7 @@ const basePr = {
 };
 
 test("toPrRow always includes a CI chip and applies defaults", () => {
-  const row = toPrRow({ ...basePr });
+  const row = toPrRow({ ...basePr }, "r");
   assert.equal(row.branch, "add-api");
   assert.equal(row.number, 1);
   assert.equal(row.url, "https://github.com/o/r/pull/1");
@@ -66,19 +66,28 @@ test("toPrRow always includes a CI chip and applies defaults", () => {
 });
 
 test("toPrRow carries the human review-comment count, defaulting to 0", () => {
-  assert.equal(toPrRow({ ...basePr }).humanReviewCommentCount, 0);
-  assert.equal(toPrRow({ ...basePr, humanReviewCommentCount: 3 }).humanReviewCommentCount, 3);
+  assert.equal(toPrRow({ ...basePr }, "r").humanReviewCommentCount, 0);
+  assert.equal(toPrRow({ ...basePr, humanReviewCommentCount: 3 }, "r").humanReviewCommentCount, 3);
+});
+
+test("toPrRow carries the base branch + repo for the resolve-conflicts action", () => {
+  const row = toPrRow({ ...basePr }, "my-repo");
+  assert.equal(row.baseRefName, "main");
+  assert.equal(row.repo, "my-repo");
 });
 
 test("toPrRow accumulates review + mergeable chips and badges", () => {
-  const row = toPrRow({
-    ...basePr,
-    ciStatus: "pass",
-    reviewDecision: "REVIEW_REQUIRED",
-    mergeable: "CONFLICTING",
-    needsRebase: true,
-    conflict: true,
-  });
+  const row = toPrRow(
+    {
+      ...basePr,
+      ciStatus: "pass",
+      reviewDecision: "REVIEW_REQUIRED",
+      mergeable: "CONFLICTING",
+      needsRebase: true,
+      conflict: true,
+    },
+    "r",
+  );
   assert.equal(row.needsRebase, true);
   assert.equal(row.conflict, true);
   // CI + review + mergeable.
@@ -89,26 +98,32 @@ test("toPrRow accumulates review + mergeable chips and badges", () => {
 });
 
 test("PR health is bad on CI fail / conflict / needs-rebase / changes, else ok", () => {
-  assert.equal(toPrRow({ ...basePr }).health, "ok");
-  assert.equal(toPrRow({ ...basePr, ciStatus: "pending" }).health, "ok");
-  assert.equal(toPrRow({ ...basePr, reviewDecision: "APPROVED" }).health, "ok");
-  assert.equal(toPrRow({ ...basePr, ciStatus: "fail" }).health, "bad");
-  assert.equal(toPrRow({ ...basePr, conflict: true }).health, "bad");
-  assert.equal(toPrRow({ ...basePr, needsRebase: true }).health, "bad");
-  assert.equal(toPrRow({ ...basePr, reviewDecision: "CHANGES_REQUESTED" }).health, "bad");
+  assert.equal(toPrRow({ ...basePr }, "r").health, "ok");
+  assert.equal(toPrRow({ ...basePr, ciStatus: "pending" }, "r").health, "ok");
+  assert.equal(toPrRow({ ...basePr, reviewDecision: "APPROVED" }, "r").health, "ok");
+  assert.equal(toPrRow({ ...basePr, ciStatus: "fail" }, "r").health, "bad");
+  assert.equal(toPrRow({ ...basePr, conflict: true }, "r").health, "bad");
+  assert.equal(toPrRow({ ...basePr, needsRebase: true }, "r").health, "bad");
+  assert.equal(toPrRow({ ...basePr, reviewDecision: "CHANGES_REQUESTED" }, "r").health, "bad");
 });
 
 test("PR health is warn when there are review comments but nothing blocking", () => {
   // Comments to address, CI green + approved → amber, not green.
   assert.equal(
-    toPrRow({ ...basePr, ciStatus: "pass", reviewDecision: "APPROVED", humanReviewCommentCount: 2 })
-      .health,
+    toPrRow(
+      { ...basePr, ciStatus: "pass", reviewDecision: "APPROVED", humanReviewCommentCount: 2 },
+      "r",
+    ).health,
     "warn",
   );
   // A blocking problem outranks comments → red, not amber.
-  assert.equal(toPrRow({ ...basePr, ciStatus: "fail", humanReviewCommentCount: 2 }).health, "bad");
   assert.equal(
-    toPrRow({ ...basePr, reviewDecision: "CHANGES_REQUESTED", humanReviewCommentCount: 2 }).health,
+    toPrRow({ ...basePr, ciStatus: "fail", humanReviewCommentCount: 2 }, "r").health,
+    "bad",
+  );
+  assert.equal(
+    toPrRow({ ...basePr, reviewDecision: "CHANGES_REQUESTED", humanReviewCommentCount: 2 }, "r")
+      .health,
     "bad",
   );
 });

@@ -327,6 +327,7 @@ export {
 /** Shared terminal launcher + the cross-plugin terminal setting. */
 export {
   applyTemplate,
+  buildAgentLaunchCommand,
   DEFAULT_TERMINAL,
   focusableApp,
   FOCUS_OR_SPAWN_TEMPLATES,

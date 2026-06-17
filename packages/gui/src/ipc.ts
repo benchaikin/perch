@@ -15,6 +15,18 @@ export interface ServiceActionRequest {
   action: ServiceAction;
 }
 
+/** Renderer → main payload to spawn a conflict-resolution agent for a PR. */
+export interface ResolveConflictsRequest {
+  /** The conflicting PR's head branch (the branch to check out + fix). */
+  headRefName: string;
+  /** The base branch the PR merges into (what to rebase onto). */
+  baseRefName: string;
+  /** The repo the PR belongs to (name), selecting which configured repo to target. */
+  repo: string;
+  /** The PR number, for the agent window's title/messaging. */
+  number: number;
+}
+
 /** IPC channel names. `*FromMain` are pushes; the rest are renderer→main calls. */
 export const Channels = {
   /** Main → renderer: a fresh {@link PanelState} to render. */
@@ -23,6 +35,13 @@ export const Channels = {
   refresh: "perch:refresh",
   /** Renderer → main: invoke `stack.sync` for a repo (payload: the repo name). */
   sync: "perch:sync",
+  /**
+   * Renderer → main `invoke`: spawn an agent to resolve a conflicting PR's merge
+   * conflict (payload: a {@link ResolveConflictsRequest}). Main runs
+   * `stack.resolve-conflicts` and resolves when the worktree/terminal work
+   * finishes, so the button can clear its in-progress state.
+   */
+  resolveConflicts: "perch:resolve-conflicts",
   /** Renderer → main: open a PR's URL in the browser (payload: the URL). */
   openPr: "perch:open-pr",
   /**
@@ -79,6 +98,12 @@ export interface PerchBridge {
   refresh(): void;
   /** Ask the main process to run the Sync action for a repo (by name). */
   sync(repo: string): void;
+  /**
+   * Ask the main process to spawn an agent to resolve a conflicting PR's merge
+   * conflict. Resolves when the spawn finishes (or fails), so the caller can
+   * clear its in-progress UI; the success/error notice is pushed via panel state.
+   */
+  resolveConflicts(request: ResolveConflictsRequest): Promise<void>;
   /** Ask the main process to open a PR's URL in the browser. */
   openPr(url: string): void;
   /** Ask the main process to start/stop/restart a service (by name). */
