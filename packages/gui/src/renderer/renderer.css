@@ -106,6 +106,15 @@ body {
 .icon-btn:active {
   color: var(--accent);
 }
+/* In-progress spawn buttons: dimmed and inert, but the spinner still reads. */
+.icon-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.icon-btn:disabled:hover {
+  color: var(--muted);
+  background: none;
+}
 
 .rule {
   border: none;

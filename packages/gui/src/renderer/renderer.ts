@@ -125,6 +125,14 @@ const collapsedDexIds = new Set<string>();
 const collapsedWorktreeRepos = new Set<string>();
 /** The dex task whose detail view is open, if any (else the task list shows). */
 let selectedDexId: string | undefined;
+/**
+ * Dex task ids whose start button has been clicked and whose spawn is still in
+ * flight. Tracked here (not in pushed state) so the optimistic spinner survives
+ * re-renders and the button stays disabled — no double-spawn from a double click.
+ */
+const spawningDexIds = new Set<string>();
+/** True while the top-level "spawn all ready" launch is in flight (disables the button). */
+let spawningAllDex = false;
 /** The last rendered state, replayed when the active tab changes (a click). */
 let lastState: PanelState | undefined;
 
@@ -763,12 +771,15 @@ function dexDetailSpawnBtnEl(id: string): HTMLElement {
   // Labeled `.btn.btn-sm` (room to spell it out on the detail page) plus the
   // shared `dex-spawn` hook the row button uses.
   btn.className = "btn btn-sm dex-spawn dex-detail-spawn";
-  btn.title = "Start an agent for this task";
-  btn.setAttribute("aria-label", "Start an agent for this task");
+  const inFlight = spawningDexIds.has(id);
+  btn.disabled = inFlight;
+  btn.title = inFlight ? "Starting agent…" : "Start an agent for this task";
+  btn.setAttribute("aria-label", btn.title);
   const i = document.createElement("i");
-  i.className = "fa-solid fa-play";
-  btn.append(i, " Start agent");
-  btn.addEventListener("click", () => window.perch.dexSpawn(id));
+  // A spinner + "Starting…" while the worktree is created and the agent launches.
+  i.className = inFlight ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-play";
+  btn.append(i, inFlight ? " Starting…" : " Start agent");
+  if (!inFlight) btn.addEventListener("click", () => void runDexSpawn(id));
   return btn;
 }
 
@@ -885,17 +896,42 @@ function dexViewToggleEl(mode: DexViewMode): HTMLElement {
 function dexSpawnReadyBtnEl(count: number): HTMLElement {
   const btn = document.createElement("button");
   btn.className = "icon-btn dex-spawn-all";
-  const label = `Spawn agents for ${count} ready task${count === 1 ? "" : "s"}`;
+  btn.disabled = spawningAllDex;
+  const label = spawningAllDex
+    ? `Spawning ${count} ready task${count === 1 ? "" : "s"}…`
+    : `Spawn agents for ${count} ready task${count === 1 ? "" : "s"}`;
   btn.title = label;
   btn.setAttribute("aria-label", label);
   const i = document.createElement("i");
-  i.className = "fa-solid fa-rocket";
+  // A spinner while every ready task's worktree + agent terminal is launched.
+  i.className = spawningAllDex ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-rocket";
   btn.append(i);
-  btn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    window.perch.dexSpawnReady();
-  });
+  if (!spawningAllDex) {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      void runDexSpawnReady();
+    });
+  }
   return btn;
+}
+
+/**
+ * Drive the "spawn all ready" button's optimistic-spawn flow: mark the fleet
+ * launch in flight so the next render disables the button and shows a spinner,
+ * kick it off, then clear the mark when it resolves (or fails) — re-rendering at
+ * each step. Guards against a second launch while one is in flight. The
+ * "Spawned N of M" summary notice is pushed from main via panel state.
+ */
+async function runDexSpawnReady(): Promise<void> {
+  if (spawningAllDex) return;
+  spawningAllDex = true;
+  if (lastState) render(lastState);
+  try {
+    await window.perch.dexSpawnReady();
+  } finally {
+    spawningAllDex = false;
+    if (lastState) render(lastState);
+  }
 }
 
 /**
@@ -1201,17 +1237,41 @@ function appendWorktreeHealthChips(chips: HTMLElement, w: WorktreeHealthFacet): 
 function dexSpawnBtnEl(id: string): HTMLElement {
   const btn = document.createElement("button");
   btn.className = "icon-btn dex-spawn";
-  btn.title = "Start an agent for this task";
-  btn.setAttribute("aria-label", "Start an agent for this task");
+  const inFlight = spawningDexIds.has(id);
+  btn.disabled = inFlight;
+  btn.title = inFlight ? "Starting agent…" : "Start an agent for this task";
+  btn.setAttribute("aria-label", btn.title);
   const i = document.createElement("i");
-  i.className = "fa-solid fa-play";
+  // A spinner while the worktree is created and the agent terminal launches.
+  i.className = inFlight ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-play";
   btn.append(i);
-  btn.addEventListener("click", (e) => {
-    // Don't open the task detail; just spawn the agent.
-    e.stopPropagation();
-    window.perch.dexSpawn(id);
-  });
+  if (!inFlight) {
+    btn.addEventListener("click", (e) => {
+      // Don't open the task detail; just spawn the agent.
+      e.stopPropagation();
+      void runDexSpawn(id);
+    });
+  }
   return btn;
+}
+
+/**
+ * Drive a dex start button's optimistic-spawn flow: mark the id in flight so the
+ * next render disables the button and shows a spinner, kick off the spawn, then
+ * clear the mark when it resolves (or fails) — re-rendering at each step. Guards
+ * against a second spawn while one is already in flight (no double-spawn). The
+ * success/error notice itself is pushed from main via panel state.
+ */
+async function runDexSpawn(id: string): Promise<void> {
+  if (spawningDexIds.has(id)) return;
+  spawningDexIds.add(id);
+  if (lastState) render(lastState);
+  try {
+    await window.perch.dexSpawn(id);
+  } finally {
+    spawningDexIds.delete(id);
+    if (lastState) render(lastState);
+  }
 }
 
 /**

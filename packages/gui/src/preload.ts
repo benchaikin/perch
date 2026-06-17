@@ -45,10 +45,10 @@ const bridge: PerchBridge = {
     ipcRenderer.send(Channels.worktreeOpen, path);
   },
   dexSpawn(id) {
-    ipcRenderer.send(Channels.dexSpawn, id);
+    return ipcRenderer.invoke(Channels.dexSpawn, id);
   },
   dexSpawnReady() {
-    ipcRenderer.send(Channels.dexSpawnReady);
+    return ipcRenderer.invoke(Channels.dexSpawnReady);
   },
 };
 
