@@ -479,9 +479,10 @@ export async function findTask(
  * Create the `dex/<id>-<slug>` worktree and launch a seeded `claude` agent in the
  * user's terminal. Never throws: every failure (bad id, unresolved repo, a task
  * we can't mark in-progress, an existing worktree, a git error, a terminal error)
- * returns a clear `{ ok:false, message }`, and nothing is half-created — the task
- * is marked in-progress before anything is built, the worktree is only added once
- * the repo + branch are settled, and the agent is launched only after it exists.
+ * returns a clear `{ ok:false, message }`, and nothing is half-created — an
+ * already-existing worktree is rejected up front (before any state changes), the
+ * task is then marked in-progress, the worktree is only added once the repo +
+ * branch are settled, and the agent is launched only after it exists.
  */
 export async function runSpawn(input: SpawnInput, deps: SpawnDeps): Promise<SpawnResult> {
   const id = input.id.trim();
@@ -521,15 +522,36 @@ export async function runSpawn(input: SpawnInput, deps: SpawnDeps): Promise<Spaw
     resolvedRepo = resolved.repo;
   }
 
-  // Mark the task in-progress BEFORE building anything. Spawning an agent for a
-  // task IS starting work on it, and `started_at` is the only thing perch keys
-  // the in-progress status off (normalize.ts `deriveStatus`) — a live worktree is
-  // not consulted. So this is a hard requirement, not a best-effort nicety: if we
-  // can't mark it, we must NOT go on to create a worktree + launch an agent on a
-  // task that still reads as 'ready' (the bug this guards against). Marking first
-  // (rather than just before the launch) means a launched agent always sits on an
-  // in-progress task; the only failure that can outrun the mark is a worktree-add
-  // error, which on an already-claimed task is precisely the case `--force` heals.
+  const slug = deriveSlug(name);
+  const branch = branchFor(id, slug);
+  const worktreePath = worktreePathFor(resolvedRepo, id, slug);
+
+  // Pre-flight (BEFORE the in-progress mark): refuse a task whose worktree is
+  // already on disk. `git worktree add` would reject the path anyway, but only
+  // AFTER we'd marked the task in-progress (below) — and dex has no `unstart`, so
+  // that mark can't be rolled back, leaving the task reading 'in-progress' with no
+  // agent (the exact wrong-state symptom). Catching an existing worktree here lets
+  // a re-spawn of an already-spawned task fail cleanly without touching its state.
+  const fs = deps.fs ?? defaultFsOps;
+  if (await fs.exists(worktreePath)) {
+    return {
+      ok: false,
+      message: `worktree for dex task "${id}" already exists at ${worktreePath}; not re-spawning.`,
+    };
+  }
+
+  // Mark the task in-progress BEFORE building the worktree + launching the agent.
+  // Spawning an agent for a task IS starting work on it, and `started_at` is the
+  // only thing perch keys the in-progress status off (normalize.ts `deriveStatus`)
+  // — a live worktree is not consulted. So this is a hard requirement, not a
+  // best-effort nicety: if we can't mark it, we must NOT go on to create a worktree
+  // + launch an agent on a task that still reads as 'ready' (the bug this guards
+  // against). Marking here (after the existing-worktree pre-flight, but before the
+  // build) means a launched agent always sits on an in-progress task; the only
+  // failure that can now outrun the mark is a worktree-add error on a path the
+  // pre-flight didn't see (e.g. a stale registered branch), which `--force` heals
+  // on the eventual re-spawn. NOTE: batch spawns run SEQUENTIALLY (runSpawnBatch)
+  // precisely so these `dex start` writes don't race + clobber each other.
   const started = await dex.start(id, storagePathOf(resolvedRepo));
   if (!started.ok) {
     return {
@@ -537,10 +559,6 @@ export async function runSpawn(input: SpawnInput, deps: SpawnDeps): Promise<Spaw
       message: `couldn't mark dex task "${id}" in-progress (${started.detail ?? "dex start failed"}); not spawning an agent.`,
     };
   }
-
-  const slug = deriveSlug(name);
-  const branch = branchFor(id, slug);
-  const worktreePath = worktreePathFor(resolvedRepo, id, slug);
 
   // Create the worktree off the repo's default branch. git's own `worktree add`
   // refuses an existing path, but we surface a clearer message either way.
@@ -559,7 +577,6 @@ export async function runSpawn(input: SpawnInput, deps: SpawnDeps): Promise<Spaw
   // The worktree is a sibling dir with no `.dex`; link the source repo's store in
   // so the spawned agent's `dex show <id>` (and the user's dex commands) resolve
   // without a `--storage-path`. Best-effort — never blocks the launch.
-  const fs = deps.fs ?? defaultFsOps;
   await linkDexStore(worktreePath, resolvedRepo, fs, deps.log);
   // …and exclude that link from git, so its lone `?? .dex` never reads as a dirty
   // tree and blocks auto-land from reaping the worktree once its PR merges.
@@ -644,33 +661,47 @@ export interface SpawnBatchResult {
 }
 
 /**
- * Spawn an agent for every ready (unblocked) task in `tasks`, concurrently —
+ * Spawn an agent for every ready (unblocked) task in `tasks`, one at a time —
  * the batch counterpart of {@link runSpawn} and the GUI's "spawn all ready"
  * button. Filters to {@link isReadyToSpawn} candidates, runs {@link runSpawn}
- * over them in parallel (each gets its own `dex/<id>-<slug>` worktree + seeded
+ * over them SEQUENTIALLY (each gets its own `dex/<id>-<slug>` worktree + seeded
  * agent), and rolls the per-task outcomes into a summary. Never throws: each
  * task's failure is captured in its own `SpawnResult`, so one bad task doesn't
  * sink the rest.
+ *
+ * Sequential, NOT `Promise.all`: every `runSpawn` mutates shared, unsynchronized
+ * state, all of which races under concurrency —
+ *   - the per-repo `.dex` store: `dex start` reads the whole JSONL store and
+ *     rewrites it (temp-file + rename) with NO lock, so concurrent starts lose
+ *     each other's `started_at` writes → tasks that got a worktree + agent still
+ *     read as 'ready' (verified: ~half of a parallel batch can be lost);
+ *   - the repo's `.git/worktrees` + `index.lock`: concurrent `git worktree add`
+ *     in one repo contend and some fail → those tasks are left marked in-progress
+ *     with no agent;
+ *   - the terminal launcher: concurrent `osascript` to Terminal.app races and
+ *     drops windows → "some terminals opened, some didn't".
+ * Serializing trades a little latency (spawns are interactive and rare; each
+ * launched agent runs detached, so we don't wait on it) for reliability — every
+ * step sees the previous task's committed effect.
  */
 export async function runSpawnBatch(
   tasks: ReadonlyArray<SpawnCandidate>,
   deps: SpawnDeps,
 ): Promise<SpawnBatchResult> {
   const ready = tasks.filter(isReadyToSpawn);
-  const results = await Promise.all(
-    ready.map(
-      async (t): Promise<SpawnBatchEntry> => ({
-        id: t.id,
-        result: await runSpawn({ id: t.id }, deps),
-      }),
-    ),
-  );
+  const results: SpawnBatchEntry[] = [];
+  for (const t of ready) {
+    results.push({ id: t.id, result: await runSpawn({ id: t.id }, deps) });
+  }
   const spawned = results.filter((r) => r.result.ok).length;
   const failed = results.length - spawned;
+  const failedIds = results.filter((r) => !r.result.ok).map((r) => r.id);
   const message =
     ready.length === 0
       ? "No ready tasks to spawn."
       : `Spawned ${spawned} of ${ready.length} ready task${ready.length === 1 ? "" : "s"}` +
-        (failed > 0 ? ` (${failed} failed).` : ".");
+        // Name the failed ids so the GUI toast (which only shows this rolled-up
+        // message) surfaces WHICH tasks failed, not just a bare count.
+        (failed > 0 ? ` (${failed} failed: ${failedIds.join(", ")}).` : ".");
   return { ok: failed === 0, spawned, failed, results, message };
 }
