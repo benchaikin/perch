@@ -1076,10 +1076,12 @@ function worktreeRepoHeaderEl(group: WorktreeRepoGroup, collapsed: boolean): HTM
 }
 
 /**
- * Build the chip annotating a worktree row with the dex task it was created for:
- * `🗒 <id> · <name> · <status>`, toned by the task's status the same way the dex
- * board's status chip is (`dexHealth` — blocked=red, in-progress/done/ready). The
- * name is truncated with CSS ellipsis so a long title can't blow out the row.
+ * Build the chip annotating a worktree row with the dex task it was created for.
+ * The branch label (`dex/<id>-<slug>`) already supplies the row's identity — the
+ * task id and a slug of its name — so the chip doesn't repeat them; it carries the
+ * one thing the branch can't: the task's live status (`🗒 <status>`), toned the
+ * same way the dex board's status chip is (`dexHealth` — blocked=red, in-progress/
+ * done/ready). The full id + real name + status live in the hover tooltip.
  * Non-interactive (clicking the row still opens the worktree dir).
  *
  * When the linked task is open (unblocked, unfinished — see {@link isOpenDexTask}),
@@ -1098,16 +1100,7 @@ function worktreeTaskChipEl(task: LinkedTask): HTMLElement {
     chip.style.setProperty("--task-color", color.hex);
     chip.style.setProperty("--task-color-rgb", `${color.rgb.r}, ${color.rgb.g}, ${color.rgb.b}`);
   }
-  const id = document.createElement("span");
-  id.className = "worktree-task-id";
-  id.textContent = task.id;
-  const name = document.createElement("span");
-  name.className = "worktree-task-name";
-  name.textContent = task.name;
-  const status = document.createElement("span");
-  status.className = "worktree-task-status";
-  status.textContent = DEX_STATUS_LABEL[task.status];
-  chip.append("🗒 ", id, " · ", name, " · ", status);
+  chip.append(`🗒 ${DEX_STATUS_LABEL[task.status]}`);
   return chip;
 }
 

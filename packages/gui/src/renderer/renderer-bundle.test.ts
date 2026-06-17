@@ -117,6 +117,29 @@ test(
 );
 
 test(
+  "renderer bundle carries the simplified worktree-task status chip",
+  { skip: !existsSync(bundlePath) ? "bundle not built (run pnpm build first)" : false },
+  () => {
+    const bundle = readFileSync(bundlePath, "utf8");
+    // The worktree row's linked-task chip survives into the bundle.
+    assert.ok(
+      bundle.includes("worktree-task"),
+      "expected the `worktree-task` chip class in the renderer bundle",
+    );
+    // …but its redundant id/name segments are gone — the branch label owns identity
+    // now, so the chip is a status-only token (no duplicated id or ellipsized name).
+    assert.ok(
+      !bundle.includes("worktree-task-id"),
+      "expected the redundant `worktree-task-id` segment to be removed",
+    );
+    assert.ok(
+      !bundle.includes("worktree-task-name"),
+      "expected the redundant `worktree-task-name` segment to be removed",
+    );
+  },
+);
+
+test(
   "renderer bundle carries the ready-row start button",
   { skip: !existsSync(bundlePath) ? "bundle not built (run pnpm build first)" : false },
   () => {
