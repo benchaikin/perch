@@ -39,6 +39,7 @@ import { shouldShowNotification, toNotifyOptions } from "./notify.js";
 import {
   Channels,
   type DexBlockerRequest,
+  type DexDeleteRequest,
   type DexEditRequest,
   type DexNewRequest,
   type MergePrRequest,
@@ -671,13 +672,38 @@ async function spawnDexReady(): Promise<void> {
 
 /**
  * Delete a dex task via the dex plugin's `delete` action, then refresh the board
- * and toast the outcome. Awaited by the renderer (via `ipcMain.handle`) so the
- * task's trash control clears its in-progress state when the work finishes. On
- * success the board is re-fetched immediately so the deleted task disappears
- * without waiting for the next poll.
+ * and toast the outcome. A delete is irreversible and can cascade (subtasks) or
+ * orphan a live worktree/agent, so we confirm with a native dialog first —
+ * mirroring {@link mergePr} — defaulting to Cancel for the destructive action;
+ * the renderer-computed `warning` rides along in the request and surfaces as the
+ * dialog detail. Awaited by the renderer (via `ipcMain.handle`) so the task's
+ * trash control clears its in-progress state when the work finishes (or the
+ * delete is declined). On success the board is re-fetched immediately so the
+ * deleted task disappears without waiting for the next poll.
  */
-async function deleteDex(id: string): Promise<void> {
+async function deleteDex(request: DexDeleteRequest): Promise<void> {
   if (!client) return;
+  const { id } = request;
+
+  // Confirm before deleting — the click alone shouldn't fire an irreversible,
+  // cascading action. Default button is Cancel (index 1) for safety; the warning
+  // (live worktree/agent, cascading subtasks) reads in the dialog detail.
+  const confirmOptions = {
+    type: "warning" as const,
+    buttons: ["Delete", "Cancel"],
+    defaultId: 1,
+    cancelId: 1,
+    message: `Delete task "${request.name}"?`,
+    detail: request.warning
+      ? `This permanently deletes the task and can't be undone.\n\n${request.warning}`
+      : "This permanently deletes the task and can't be undone.",
+  };
+  const { response } =
+    panel && !panel.isDestroyed()
+      ? await dialog.showMessageBox(panel, confirmOptions)
+      : await dialog.showMessageBox(confirmOptions);
+  if (response !== 0) return;
+
   try {
     const result = (await client.invoke({ id: "dex.delete", input: { id } })) as {
       ok?: boolean;
@@ -1489,7 +1515,7 @@ function registerIpc(): void {
   // clear the button's in-progress state when the worktree/terminal work finishes.
   ipcMain.handle(Channels.dexSpawn, (_event, id: string) => spawnDex(id));
   ipcMain.handle(Channels.dexSpawnReady, () => spawnDexReady());
-  ipcMain.handle(Channels.dexDelete, (_event, id: string) => deleteDex(id));
+  ipcMain.handle(Channels.dexDelete, (_event, request: DexDeleteRequest) => deleteDex(request));
   ipcMain.handle(Channels.dexEdit, (_event, request: DexEditRequest) => editDex(request));
   ipcMain.handle(Channels.dexAddBlocker, (_event, request: DexBlockerRequest) =>
     addDexBlocker(request),

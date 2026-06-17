@@ -163,6 +163,19 @@ export interface DexEditRequest {
   priority?: number;
 }
 
+/**
+ * Renderer → main payload to delete a dex task. Carries the task `name` so the
+ * native confirm dialog can name what's being deleted, plus the renderer-computed
+ * `warning` (the single source of truth, {@link DexRow}-derived) so the dialog's
+ * detail flags a live worktree/agent or cascading subtasks. `warning` is absent
+ * for a plain leaf task with no live work.
+ */
+export interface DexDeleteRequest {
+  id: string;
+  name: string;
+  warning?: string;
+}
+
 /** Renderer → main payload to add/remove a dex dependency (blocker) edge. */
 export interface DexBlockerRequest {
   /** The task that becomes (or stops being) blocked — `dex edit`'s target. */
@@ -242,11 +255,14 @@ export interface PerchBridge {
    */
   dexSpawnReady(): Promise<void>;
   /**
-   * Ask the main process to delete a dex task (by id). Resolves when the delete
-   * finishes (or fails) and the board has refreshed, so the caller can clear its
-   * in-progress UI; the success/error notice is pushed via panel state.
+   * Ask the main process to delete a dex task (payload: a {@link DexDeleteRequest}
+   * — the id plus the task name and any computed warning). Main confirms with a
+   * native dialog (delete is irreversible and can cascade) before deleting.
+   * Resolves when the delete finishes (or is declined / fails) and the board has
+   * refreshed, so the caller can clear its in-progress UI; the success/error
+   * notice is pushed via panel state.
    */
-  dexDelete(id: string): Promise<void>;
+  dexDelete(request: DexDeleteRequest): Promise<void>;
   /**
    * Ask the main process to edit a dex task's metadata (name/description/priority).
    * Only the changed fields are sent. Resolves when the edit finishes (or fails)
