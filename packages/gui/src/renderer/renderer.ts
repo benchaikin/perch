@@ -628,6 +628,21 @@ function dexBlockedChip(count: number): HTMLElement {
 }
 
 /**
+ * A small SOLID dot in a dex task's stable identity color — the primary
+ * at-a-glance cue that matches a task to its linked worktree / agent. Mirrors
+ * the `.tab-dot` status dot's sizing, but tinted with the per-task
+ * {@link dexTaskColor} (the same source the chip's faint fill uses) so a task
+ * row and its worktree row visibly share one "team color". Rendered only for
+ * open tasks, where that identity color is meaningful.
+ */
+function dexTaskDotEl(id: string): HTMLElement {
+  const dot = document.createElement("span");
+  dot.className = "dex-task-dot";
+  dot.style.background = dexTaskColor(id).hex;
+  return dot;
+}
+
+/**
  * The task id as a monospace reference chip (for `dex show`, commit messages,
  * etc.). Click to copy it to the clipboard with a brief inline confirmation;
  * `stopPropagation` so copying never opens the row's detail view.
@@ -713,7 +728,9 @@ function dexRowEl(row: DexRow): HTMLElement {
   el.append(name);
 
   // The task id as a click-to-copy chip, matching the detail view; an open
-  // (unblocked, unfinished) task's chip carries its stable identity color.
+  // (unblocked, unfinished) task leads with a solid identity-color dot, then the
+  // chip (which carries the same color as a faint backing tint).
+  if (isOpenDexTask(row)) el.append(dexTaskDotEl(row.id));
   el.append(dexIdChipEl(row.id, isOpenDexTask(row)));
 
   if (row.blockedByCount > 0) el.append(dexBlockedChip(row.blockedByCount));
@@ -1029,7 +1046,9 @@ function dexGraphRowEl(row: DexRow, depth: number): HTMLElement {
   el.append(name);
 
   // The task id as a click-to-copy chip, matching the detail view; an open
-  // (unblocked, unfinished) task's chip carries its stable identity color.
+  // (unblocked, unfinished) task leads with a solid identity-color dot, then the
+  // chip (which carries the same color as a faint backing tint).
+  if (isOpenDexTask(row)) el.append(dexTaskDotEl(row.id));
   el.append(dexIdChipEl(row.id, isOpenDexTask(row)));
 
   if (row.blockedByCount > 0) el.append(dexBlockedChip(row.blockedByCount));
@@ -1287,8 +1306,13 @@ function worktreeRowEl(row: WorktreeRow): HTMLElement {
 
   const chips = document.createElement("span");
   chips.className = "chips";
-  // The linked dex task leads the chips so the row reads "what this is for".
-  if (row.task) chips.append(worktreeTaskChipEl(row.task));
+  // The linked dex task leads the chips so the row reads "what this is for". An
+  // open task leads with a solid dot in its identity color — the same dot its
+  // dex row shows — so a worktree matches its task at a glance.
+  if (row.task) {
+    if (isOpenDexTask(row.task)) chips.append(dexTaskDotEl(row.task.id));
+    chips.append(worktreeTaskChipEl(row.task));
+  }
   if (row.dirty) {
     const d = document.createElement("span");
     d.className = "chip warn";
