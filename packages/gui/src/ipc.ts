@@ -102,7 +102,22 @@ export const Channels = {
    * the renderer can clear its in-progress state; the outcome is toasted from main.
    */
   dexDelete: "perch:dex-delete",
+  /**
+   * Renderer → main `invoke`: wire a dependency edge between two dex tasks (payload:
+   * a {@link DexBlockerRequest}). Main runs `dex.add-blocker`, refreshes the board,
+   * and resolves when the edit finishes, so the renderer can clear its drop state;
+   * the success/error outcome is toasted from main.
+   */
+  dexAddBlocker: "perch:dex-add-blocker",
 } as const;
+
+/** Renderer → main payload to add/remove a dex dependency (blocker) edge. */
+export interface DexBlockerRequest {
+  /** The task that becomes (or stops being) blocked — `dex edit`'s target. */
+  blockedId: string;
+  /** The task it depends on (the blocker). Drop A onto B ⇒ blockedId B, blockerId A. */
+  blockerId: string;
+}
 
 /**
  * The API the preload bridge exposes on `window.perch` via `contextBridge`.
@@ -161,6 +176,13 @@ export interface PerchBridge {
    * in-progress UI; the success/error notice is pushed via panel state.
    */
   dexDelete(id: string): Promise<void>;
+  /**
+   * Ask the main process to add a dependency (blocker) edge between two dex tasks
+   * — `blockedId` becomes blocked by `blockerId`. Resolves when the edit finishes
+   * (or fails) and the board has refreshed, so the caller can clear its drop UI;
+   * the success/error notice is pushed via panel state.
+   */
+  dexAddBlocker(request: DexBlockerRequest): Promise<void>;
 }
 
 declare global {
