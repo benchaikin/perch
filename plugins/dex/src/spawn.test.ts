@@ -15,6 +15,7 @@ import {
   bootstrapPrompt,
   buildClaudeLaunch,
   deriveSlug,
+  DexRunner,
   dexStoreLinkSpec,
   excludeDexLink,
   type FsOps,
@@ -198,6 +199,26 @@ test("agentTitle: `dex <id> · <name>`, bare id when the name is blank, truncate
   assert.ok(title.length < `dex abc12 · ${long}`.length);
 });
 
+test("DexRunner.start: passes `--force` and the storage path, reports success", async () => {
+  const calls: Array<{ cmd: string; args: string[] }> = [];
+  const exec: Exec = (cmd, args) => {
+    calls.push({ cmd, args });
+    return Promise.resolve("");
+  };
+  const res = await new DexRunner("dex", exec).start("abc12", "/work/perch/.dex");
+  assert.deepEqual(res, { ok: true });
+  assert.deepEqual(calls, [
+    { cmd: "dex", args: ["--storage-path", "/work/perch/.dex", "start", "abc12", "--force"] },
+  ]);
+});
+
+test("DexRunner.start: a CLI error is reported (not swallowed), with its detail", async () => {
+  const exec: Exec = () => Promise.reject(new Error("dex store is locked"));
+  const res = await new DexRunner("dex", exec).start("abc12");
+  assert.equal(res.ok, false);
+  assert.match(res.detail ?? "", /dex store is locked/);
+});
+
 // ----- runSpawn orchestration (seams stubbed) -------------------------------
 
 /**
@@ -238,12 +259,14 @@ function fakeWriteScript(): {
  * Build an `Exec` stub for runSpawn. `tasks` maps a `--storage-path`'s store dir
  * to the task JSON `dex show` returns there (absent ⇒ that store doesn't know the
  * id). `git worktree add` succeeds unless `failWorktree` is set; `symbolic-ref`
- * returns `origin/<defaultBranch>`; `dex start` is a no-op. Records every call.
+ * returns `origin/<defaultBranch>`; `dex start` is a no-op unless `failStart` is
+ * set (then it rejects, as the CLI would on a store/dex error). Records every call.
  */
 function execStub(opts: {
   tasks: Record<string, { name: string } | undefined>;
   defaultBranch?: string;
   failWorktree?: boolean;
+  failStart?: boolean;
 }): { exec: Exec; calls: Array<{ cmd: string; args: string[] }> } {
   const calls: Array<{ cmd: string; args: string[] }> = [];
   const exec: Exec = (cmd, args) => {
@@ -257,7 +280,8 @@ function execStub(opts: {
         if (!task) return Promise.reject(new Error("not found"));
         return Promise.resolve(JSON.stringify(task));
       }
-      // `dex start` — succeed silently.
+      // `dex start <id> --force` — succeed silently unless told to fail.
+      if (opts.failStart) return Promise.reject(new Error("dex store is locked"));
       return Promise.resolve("");
     }
     if (cmd === "git") {
@@ -383,8 +407,36 @@ test("runSpawn: happy path — finds the task's store, creates the worktree, lau
     /\ncd '\/work\/perch-worktrees\/abc12-add-the-spawn-action' && exec claude --permission-mode auto '/,
   );
 
-  // `dex start` was fired (best-effort) after the worktree existed.
-  assert.ok(calls.some((c) => c.cmd === "dex" && c.args.includes("start")));
+  // The task was marked in-progress with `dex start <id> --force` (the `--force`
+  // makes re-spawning an already-started task idempotent rather than an error)…
+  const start = calls.find((c) => c.cmd === "dex" && c.args.includes("start"));
+  assert.ok(start);
+  assert.ok(start.args.includes("--force"));
+  // …and it happened BEFORE the worktree was created, so an agent can never be
+  // launched on a task that still reads as 'ready'.
+  const startIdx = calls.indexOf(start);
+  const worktreeIdx = calls.findIndex((c) => c.cmd === "git" && c.args.includes("worktree"));
+  assert.ok(startIdx < worktreeIdx);
+});
+
+test("runSpawn: a failing `dex start` is surfaced and nothing is created", async () => {
+  const { exec, calls } = execStub({
+    tasks: { "/work/perch/.dex": { name: "Task" } },
+    failStart: true,
+  });
+  const term = fakeSpawn();
+  const res = await runSpawn(
+    { id: "abc12" },
+    deps(exec, { spawn: term.spawn, writeScript: fakeWriteScript().writeScript }),
+  );
+  assert.equal(res.ok, false);
+  assert.match(res.message, /couldn't mark dex task "abc12" in-progress/);
+  // The store error is surfaced, not swallowed.
+  assert.match(res.message, /dex store is locked/);
+  // No worktree was created and no agent launched — we don't half-spawn a task
+  // that would still read as 'ready'.
+  assert.ok(!calls.some((c) => c.cmd === "git" && c.args.includes("worktree")));
+  assert.equal(term.calls, 0);
 });
 
 test("runSpawn: links the repo's dex store into the worktree so the agent finds it", async () => {
