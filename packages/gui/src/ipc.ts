@@ -48,9 +48,17 @@ export const Channels = {
   setDexViewMode: "perch:set-dex-view-mode",
   /** Renderer → main: open a worktree dir (payload: the path). Main runs `worktrees.open`. */
   worktreeOpen: "perch:worktree-open",
-  /** Renderer → main: spawn an agent for a ready dex task (payload: the task id). Main runs `dex.spawn`. */
+  /**
+   * Renderer → main `invoke`: spawn an agent for a ready dex task (payload: the
+   * task id). Main runs `dex.spawn` and resolves when the worktree/terminal work
+   * finishes, so the button can clear its in-progress state.
+   */
   dexSpawn: "perch:dex-spawn",
-  /** Renderer → main: spawn agents for every ready dex task at once (no payload). Main runs `dex.spawn-all`. */
+  /**
+   * Renderer → main `invoke`: spawn agents for every ready dex task at once (no
+   * payload). Main runs `dex.spawn-all` and resolves when the fleet launch
+   * finishes, so the button can clear its in-progress state.
+   */
   dexSpawnReady: "perch:dex-spawn-ready",
 } as const;
 
@@ -81,10 +89,18 @@ export interface PerchBridge {
   setDexViewMode(mode: DexViewMode): void;
   /** Ask the main process to open a worktree directory (by path). */
   worktreeOpen(path: string): void;
-  /** Ask the main process to spawn an agent for a ready dex task (by id). */
-  dexSpawn(id: string): void;
-  /** Ask the main process to spawn agents for every ready dex task at once. */
-  dexSpawnReady(): void;
+  /**
+   * Ask the main process to spawn an agent for a ready dex task (by id).
+   * Resolves when the spawn finishes (or fails), so the caller can clear its
+   * in-progress UI; the success/error notice is pushed via panel state.
+   */
+  dexSpawn(id: string): Promise<void>;
+  /**
+   * Ask the main process to spawn agents for every ready dex task at once.
+   * Resolves when the fleet launch finishes (or fails), so the caller can clear
+   * its in-progress UI; the "Spawned N of M" notice is pushed via panel state.
+   */
+  dexSpawnReady(): Promise<void>;
 }
 
 declare global {

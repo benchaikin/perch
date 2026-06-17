@@ -580,13 +580,22 @@ async function openWorktree(path: string): Promise<void> {
   }
 }
 
-/** Spawn an agent for a ready dex task via the dex plugin's `spawn` action. */
+/**
+ * Spawn an agent for a ready dex task via the dex plugin's `spawn` action, then
+ * toast the outcome — success as well as failure, mirroring {@link spawnDexReady}
+ * (worktree creation + terminal launch is otherwise silent on success). Awaited
+ * by the renderer (via `ipcMain.handle`) so the start button clears its spinner
+ * when the work finishes.
+ */
 async function spawnDex(id: string): Promise<void> {
   if (!client) return;
   try {
     await client.invoke({ id: "dex.spawn", input: { id } });
+    showNotice({ tone: "ok", text: `Started agent for ${id}.` });
   } catch (err) {
     showNotice({ tone: "bad", text: `Spawn agent failed: ${errorMessage(err)}` });
+  } finally {
+    pushState();
   }
 }
 
@@ -610,6 +619,8 @@ async function spawnDexReady(): Promise<void> {
     });
   } catch (err) {
     showNotice({ tone: "bad", text: `Spawn all ready failed: ${errorMessage(err)}` });
+  } finally {
+    pushState();
   }
 }
 
@@ -1140,8 +1151,10 @@ function registerIpc(): void {
   );
   ipcMain.on(Channels.serviceLogs, (_event, name: string) => void serviceLogs(name));
   ipcMain.on(Channels.worktreeOpen, (_event, path: string) => void openWorktree(path));
-  ipcMain.on(Channels.dexSpawn, (_event, id: string) => void spawnDex(id));
-  ipcMain.on(Channels.dexSpawnReady, () => void spawnDexReady());
+  // Spawns use `handle` (not `send`) so the renderer can await completion and
+  // clear the button's in-progress state when the worktree/terminal work finishes.
+  ipcMain.handle(Channels.dexSpawn, (_event, id: string) => spawnDex(id));
+  ipcMain.handle(Channels.dexSpawnReady, () => spawnDexReady());
   // Clipboard writes go through main (Electron's clipboard) rather than the
   // renderer's navigator.clipboard, which a non-activating panel can't rely on.
   ipcMain.on(Channels.copyText, (_event, text: string) => {

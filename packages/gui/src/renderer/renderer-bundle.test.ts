@@ -163,6 +163,12 @@ test(
       bundle.includes("dex-detail-spawn"),
       "expected the `dex-detail-spawn` button class in the renderer bundle",
     );
+    // The optimistic in-progress feedback shown the moment the button is clicked
+    // (esbuild escapes the trailing ellipsis, so assert on the ASCII prefix).
+    assert.ok(
+      bundle.includes("Starting"),
+      "expected the start button's in-progress `Starting…` state in the bundle",
+    );
   },
 );
 
@@ -183,6 +189,11 @@ test(
     assert.ok(
       bundle.includes("dexSpawnReady"),
       "expected the `dexSpawnReady` bridge call in the renderer bundle",
+    );
+    // The optimistic in-progress feedback while the fleet launch is in flight.
+    assert.ok(
+      bundle.includes("Spawning "),
+      "expected the spawn-all button's in-progress `Spawning …` state in the bundle",
     );
   },
 );
