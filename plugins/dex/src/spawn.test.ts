@@ -108,7 +108,9 @@ test("worktreeAddArgs: git -C <repo> worktree add -b <branch> <path> <base>", ()
 
 test("buildClaudeLaunch: cd's into the quoted path and execs claude with a quoted prompt", () => {
   const cmd = buildClaudeLaunch("/work/perch-worktrees/abc12-x", bootstrapPrompt("abc12"));
-  assert.match(cmd, /^cd '\/work\/perch-worktrees\/abc12-x' && exec claude '/);
+  // The session launches in auto mode so the spawned agent runs without a manual
+  // permission-mode toggle.
+  assert.match(cmd, /^cd '\/work\/perch-worktrees\/abc12-x' && exec claude --permission-mode auto '/);
   // The prompt is a single shell-quoted argument; the backticks/quotes inside it
   // are contained by the single-quoting (no shell expansion leaks).
   assert.ok(cmd.includes("Work on dex task abc12."));
@@ -117,7 +119,7 @@ test("buildClaudeLaunch: cd's into the quoted path and execs claude with a quote
 
 test("buildClaudeLaunch: single quotes in the path/prompt are POSIX-escaped", () => {
   const cmd = buildClaudeLaunch("/it's/here", "say 'hi'");
-  assert.equal(cmd, `cd '/it'\\''s/here' && exec claude 'say '\\''hi'\\'''`);
+  assert.equal(cmd, `cd '/it'\\''s/here' && exec claude --permission-mode auto 'say '\\''hi'\\'''`);
 });
 
 // ----- runSpawn orchestration (seams stubbed) -------------------------------
@@ -273,7 +275,10 @@ test("runSpawn: happy path — finds the task's store, creates the worktree, lau
   // The agent was launched once, cd'ing into the worktree + exec'ing claude.
   assert.equal(term.calls, 1);
   assert.equal(script.commands.length, 1);
-  assert.match(script.commands[0]!, /^cd '\/work\/perch-worktrees\/abc12-add-the-spawn-action' && exec claude '/);
+  assert.match(
+    script.commands[0]!,
+    /^cd '\/work\/perch-worktrees\/abc12-add-the-spawn-action' && exec claude --permission-mode auto '/,
+  );
 
   // `dex start` was fired (best-effort) after the worktree existed.
   assert.ok(calls.some((c) => c.cmd === "dex" && c.args.includes("start")));

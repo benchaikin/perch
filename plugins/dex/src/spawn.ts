@@ -134,9 +134,13 @@ export function bootstrapPrompt(id: string): string {
  * interactive `claude` seeded with the bootstrap prompt. Modeled on
  * `worktrees/open`'s `buildShellInDir` — the path and prompt are shell-quoted, and
  * `exec` replaces the launcher's `sh` so Ctrl-C reaches `claude` directly.
+ *
+ * The session starts in auto mode (`--permission-mode auto`) so a freshly-spawned
+ * agent can act without first toggling its permission mode by hand — the whole
+ * point of spawning it is to let it run.
  */
 export function buildClaudeLaunch(worktreePath: string, prompt: string): string {
-  return `cd ${shellQuote(worktreePath)} && exec claude ${shellQuote(prompt)}`;
+  return `cd ${shellQuote(worktreePath)} && exec claude --permission-mode auto ${shellQuote(prompt)}`;
 }
 
 /** A git runner around the {@link Exec} seam, mirroring `worktrees/provider`. */
