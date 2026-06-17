@@ -624,6 +624,43 @@ async function spawnDexReady(): Promise<void> {
   }
 }
 
+/**
+ * Delete a dex task via the dex plugin's `delete` action, then refresh the board
+ * and toast the outcome. Awaited by the renderer (via `ipcMain.handle`) so the
+ * task's trash control clears its in-progress state when the work finishes. On
+ * success the board is re-fetched immediately so the deleted task disappears
+ * without waiting for the next poll.
+ */
+async function deleteDex(id: string): Promise<void> {
+  if (!client) return;
+  try {
+    const result = (await client.invoke({ id: "dex.delete", input: { id } })) as {
+      ok?: boolean;
+      message?: string;
+    } | null;
+    if (result && result.ok === false) {
+      showNotice({ tone: "bad", text: result.message ?? `Delete task ${id} failed.` });
+    } else {
+      showNotice({ tone: "ok", text: result?.message ?? `Deleted task ${id}.` });
+      await refreshDexBoard();
+    }
+  } catch (err) {
+    showNotice({ tone: "bad", text: `Delete task ${id} failed: ${errorMessage(err)}` });
+  } finally {
+    pushState();
+  }
+}
+
+/** Re-invoke `dex.tasks` so the board reflects a just-deleted task immediately. */
+async function refreshDexBoard(): Promise<void> {
+  if (!client) return;
+  try {
+    buildInput.dexBoard = (await client.invoke({ id: DEX_TASKS_ID })) as DexBoard;
+  } catch {
+    // Best-effort: the subscription's next poll will reconcile the board anyway.
+  }
+}
+
 /** Show a transient status toast; auto-dismiss after a few seconds. */
 function showNotice(notice: Notice): void {
   buildInput.notice = notice;
@@ -1155,6 +1192,7 @@ function registerIpc(): void {
   // clear the button's in-progress state when the worktree/terminal work finishes.
   ipcMain.handle(Channels.dexSpawn, (_event, id: string) => spawnDex(id));
   ipcMain.handle(Channels.dexSpawnReady, () => spawnDexReady());
+  ipcMain.handle(Channels.dexDelete, (_event, id: string) => deleteDex(id));
   // Clipboard writes go through main (Electron's clipboard) rather than the
   // renderer's navigator.clipboard, which a non-activating panel can't rely on.
   ipcMain.on(Channels.copyText, (_event, text: string) => {
