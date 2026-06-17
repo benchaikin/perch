@@ -160,3 +160,24 @@ export function buildFleet(store: AgentStore): AgentFleet {
   const agents = [...store.values()].sort((a, b) => b.lastActivity - a.lastActivity);
   return { agents };
 }
+
+/**
+ * Evict every `ended` session from the store, returning the count removed.
+ *
+ * The `agents.list` read calls this AFTER building its fleet snapshot, so an
+ * ended session is surfaced for exactly one poll — long enough for that snapshot
+ * to show it and for the `notify` hook to fire the "Agent done" banner — and is
+ * gone by the next poll. This is what stops a finished agent's marker from
+ * lingering in the fleet: `SessionEnd` latches `ended`, the next poll shows it
+ * once, and this prune clears it.
+ */
+export function pruneEnded(store: AgentStore): number {
+  let removed = 0;
+  for (const [sessionId, session] of store) {
+    if (session.state === "ended") {
+      store.delete(sessionId);
+      removed += 1;
+    }
+  }
+  return removed;
+}

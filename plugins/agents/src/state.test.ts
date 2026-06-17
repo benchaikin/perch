@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { applyEvent, buildFleet, type AgentEvent, type AgentStore } from "./state.js";
+import { applyEvent, buildFleet, pruneEnded, type AgentEvent, type AgentStore } from "./state.js";
 
 /** A fresh store + a small helper to apply an event with a fixed clock. */
 function newStore(): AgentStore {
@@ -155,4 +155,31 @@ test("lastActivity updates on each event", () => {
   assert.equal(store.get("s1")!.lastActivity, 100);
   applyEvent(store, ev({ sessionId: "s1", hookEventName: "Stop", at: 250 }));
   assert.equal(store.get("s1")!.lastActivity, 250);
+});
+
+test("pruneEnded evicts only ended sessions, leaving the rest", () => {
+  const store = newStore();
+  applyEvent(store, ev({ sessionId: "run", hookEventName: "UserPromptSubmit" }));
+  applyEvent(store, ev({ sessionId: "idle", hookEventName: "Stop" }));
+  applyEvent(store, ev({ sessionId: "done", hookEventName: "SessionEnd" }));
+
+  const removed = pruneEnded(store);
+  assert.equal(removed, 1);
+  assert.equal(store.has("done"), false);
+  assert.equal(store.has("run"), true);
+  assert.equal(store.has("idle"), true);
+});
+
+test("pruneEnded after a snapshot: the ended session shows once, then is gone", () => {
+  const store = newStore();
+  applyEvent(store, ev({ sessionId: "s1", hookEventName: "UserPromptSubmit", at: 100 }));
+  applyEvent(store, ev({ sessionId: "s1", hookEventName: "SessionEnd", at: 200 }));
+
+  // This poll still surfaces it (so the panel + notify see "ended")…
+  const shown = buildFleet(store);
+  pruneEnded(store);
+  assert.equal(shown.agents.find((a) => a.sessionId === "s1")?.state, "ended");
+
+  // …the next poll no longer does.
+  assert.equal(buildFleet(store).agents.length, 0);
 });

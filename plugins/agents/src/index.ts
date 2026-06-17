@@ -37,6 +37,7 @@ import {
   type AgentStore,
   applyEvent,
   buildFleet,
+  pruneEnded,
 } from "./state.js";
 
 export { AgentFleet, AgentSession, AgentState, applyEvent, buildFleet } from "./state.js";
@@ -177,7 +178,17 @@ export default definePlugin({
       refresh: { every: "5s", on: ["focus"] },
       view: { kind: "list", title: "Agents" },
       expose: { mcp: true },
-      run: (): AgentFleet => buildFleet(store),
+      run: (): AgentFleet => {
+        // Snapshot the fleet (still including any `ended` sessions), then evict
+        // those ended sessions from the store. This snapshot keeps them for this
+        // one poll — so the panel shows the agent finished and the `notify` hook
+        // below can fire "Agent done" — but the next poll won't, so a done
+        // agent's marker doesn't linger. (buildFleet returns a fresh array, so
+        // pruning the store afterwards doesn't mutate what we return here.)
+        const fleet = buildFleet(store);
+        pruneEnded(store);
+        return fleet;
+      },
       // Announce a session newly blocked (needs input) or newly ended (done).
       notify: ({ prev, next }) => agentNotifications(prev, next),
     }),

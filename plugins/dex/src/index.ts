@@ -27,12 +27,24 @@ import {
 } from "@perch/sdk";
 
 import { buildDexBoard, DexBoard, type DexGroup, parseRawTasks } from "./normalize.js";
+import { LandBoard, landNotifications, runLand } from "./land.js";
 import { dexNotifications } from "./notify.js";
 import { defaultExec, DexProvider, type Exec } from "./provider.js";
 import { runSpawn, type SpawnInput, type SpawnResult } from "./spawn.js";
 
 export { buildDexBoard, DexBoard, DexStatus, DexTaskView, parseRawTasks, RawDexTask } from "./normalize.js";
 export type { DexGroup } from "./normalize.js";
+export {
+  defaultFsProbe,
+  evidenceFor,
+  inferBuild,
+  LandBoard,
+  LandOutcome,
+  LandPr,
+  landNotifications,
+  runLand,
+} from "./land.js";
+export type { BuildCommand, FsProbe, LandDeps } from "./land.js";
 export { dexNotifications } from "./notify.js";
 export { DexProvider } from "./provider.js";
 export type { Exec, ListOptions } from "./provider.js";
@@ -69,10 +81,20 @@ const DexConfig = z.object({
   dirs: z.array(z.string()).optional(),
   /** Path to the `dex` binary; defaults to `dex` on PATH. */
   dexBin: z.string().optional(),
-  /** Path to the `git` binary (for the `spawn` action); defaults to `git` on PATH. */
+  /** Path to the `git` binary (for the `spawn`/`land` actions); defaults to `git` on PATH. */
   gitBin: z.string().optional(),
+  /** Path to the `gh` binary (for `land`'s PR-merged lookups); defaults to `gh` on PATH. */
+  ghBin: z.string().optional(),
   /** Include completed (done) tasks in the board; default false. */
   showCompleted: z.boolean().optional(),
+  /**
+   * Auto-land merged dex worktrees: when a `dex/<id>` worktree's PR has merged
+   * (and its tree is clean, and — for no-CI repos — its build passes), reap the
+   * worktree + branch and complete the dex task automatically. Default true. Set
+   * false to only *detect* merged worktrees (flagged "ready to land") and leave
+   * the reaping to a manual `land-dex` run.
+   */
+  autoLand: z.boolean().optional(),
 });
 export type DexConfig = z.infer<typeof DexConfig>;
 
@@ -107,6 +129,14 @@ export function __setSpawnOpenSpawn(spawnFn: typeof nodeSpawn | undefined): void
 }
 
 /**
+ * In-flight latch for the `land` pass. A no-CI build gate can make one pass run
+ * longer than the 60s poll interval; without this, `setInterval` would fire an
+ * overlapping pass that could race the same worktree's reap. While a pass runs,
+ * the next poll is skipped (returns an empty board).
+ */
+let landing = false;
+
+/**
  * The dex store path for a project root: its `.dex` directory. `dex
  * --storage-path` expects the store *directory* (matching `dex dir`'s output),
  * not the `tasks.jsonl` file inside it.
@@ -136,6 +166,16 @@ export default definePlugin({
       label: "Show completed tasks",
       description: "Include done tasks in the board (greyed out) instead of hiding them.",
       default: false,
+    },
+    {
+      key: "autoLand",
+      type: "boolean",
+      label: "Auto-land merged worktrees",
+      description:
+        "When a dex/<id> worktree's PR merges (tree clean, and the build passes for " +
+        "no-CI repos), automatically remove the worktree + branch and complete the task. " +
+        "Turn off to only flag merged worktrees as 'ready to land' and reap them by hand.",
+      default: true,
     },
     {
       key: "dexBin",
@@ -235,6 +275,53 @@ export default definePlugin({
           log: ctx.log,
         });
       },
+    }),
+
+    /**
+     * Auto-land: the back-of-loop janitor. On each poll it enumerates the dex
+     * worktrees across the monitored repos and, for any whose PR has merged,
+     * reaps the loop — removes the worktree + branch and completes the dex task
+     * with PR-derived evidence — behind the same guards as the `land-dex` skill
+     * (merged PR + clean tree + a no-CI build gate). Merged-but-unsafe worktrees
+     * are `flagged` for a human, never touched.
+     *
+     * Modeled as a notify-driven read so the daemon's persistent poller runs it
+     * even with the panel closed (the loop closes itself in the background); the
+     * notify hook turns each reap into a "Landed" banner. It mutates as a side
+     * effect — unusual for a read, but the daemon only schedules reads, and this
+     * is the only periodic-job seam. Returns the pass's reaped + flagged
+     * outcomes. Never throws; CLI-exposed (`perch dex land`) as a manual trigger.
+     */
+    land: read({
+      summary: "Auto-land merged dex worktrees (reap worktree + branch, complete the task)",
+      input: z.object({}).default({}),
+      output: LandBoard,
+      refresh: { every: "60s", on: ["focus"] },
+      run: async ({ ctx }): Promise<LandBoard> => {
+        if (landing) {
+          ctx.log("dex.land: a previous pass is still running; skipping this poll");
+          return { reaped: [], flagged: [] };
+        }
+        landing = true;
+        try {
+          const cfg = configOf(ctx.config);
+          // Same repo precedence as `dex.tasks`/`dex.spawn`: `dirs` → global.repos.
+          const repos = effectiveDirs(cfg.dirs ?? [], ctx.global);
+          return await runLand({
+            exec: execOverride ?? defaultExec,
+            gitBin: cfg.gitBin ?? "git",
+            ghBin: cfg.ghBin ?? "gh",
+            dexBin: cfg.dexBin ?? "dex",
+            repos,
+            autoLand: cfg.autoLand ?? true,
+            log: ctx.log,
+          });
+        } finally {
+          landing = false;
+        }
+      },
+      // Announce a worktree just reaped (loop closed) or newly flagged (needs a hand).
+      notify: ({ prev, next }) => landNotifications(prev, next),
     }),
   },
 });

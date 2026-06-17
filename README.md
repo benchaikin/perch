@@ -175,16 +175,21 @@ worktree bookkeeping.
   ready to merge).
 - **You merge.** Perch never auto-merges — it just tells you what's ready; you
   merge in GitHub as usual.
-- **The janitor.** After a PR merges, the **`land-dex`** skill reaps its
-  worktree: it's **guarded** — only a worktree whose PR is truly merged and whose
-  tree is clean gets its worktree + branch removed and its dex task completed
-  (with the PR title/URL/merge-SHA as evidence). Anything unmerged or with
-  uncommitted changes is **flagged, never deleted**. Run it for one task or let it
-  sweep all merged dex worktrees.
+- **The janitor (automatic).** Once you merge, the daemon reaps the worktree for
+  you — the **`dex.land`** capability polls in the background (even with the panel
+  closed) and, for any `dex/<id>` worktree whose PR has merged, completes the dex
+  task (PR title/URL/merge-SHA as evidence) and removes the worktree + branch.
+  It's **guarded**: only a **merged** PR with a **clean** tree is reaped; anything
+  unmerged or with uncommitted changes is **flagged, never deleted**. It fires a
+  "Landed" notification per reap. On by default — turn it off with **Settings →
+  Dex → "Auto-land merged worktrees"** (or `plugins.dex.autoLand: false`), which
+  leaves merged worktrees *flagged* "ready to land" for you to reap by hand.
 - **No-CI repos.** Where a repo has no CI, the gate falls back to a local
-  build — "if it builds, ship it." `land-dex` infers the build command from the
+  build — "if it builds, ship it." The lander infers the build command from the
   toolchain (`pnpm -r build`, `npm run build`, `make`, `cargo build`, `go build`,
   …) and only reaps if it passes.
+- **By hand.** The same logic is the **`land-dex`** skill (and `perch dex land`),
+  for a one-off sweep or a `--dry-run` preview — handy when auto-land is off.
 
 ### Live agent fleet (Claude Code hooks)
 
@@ -192,7 +197,9 @@ Perch can also show **which agent is running in which worktree, and its state** 
 `running` / `blocked` (waiting on you) / `idle` / `ended` — as a marker on each
 dex row, so a fleet of parallel agents reads at a glance. (This complements tools
 like Vibe Island, which own approvals/attention; Perch adds the project context —
-task, worktree, CI, review — they can't see.)
+task, worktree, CI, review — they can't see.) An **ended** session surfaces for a
+single poll — long enough to show it finished and fire the "Agent done" banner —
+then clears itself, so a done agent's marker doesn't linger in the fleet.
 
 It's fed by **Claude Code hooks**. The `agents` plugin exposes `agents.list` (the
 fleet) and `agents report`, which a hook calls on each session event; the daemon
