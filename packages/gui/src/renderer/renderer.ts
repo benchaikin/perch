@@ -13,6 +13,7 @@ import { SERVICES_TAB_ID } from "../panel-state.js";
 import { DEX_TASKS_ID } from "../dex-state.js";
 import { WORKTREES_LIST_ID } from "../worktrees-state.js";
 import { byId } from "./common.js";
+import { captureFieldFocus, restoreFieldFocus } from "./panel-focus.js";
 import { setLastState, setRenderer } from "./rerender.js";
 import { resolveActiveTabId, tabEl } from "./tabs.js";
 import { renderPrsPane } from "./prs.js";
@@ -45,6 +46,12 @@ function render(state: PanelState): void {
   tabsEl.replaceChildren();
   for (const tab of state.tabs) tabsEl.append(tabEl(tab, tab.id === activeId));
 
+  // Capture any in-panel field that owns focus before the body is rebuilt: a
+  // periodic board poll re-renders mid-type and replaceChildren destroys the
+  // focused node, so a typed-in composer/edit field would silently lose focus +
+  // caret. Restored after the rebuild below.
+  const preservedFocus = captureFieldFocus(document.activeElement, rowsEl);
+
   // Render only the active plugin's content. Services has its own self-contained
   // section (header + controls + rows); everything else falls through to PRs.
   rowsEl.replaceChildren();
@@ -62,6 +69,10 @@ function render(state: PanelState): void {
   } else {
     renderPrsPane(rowsEl, state);
   }
+
+  // Carry focus + caret onto the freshly-built node so typing continues across
+  // the re-render (only when the panel already owned focus — see captureFieldFocus).
+  restoreFieldFocus(preservedFocus, rowsEl);
 
   // A refresh started by the button stops spinning once the new state lands.
   setRefreshSpinning(false);

@@ -611,6 +611,8 @@ function dexNameInputEl(row: DexRow): HTMLInputElement {
   const input = document.createElement("input");
   input.type = "text";
   input.className = `dex-edit-name${dexEditNameInvalid ? " invalid" : ""}`;
+  // Carries focus + caret across a board-poll re-render (see panel-focus.ts).
+  input.setAttribute("data-focus-key", "dex-edit-name");
   input.value = dexEditDraft.name;
   input.placeholder = "Task name";
   input.setAttribute("aria-label", "Task name");
@@ -655,6 +657,8 @@ function dexDescriptionTextareaEl(row: DexRow): HTMLTextAreaElement {
   if (!dexEditDraft) dexEditDraft = { name: row.name, description: row.description };
   const area = document.createElement("textarea");
   area.className = "dex-edit-description";
+  // Carries focus + caret across a board-poll re-render (see panel-focus.ts).
+  area.setAttribute("data-focus-key", "dex-edit-description");
   area.value = dexEditDraft.description;
   area.placeholder = "Description (optional)";
   area.setAttribute("aria-label", "Task description");
@@ -927,6 +931,9 @@ function dexNewComposerEl(projects: string[]): HTMLElement {
 
   const textarea = document.createElement("textarea");
   textarea.className = "dex-new-input";
+  // Lets render() carry focus + caret onto the rebuilt node across a board poll
+  // (see panel-focus.ts), so typing isn't interrupted every ~5s.
+  textarea.setAttribute("data-focus-key", "dex-new-input");
   textarea.placeholder =
     "Describe the task you want — an agent will read the code and author it.";
   textarea.rows = 3;
