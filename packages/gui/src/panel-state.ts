@@ -115,6 +115,18 @@ export interface Chip {
   icon?: string;
   /** Animate the icon (Font Awesome `fa-spin`) — e.g. CI in progress. */
   spin?: boolean;
+  /**
+   * When set, the chip becomes an actionable call-to-action that opens this PR
+   * URL via `window.perch.openPr` — a focusable, keyboard-activatable button
+   * with a click affordance. Plain (href-less) chips render as passive status
+   * markers, exactly as before. Generic by design so any chip can opt in later.
+   */
+  href?: string;
+  /**
+   * Accessible name (and tooltip) for the actionable variant — the chip is a
+   * colored glyph, so it needs a spoken name. Ignored when `href` is absent.
+   */
+  actionLabel?: string;
 }
 
 /** A single rendered PR row. */
@@ -474,7 +486,16 @@ export function prCanMerge(pr: PrInfo): boolean {
 export function toPrRow(pr: PrInfo, repoName: string): PrRow {
   const chips: Chip[] = [ciChip(pr.ciStatus ?? "none")];
   const review = reviewChip(pr.reviewDecision);
-  if (review) chips.push(review);
+  if (review) {
+    // The "needs review" chip is a call to action: make it click-to-open so the
+    // reviewer can jump straight to the PR. Other review chips stay passive.
+    if (pr.reviewDecision === "REVIEW_REQUIRED") {
+      review.href = pr.url;
+      review.actionLabel = "Open PR for review";
+      review.hint = "Open PR for review";
+    }
+    chips.push(review);
+  }
   const merge = mergeableChip(pr.mergeable);
   if (merge) chips.push(merge);
   return {

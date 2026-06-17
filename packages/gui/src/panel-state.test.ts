@@ -98,6 +98,27 @@ test("toPrRow accumulates review + mergeable chips and badges", () => {
   );
 });
 
+test("toPrRow makes the needs-review chip a click-to-open link, others passive", () => {
+  const reviewRow = toPrRow({ ...basePr, reviewDecision: "REVIEW_REQUIRED" }, "r");
+  const reviewChipRow = reviewRow.chips.find((c) => c.label === "○ rev");
+  assert.equal(reviewChipRow?.href, basePr.url);
+  assert.equal(reviewChipRow?.actionLabel, "Open PR for review");
+  assert.equal(reviewChipRow?.hint, "Open PR for review");
+
+  // CI chip alongside it stays passive.
+  assert.equal(reviewRow.chips.find((c) => c.label === "· CI")?.href, undefined);
+
+  // The other review decisions do not become links.
+  for (const decision of ["APPROVED", "CHANGES_REQUESTED"] as const) {
+    const row = toPrRow({ ...basePr, reviewDecision: decision }, "r");
+    assert.equal(
+      row.chips.every((c) => c.href === undefined),
+      true,
+      `${decision} chips should have no href`,
+    );
+  }
+});
+
 test("PR health is bad on CI fail / conflict / needs-rebase / changes, else ok", () => {
   assert.equal(toPrRow({ ...basePr }, "r").health, "ok");
   assert.equal(toPrRow({ ...basePr, ciStatus: "pending" }, "r").health, "ok");
