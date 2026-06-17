@@ -15,7 +15,9 @@ import {
   buildClaudeLaunch,
   deriveSlug,
   dexStoreLinkSpec,
+  excludeDexLink,
   type FsOps,
+  GitRunner,
   isValidTaskId,
   linkDexStore,
   resolveRepo,
@@ -68,8 +70,66 @@ test("linkDexStore: a symlink error is swallowed (best-effort, never throws)", a
     // so it attempts the symlink, which then fails.
     exists: () => Promise.resolve(call++ === 0),
     symlink: () => Promise.reject(new Error("EPERM")),
+    readFile: () => Promise.reject(new Error("ENOENT")),
+    appendFile: () => Promise.resolve(),
   };
   await assert.doesNotReject(linkDexStore("/wt", "/repo", fs));
+});
+
+test("excludeDexLink: appends `/.dex` to the worktree's info/exclude (once)", async () => {
+  const exec: Exec = (_cmd, args) =>
+    args.includes("rev-parse")
+      ? Promise.resolve("/repo/.git/info/exclude\n")
+      : Promise.resolve("");
+  const git = new GitRunner("git", exec);
+  const files = new Map<string, string>();
+  const fs: FsOps = {
+    exists: () => Promise.resolve(false),
+    symlink: () => Promise.resolve(),
+    readFile: (p) => {
+      const v = files.get(p);
+      return v === undefined ? Promise.reject(new Error("ENOENT")) : Promise.resolve(v);
+    },
+    appendFile: (p, data) => {
+      files.set(p, (files.get(p) ?? "") + data);
+      return Promise.resolve();
+    },
+  };
+
+  await excludeDexLink("/wt", git, fs);
+  assert.equal(files.get("/repo/.git/info/exclude"), "/.dex\n");
+  // Idempotent: a second pass doesn't duplicate the pattern.
+  await excludeDexLink("/wt", git, fs);
+  assert.equal(files.get("/repo/.git/info/exclude"), "/.dex\n");
+});
+
+test("excludeDexLink: a final line without a newline gets one before the pattern", async () => {
+  const exec: Exec = () => Promise.resolve("/repo/.git/info/exclude\n");
+  const git = new GitRunner("git", exec);
+  const files = new Map<string, string>([["/repo/.git/info/exclude", "*.log"]]);
+  const fs: FsOps = {
+    exists: () => Promise.resolve(false),
+    symlink: () => Promise.resolve(),
+    readFile: (p) => Promise.resolve(files.get(p) ?? ""),
+    appendFile: (p, data) => {
+      files.set(p, (files.get(p) ?? "") + data);
+      return Promise.resolve();
+    },
+  };
+  await excludeDexLink("/wt", git, fs);
+  assert.equal(files.get("/repo/.git/info/exclude"), "*.log\n/.dex\n");
+});
+
+test("excludeDexLink: a rev-parse failure is swallowed (best-effort, never throws)", async () => {
+  const exec: Exec = () => Promise.reject(new Error("not a git repo"));
+  const git = new GitRunner("git", exec);
+  const fs: FsOps = {
+    exists: () => Promise.resolve(false),
+    symlink: () => Promise.resolve(),
+    readFile: () => Promise.reject(new Error("ENOENT")),
+    appendFile: () => Promise.reject(new Error("EPERM")),
+  };
+  await assert.doesNotReject(excludeDexLink("/wt", git, fs));
 });
 
 test("resolveRepo: explicit repo wins as given", () => {
@@ -192,6 +252,11 @@ function execStub(opts: {
         if (opts.failWorktree) return Promise.reject(new Error("fatal: already exists"));
         return Promise.resolve("");
       }
+      if (args.includes("rev-parse")) {
+        // `git -C <wt> rev-parse --git-path info/exclude` — the shared exclude.
+        const wt = args[1]!;
+        return Promise.resolve(`${wt}/.git/info/exclude\n`);
+      }
     }
     return Promise.resolve("");
   };
@@ -206,9 +271,11 @@ function execStub(opts: {
 function fakeFs(existing: string[] = []): {
   fs: FsOps;
   links: Array<{ target: string; linkPath: string }>;
+  files: Map<string, string>;
 } {
   const present = new Set(existing);
   const links: Array<{ target: string; linkPath: string }> = [];
+  const files = new Map<string, string>();
   return {
     fs: {
       exists: (p) => Promise.resolve(present.has(p)),
@@ -217,8 +284,17 @@ function fakeFs(existing: string[] = []): {
         present.add(linkPath);
         return Promise.resolve();
       },
+      readFile: (p) => {
+        const v = files.get(p);
+        return v === undefined ? Promise.reject(new Error("ENOENT")) : Promise.resolve(v);
+      },
+      appendFile: (p, data) => {
+        files.set(p, (files.get(p) ?? "") + data);
+        return Promise.resolve();
+      },
     },
     links,
+    files,
   };
 }
 
@@ -231,7 +307,12 @@ function deps(exec: Exec, over: Partial<SpawnDeps> = {}): SpawnDeps {
     terminal: {},
     // A no-touch fs by default (nothing exists ⇒ linking is skipped); tests that
     // exercise the store-link pass an explicit `fakeFs`.
-    fs: { exists: () => Promise.resolve(false), symlink: () => Promise.resolve() },
+    fs: {
+      exists: () => Promise.resolve(false),
+      symlink: () => Promise.resolve(),
+      readFile: () => Promise.reject(new Error("ENOENT")),
+      appendFile: () => Promise.resolve(),
+    },
     ...over,
   };
 }
@@ -296,6 +377,11 @@ test("runSpawn: links the repo's dex store into the worktree so the agent finds 
   assert.deepEqual(ff.links, [
     { target: "/work/perch/.dex", linkPath: "/work/perch-worktrees/abc12-task/.dex" },
   ]);
+  // …and that link is excluded from git, so its `?? .dex` never blocks auto-land.
+  assert.equal(
+    ff.files.get("/work/perch-worktrees/abc12-task/.git/info/exclude"),
+    "/.dex\n",
+  );
 });
 
 test("runSpawn: doesn't clobber a `.dex` already in the worktree", async () => {
