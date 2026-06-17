@@ -234,22 +234,14 @@ body {
   cursor: pointer;
 }
 
-/* Chip annotating a worktree row with its linked dex task (🗒 id · name ·
-   status). Tone comes from the shared .chip status classes; only the layout is
-   local — a flex line so the name can ellipsis-truncate without pushing the id
-   or status off-screen. The id stays monospace to match .dex-id. */
+/* Chip annotating a worktree row with its linked dex task's live status
+   (🗒 status). Tone comes from the shared .chip status classes; the branch label
+   already carries the task's id + name, so the chip stays a compact status token
+   (no id/name segments, no truncation). The dex-open accent below tints it with
+   the task's identity color. */
 .worktree-task {
   display: inline-flex;
   align-items: baseline;
-  max-width: 18em;
-}
-.worktree-task-id {
-  font-family: ui-monospace, "SF Mono", Menlo, Monaco, "Courier New", monospace;
-}
-.worktree-task-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* The "landable" (PR merge-readiness) chip on a dex task row / detail: a shared
