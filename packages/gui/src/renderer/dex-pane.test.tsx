@@ -23,6 +23,9 @@ let copyTextCalls: string[];
 let dexEditCalls: DexEditRequest[];
 let dexSpawnCalls: string[];
 let dexSpawnReadyCalls: number;
+/** The `project` arg each dexSpawnReady call carried (undefined for the unscoped,
+ *  single-repo launch) — so a test can assert a per-repo launch is scoped. */
+let dexSpawnReadyProjects: Array<string | undefined>;
 let dexDeleteCalls: DexDeleteRequest[];
 let dexNewCalls: DexNewRequest[];
 let setDexViewModeCalls: DexViewMode[];
@@ -62,8 +65,9 @@ const bridge = {
     dexSpawnCalls.push(id);
     return pending();
   },
-  dexSpawnReady() {
+  dexSpawnReady(project?: string) {
     dexSpawnReadyCalls += 1;
+    dexSpawnReadyProjects.push(project);
     return pending();
   },
   dexDelete(request: DexDeleteRequest) {
@@ -86,6 +90,7 @@ beforeEach(() => {
   dexEditCalls = [];
   dexSpawnCalls = [];
   dexSpawnReadyCalls = 0;
+  dexSpawnReadyProjects = [];
   dexDeleteCalls = [];
   actionResolvers = [];
   dexNewCalls = [];
@@ -113,12 +118,39 @@ function row(over: Partial<DexRow> & Pick<DexRow, "id" | "name">): DexRow {
   };
 }
 
-/** A visible Dex section wrapping the given rows. */
+/** A visible (single-repo) Dex section wrapping the given rows. */
 function section(rows: DexRow[]): DexSection {
   return {
     visible: true,
     rows,
     counts: { ready: 0, blocked: 0, inProgress: 0, done: 0, total: rows.length },
+    multiRepo: false,
+    repoGroups: [],
+  };
+}
+
+/**
+ * A multi-repo Dex section: the rows grouped into one {@link DexRepoGroup} per
+ * project, in first-appearance order (mirroring `buildDexSection`). Every row must
+ * carry a `project`.
+ */
+function multiRepoSection(rows: DexRow[]): DexSection {
+  const byProject = new Map<string, DexRow[]>();
+  const order: string[] = [];
+  for (const r of rows) {
+    const project = r.project ?? "(unknown)";
+    if (!byProject.has(project)) {
+      byProject.set(project, []);
+      order.push(project);
+    }
+    byProject.get(project)!.push(r);
+  }
+  return {
+    visible: true,
+    rows,
+    counts: { ready: 0, blocked: 0, inProgress: 0, done: 0, total: rows.length },
+    multiRepo: true,
+    repoGroups: order.map((project) => ({ project, rows: byProject.get(project)! })),
   };
 }
 
@@ -885,4 +917,184 @@ test("graph mode hides the collapse-all control even when epics exist", () => {
   // collapsible epics — but the view toggle stays put.
   assert.equal(container.querySelector(".dex-toggle-all"), null, "no collapse-all in graph mode");
   assert.ok(container.querySelector(".dex-view-toggle"), "the view toggle remains in graph mode");
+});
+
+// ---------------------------------------------------------------------------
+// Multi-repo board: per-repo grouping, collapse, Add target, and Launch scope
+// ---------------------------------------------------------------------------
+
+test("a multi-repo board groups rows under one collapsible header per repo, in order", () => {
+  const { container } = render(
+    <DexPane
+      section={multiRepoSection([
+        row({ id: "a1", name: "Alpha one", project: "alpha" }),
+        row({ id: "b1", name: "Beta one", project: "beta" }),
+        row({ id: "a2", name: "Alpha two", project: "alpha" }),
+      ])}
+    />,
+  );
+  const headers = container.querySelectorAll(".dex-repo-header-btn");
+  assert.equal(headers.length, 2, "one header per distinct repo");
+  // First-appearance order: alpha before beta; each header names its repo + count.
+  assert.match(headers[0]!.textContent ?? "", /alpha/);
+  assert.equal(headers[0]!.querySelector(".dex-repo-count")!.textContent, "2");
+  assert.match(headers[1]!.textContent ?? "", /beta/);
+  assert.equal(headers[1]!.querySelector(".dex-repo-count")!.textContent, "1");
+  // All three rows render under their groups.
+  assert.equal(container.querySelectorAll(".dex-row").length, 3);
+});
+
+test("the multi-repo pane-level header carries only the view toggle (no New/launch/collapse-all)", () => {
+  const { container } = render(
+    <DexPane
+      section={multiRepoSection([
+        row({ id: "a1", name: "Alpha one", project: "alpha", isEpic: true }),
+        row({ id: "b1", name: "Beta one", project: "beta" }),
+      ])}
+    />,
+  );
+  const paneHeader = container.querySelector(".dex-header")!;
+  assert.ok(paneHeader.querySelector(".dex-view-toggle"), "the view toggle stays pane-level");
+  assert.equal(paneHeader.querySelector(".dex-new"), null, "New moves into the repo headers");
+  assert.equal(paneHeader.querySelector(".dex-spawn-all"), null, "launch moves into repo headers");
+  assert.equal(
+    paneHeader.querySelector(".dex-toggle-all"),
+    null,
+    "collapse-all moves into repo headers",
+  );
+});
+
+test("collapsing a repo header hides only that repo's rows", () => {
+  const { container } = render(
+    <DexPane
+      section={multiRepoSection([
+        row({ id: "a1", name: "Alpha one", project: "alpha" }),
+        row({ id: "b1", name: "Beta one", project: "beta" }),
+      ])}
+    />,
+  );
+  const headers = container.querySelectorAll(".dex-repo-header-btn");
+  assert.equal(container.querySelectorAll(".dex-row").length, 2);
+
+  // Collapse alpha → only beta's row remains; the chevron flips to "right".
+  fireEvent.click(headers[0]!);
+  const rowsAfter = container.querySelectorAll(".dex-row");
+  assert.equal(rowsAfter.length, 1);
+  assert.match(rowsAfter[0]!.textContent ?? "", /Beta one/);
+  assert.ok(
+    headers[0]!.querySelector(".fa-chevron-right"),
+    "collapsed header shows a right chevron",
+  );
+  // Collapsing a repo never opens a task detail (click stops bubbling).
+  assert.equal(container.querySelector(".dex-detail"), null);
+
+  // Expanding restores alpha's row.
+  fireEvent.click(container.querySelectorAll(".dex-repo-header-btn")[0]!);
+  assert.equal(container.querySelectorAll(".dex-row").length, 2);
+});
+
+test("a repo header's New '+' arms a composer bound to THAT repo (no project selector)", () => {
+  const { container } = render(
+    <DexPane
+      section={multiRepoSection([
+        row({ id: "a1", name: "Alpha one", project: "alpha" }),
+        row({ id: "b1", name: "Beta one", project: "beta" }),
+      ])}
+    />,
+  );
+  // Each repo header carries its own New control; arm beta's (the second).
+  const newButtons = container.querySelectorAll(".dex-new");
+  assert.equal(newButtons.length, 2, "one New control per repo header");
+  fireEvent.click(newButtons[1]!);
+
+  const composer = container.querySelector(".dex-new-composer");
+  assert.ok(composer, "the repo header's + arms the inline composer");
+  // The repo is implied, so no project selector is shown.
+  assert.equal(
+    composer!.querySelector(".dex-new-project"),
+    null,
+    "no project picker for a repo-scoped composer",
+  );
+
+  // Submitting lands the task in beta's store (the armed repo).
+  fireEvent.change(composer!.querySelector(".dex-new-input")!, {
+    target: { value: "new beta task" },
+  });
+  fireEvent.click(composer!.querySelector(".dex-new-submit")!);
+  assert.equal(dexNewCalls.length, 1);
+  assert.deepEqual(dexNewCalls[0], { description: "new beta task", project: "beta" });
+});
+
+test("a repo header's spawn-all launches only that repo's ready tasks", async () => {
+  const { container } = render(
+    <DexPane
+      section={multiRepoSection([
+        row({ id: "a1", name: "Alpha ready", project: "alpha", status: "ready" }),
+        // Beta has no ready task → its header shows no launch button.
+        row({
+          id: "b1",
+          name: "Beta blocked",
+          project: "beta",
+          status: "blocked",
+          blockedByCount: 1,
+        }),
+      ])}
+    />,
+  );
+  const launches = container.querySelectorAll(".dex-spawn-all");
+  assert.equal(launches.length, 1, "only the repo with a ready task shows a launch button");
+  assert.equal((launches[0] as HTMLButtonElement).title, "Spawn agents for 1 ready task");
+
+  fireEvent.click(launches[0]!);
+  assert.equal(dexSpawnReadyCalls, 1);
+  assert.deepEqual(dexSpawnReadyProjects, ["alpha"], "the launch is scoped to alpha");
+  // Optimistic in-flight: alpha's button spins/disables.
+  assert.equal((container.querySelector(".dex-spawn-all") as HTMLButtonElement).disabled, true);
+
+  await settleActions();
+  assert.equal((container.querySelector(".dex-spawn-all") as HTMLButtonElement).disabled, false);
+});
+
+test("per-repo collapse-all folds only that repo's epics", () => {
+  const { container } = render(
+    <DexPane
+      section={multiRepoSection([
+        row({ id: "ae", name: "Alpha epic", project: "alpha", isEpic: true, depth: 0 }),
+        row({ id: "ac", name: "Alpha child", project: "alpha", depth: 1 }),
+        row({ id: "be", name: "Beta epic", project: "beta", isEpic: true, depth: 0 }),
+        row({ id: "bc", name: "Beta child", project: "beta", depth: 1 }),
+      ])}
+    />,
+  );
+  assert.equal(container.querySelectorAll(".dex-row").length, 4);
+  const toggles = container.querySelectorAll(".dex-toggle-all");
+  assert.equal(toggles.length, 2, "each repo header carries its own collapse-all");
+
+  // Collapse-all on alpha hides only alpha's child; beta stays fully expanded.
+  fireEvent.click(toggles[0]!);
+  const after = [...container.querySelectorAll(".dex-row")].map((r) => r.textContent);
+  assert.equal(after.length, 3, "only alpha's child is folded away");
+  assert.ok(!after.some((t) => /Alpha child/.test(t ?? "")), "alpha's child is hidden");
+  assert.ok(
+    after.some((t) => /Beta child/.test(t ?? "")),
+    "beta's child stays visible",
+  );
+});
+
+test("selecting a task still takes over the whole pane on a multi-repo board", () => {
+  const { container } = render(
+    <DexPane
+      section={multiRepoSection([
+        row({ id: "a1", name: "Alpha one", project: "alpha" }),
+        row({ id: "b1", name: "Beta one", project: "beta" }),
+      ])}
+    />,
+  );
+  fireEvent.click(container.querySelector(".dex-row")!);
+  assert.ok(container.querySelector(".dex-detail"), "the detail takes over regardless of grouping");
+  assert.equal(
+    container.querySelector(".dex-repo-header"),
+    null,
+    "groups are replaced by the detail",
+  );
 });

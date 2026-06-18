@@ -5,13 +5,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { effectiveDirs } from "./index.js";
+import { effectiveDirs, tasksForProject } from "./index.js";
 
 test("effectiveDirs: dirs override global.repos when set and non-empty", () => {
-  assert.deepEqual(
-    effectiveDirs(["/a", "/b"], { repos: ["/x", "/y"] }),
-    ["/a", "/b"],
-  );
+  assert.deepEqual(effectiveDirs(["/a", "/b"], { repos: ["/x", "/y"] }), ["/a", "/b"]);
 });
 
 test("effectiveDirs: falls back to global.repos when dirs is empty", () => {
@@ -19,14 +16,42 @@ test("effectiveDirs: falls back to global.repos when dirs is empty", () => {
 });
 
 test("effectiveDirs: global.repos is cleaned (trim / drop blanks / de-dupe)", () => {
-  assert.deepEqual(
-    effectiveDirs([], { repos: ["  /x  ", "", "/y", "/x"] }),
-    ["/x", "/y"],
-  );
+  assert.deepEqual(effectiveDirs([], { repos: ["  /x  ", "", "/y", "/x"] }), ["/x", "/y"]);
 });
 
 test("effectiveDirs: [] (cwd default) when both dirs and global.repos are empty", () => {
   assert.deepEqual(effectiveDirs([], {}), []);
   assert.deepEqual(effectiveDirs([], undefined), []);
   assert.deepEqual(effectiveDirs([], { repos: [] }), []);
+});
+
+const PROJECT_TASKS = [
+  { id: "a1", project: "alpha" },
+  { id: "b1", project: "beta" },
+  { id: "a2", project: "alpha" },
+  { id: "x1", project: undefined },
+];
+
+test("tasksForProject: an undefined project is the no-filter path (every task)", () => {
+  // Mirrors today's unscoped spawn-all + the single-store board (tasks carry no
+  // project) — every task is launched.
+  assert.deepEqual(
+    tasksForProject(PROJECT_TASKS, undefined).map((t) => t.id),
+    ["a1", "b1", "a2", "x1"],
+  );
+});
+
+test("tasksForProject: a project filters to that store's tasks (preserving order)", () => {
+  assert.deepEqual(
+    tasksForProject(PROJECT_TASKS, "alpha").map((t) => t.id),
+    ["a1", "a2"],
+  );
+  assert.deepEqual(
+    tasksForProject(PROJECT_TASKS, "beta").map((t) => t.id),
+    ["b1"],
+  );
+});
+
+test("tasksForProject: an unknown project yields nothing (no accidental launch)", () => {
+  assert.deepEqual(tasksForProject(PROJECT_TASKS, "gamma"), []);
 });

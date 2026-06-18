@@ -72,6 +72,8 @@ function section(rows: DexRow[]): DexSection {
     visible: true,
     rows,
     counts: { ready: 0, blocked: 0, inProgress: 0, done: 0, total: rows.length },
+    multiRepo: false,
+    repoGroups: [],
   };
 }
 

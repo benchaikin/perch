@@ -87,6 +87,58 @@ test("buildDexSection tallies counts and maps row health", () => {
   assert.equal(section.rows[1]!.blockedByCount, 2);
 });
 
+test("buildDexSection: a single-repo board (no project) is not multiRepo", () => {
+  const section = buildDexSection(
+    board(task({ id: "a", status: "ready" }), task({ id: "b", status: "ready" })),
+    true,
+  );
+  assert.equal(section.multiRepo, false);
+  assert.deepEqual(section.repoGroups, []);
+});
+
+test("buildDexSection: rows tagged with one project are not multiRepo either", () => {
+  // A single configured repo still tags its tasks with a project, but one distinct
+  // project isn't "multi-repo" — the flat list stays.
+  const section = buildDexSection(
+    board(
+      task({ id: "a", status: "ready", project: "alpha" }),
+      task({ id: "b", status: "ready", project: "alpha" }),
+    ),
+    true,
+  );
+  assert.equal(section.multiRepo, false);
+  assert.deepEqual(section.repoGroups, []);
+});
+
+test("buildDexSection: rows spanning >1 project group into repoGroups (first-appearance order)", () => {
+  const section = buildDexSection(
+    board(
+      task({ id: "a1", status: "ready", project: "alpha" }),
+      task({ id: "b1", status: "ready", project: "beta" }),
+      task({ id: "a2", status: "in-progress", project: "alpha" }),
+    ),
+    true,
+  );
+  assert.equal(section.multiRepo, true);
+  assert.equal(section.repoGroups.length, 2);
+  // Groups in order of first appearance: alpha (a1) before beta (b1).
+  assert.deepEqual(
+    section.repoGroups.map((g) => g.project),
+    ["alpha", "beta"],
+  );
+  // Each group's rows preserve the board's pre-order within the project.
+  assert.deepEqual(
+    section.repoGroups[0]!.rows.map((r) => r.id),
+    ["a1", "a2"],
+  );
+  assert.deepEqual(
+    section.repoGroups[1]!.rows.map((r) => r.id),
+    ["b1"],
+  );
+  // The grouped rows are the same row objects as the flat `rows` (no recompute).
+  assert.equal(section.repoGroups[0]!.rows[0], section.rows[0]);
+});
+
 test("buildDexSection carries the active blocker ids (edges) onto rows", () => {
   const section = buildDexSection(
     board(

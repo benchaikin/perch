@@ -272,6 +272,19 @@ async function fetchBoard(
   return buildDexBoard(groups);
 }
 
+/**
+ * Filter board tasks to a single project (a repo basename) for a scoped
+ * `spawn-all`. An undefined `project` is the no-filter path — every task,
+ * matching the pre-scoping behavior and covering the single-store board (whose
+ * tasks carry no project). Exported for unit coverage.
+ */
+export function tasksForProject<T extends { project?: string }>(
+  tasks: readonly T[],
+  project: string | undefined,
+): T[] {
+  return project === undefined ? [...tasks] : tasks.filter((t) => t.project === project);
+}
+
 export default definePlugin({
   id: "dex",
   name: "Dex Tasks",
@@ -534,14 +547,17 @@ export default definePlugin({
      */
     "spawn-all": action({
       summary: "Spawn an agent for every ready (unblocked) dex task, in parallel",
-      input: z.object({}).default({}),
+      // An optional `project` scopes the launch to one repo's store (the GUI's
+      // per-repo launch on a multi-repo board); omitted launches every store's
+      // ready tasks, as before.
+      input: z.object({ project: z.string().optional() }).default({}),
       expose: { mcp: true },
-      run: async ({ ctx }): Promise<SpawnBatchResult> => {
+      run: async ({ input, ctx }): Promise<SpawnBatchResult> => {
         const cfg = configOf(ctx.config);
         const dirs = effectiveDirs(cfg.dirs ?? [], ctx.global);
         const provider = new DexProvider(cfg.dexBin ?? "dex", { exec: execOverride });
         const board = await fetchBoard(provider, dirs, cfg.showCompleted ?? false, ctx.log);
-        return runSpawnBatch(board.tasks, {
+        return runSpawnBatch(tasksForProject(board.tasks, input?.project), {
           exec: execOverride ?? defaultExec,
           dexBin: cfg.dexBin ?? "dex",
           gitBin: cfg.gitBin ?? "git",

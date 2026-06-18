@@ -56,8 +56,8 @@ const bridge: PerchBridge = {
   dexSpawn(id) {
     return ipcRenderer.invoke(Channels.dexSpawn, id);
   },
-  dexSpawnReady() {
-    return ipcRenderer.invoke(Channels.dexSpawnReady);
+  dexSpawnReady(project) {
+    return ipcRenderer.invoke(Channels.dexSpawnReady, project);
   },
   dexDelete(request) {
     return ipcRenderer.invoke(Channels.dexDelete, request);
