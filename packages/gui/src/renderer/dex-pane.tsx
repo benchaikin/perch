@@ -57,10 +57,13 @@ interface DexDragState {
 }
 
 /**
- * The Dex pane's interaction state, shared with the children the sub-epic adds
- * (T8b–T8f read + extend this). It owns the collapsed-epic set, the selected task,
- * and the in-flight dependency-edit drag. `selectedId` is the `selectedDexId`
- * replacement — clicking a row sets it; the detail view that reads it lands in T8c.
+ * The Dex pane's interaction state, shared with the children the sub-epic adds.
+ * It owns the collapsed-epic set, the selected task, the in-flight
+ * dependency-edit drag, and the optimistic in-flight sets for the spawn /
+ * spawn-all / delete actions (the `spawningDexIds` / `spawningAllDex` /
+ * `deletingDexIds` module globals from {@link ./dex.ts}, now component state).
+ * `selectedId` is the `selectedDexId` replacement — clicking a row sets it; the
+ * detail view reads it.
  */
 interface DexContextValue {
   /** Ids of collapsed epics (their descendants are hidden). */
@@ -77,6 +80,18 @@ interface DexContextValue {
   beginDrag(row: DexRow, blockerId?: string): void;
   /** End the in-flight drag (a drop fired, or the drag was cancelled). */
   endDrag(): void;
+  /** Ids whose per-task spawn is in flight (optimistic spinner + disabled). */
+  spawning: ReadonlySet<string>;
+  /** Optimistically spawn an agent for a task (the `dex.spawn` bridge call). */
+  spawnDex(id: string): void;
+  /** True while the top-level "spawn all ready" launch is in flight. */
+  spawningAll: boolean;
+  /** Optimistically spawn an agent for every ready task (`dex.spawn-all`). */
+  spawnAllReady(): void;
+  /** Ids whose delete is in flight (optimistic spinner + disabled). */
+  deleting: ReadonlySet<string>;
+  /** Optimistically delete a task (main raises the confirm dialog first). */
+  deleteDex(row: DexRow): void;
 }
 
 const DexContext = createContext<DexContextValue | undefined>(undefined);
@@ -95,9 +110,16 @@ function useDexContext(): DexContextValue {
  * `requestRender()`; this is just component state).
  */
 export function DexProvider({ children }: { children: React.ReactNode }): JSX.Element {
+  const actions = useActions();
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
   const [drag, setDrag] = useState<DexDragState | undefined>(undefined);
+  // The optimistic in-flight sets (the `spawningDexIds` / `deletingDexIds` module
+  // globals from dex.ts) + the spawn-all flag — now component state, so a fresh
+  // reference per change re-renders the affected button.
+  const [spawning, setSpawning] = useState<ReadonlySet<string>>(() => new Set());
+  const [spawningAll, setSpawningAll] = useState(false);
+  const [deleting, setDeleting] = useState<ReadonlySet<string>>(() => new Set());
 
   const value = useMemo<DexContextValue>(
     () => ({
@@ -119,8 +141,63 @@ export function DexProvider({ children }: { children: React.ReactNode }): JSX.El
       endDrag() {
         setDrag(undefined);
       },
+      spawning,
+      // Mark the id in flight (optimistic spinner + disabled, so a double-click
+      // can't double-spawn), fire the spawn, and clear the mark when it resolves
+      // or fails. The board refresh + any notice are pushed from main; once the
+      // spawn lands the row gains a worktree/agent and stops being spawnable.
+      spawnDex(id) {
+        if (spawning.has(id)) return;
+        setSpawning((prev) => new Set(prev).add(id));
+        void (async () => {
+          try {
+            await actions.dexSpawn(id);
+          } finally {
+            setSpawning((prev) => {
+              const next = new Set(prev);
+              next.delete(id);
+              return next;
+            });
+          }
+        })();
+      },
+      spawningAll,
+      // The fleet launch: optimistically disable + spin, run dex.spawn-all, clear
+      // when it resolves. Guarded so a second launch can't start while one is in
+      // flight (what made spawn-all reliable — keep it).
+      spawnAllReady() {
+        if (spawningAll) return;
+        setSpawningAll(true);
+        void (async () => {
+          try {
+            await actions.dexSpawnReady();
+          } finally {
+            setSpawningAll(false);
+          }
+        })();
+      },
+      deleting,
+      // Hand the task (id, name, computed warning) to main, which raises the
+      // native confirm dialog and only deletes on confirm; the renderer just fires
+      // and shows the optimistic spinner until main resolves (confirm, decline, or
+      // error all clear it). The confirmation stays in main — no renderer prompt.
+      deleteDex(row) {
+        if (deleting.has(row.id)) return;
+        setDeleting((prev) => new Set(prev).add(row.id));
+        void (async () => {
+          try {
+            await actions.dexDelete({ id: row.id, name: row.name, warning: dexDeleteWarning(row) });
+          } finally {
+            setDeleting((prev) => {
+              const next = new Set(prev);
+              next.delete(row.id);
+              return next;
+            });
+          }
+        })();
+      },
     }),
-    [collapsed, selectedId, drag],
+    [actions, collapsed, selectedId, drag, spawning, spawningAll, deleting],
   );
 
   return <DexContext.Provider value={value}>{children}</DexContext.Provider>;
@@ -455,20 +532,157 @@ export function DexUnblockZone(): JSX.Element {
 }
 
 // ---------------------------------------------------------------------------
+// Actions (spawn / spawn-all / delete) — the optimistic, in-flight controls
+// ---------------------------------------------------------------------------
+
+/**
+ * The extra warning a delete confirmation carries when removing the task would
+ * leave something behind the daemon board can't clean up: a live worktree/agent
+ * (which `dex delete` doesn't touch — deleting the task would orphan it) and/or
+ * subtasks (a `--force` delete cascades to them). Returns `undefined` for a plain
+ * leaf task with no live work, so its confirmation stays unadorned. Rides along to
+ * main's native confirm dialog. A 1:1 port of `dex.ts`'s `dexDeleteWarning`.
+ */
+function dexDeleteWarning(row: DexRow): string | undefined {
+  const parts: string[] = [];
+  if (row.worktree || row.agent) {
+    parts.push("it has a live worktree/agent that won't be removed");
+  }
+  if (row.isEpic) parts.push("its subtasks will also be deleted");
+  return parts.length > 0 ? `Warning: ${parts.join("; ")}.` : undefined;
+}
+
+/**
+ * The start control for a ready dex row: a compact play button that runs
+ * `dex.spawn` to create the task's worktree and launch a seeded agent. Optimistic
+ * — the moment it's clicked the id is in flight, so it disables + spins
+ * ("Starting…") without waiting for the round-trip; the click doesn't bubble to
+ * the row's open-detail. Only rendered for {@link canSpawnDex} rows. `detail`
+ * renders the labeled detail-page twin (`dex-detail-spawn`) sharing the same
+ * `dex-spawn` hook + bridge path.
+ */
+function DexSpawnButton({ id, detail = false }: { id: string; detail?: boolean }): JSX.Element {
+  const { spawning, spawnDex } = useDexContext();
+  const inFlight = spawning.has(id);
+  const title = inFlight ? "Starting agent…" : "Start an agent for this task";
+  return (
+    <button
+      className={detail ? "btn btn-sm dex-spawn dex-detail-spawn" : "icon-btn dex-spawn"}
+      disabled={inFlight}
+      title={title}
+      aria-label={title}
+      onClick={
+        inFlight
+          ? undefined
+          : (e) => {
+              // Don't open the task detail; just spawn the agent.
+              e.stopPropagation();
+              spawnDex(id);
+            }
+      }
+    >
+      <i className={inFlight ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-play"} />
+      {detail ? (inFlight ? " Starting…" : " Start agent") : null}
+    </button>
+  );
+}
+
+/**
+ * The top-level "spawn all ready" control: one click runs `dex.spawn-all` to
+ * create a worktree + seeded agent for every ready task at once — the fleet
+ * counterpart of the per-row {@link DexSpawnButton}. The label carries the ready
+ * `count`; optimistically disables + spins ("Spawning…") while in flight. Rendered
+ * only when `count > 0` (the caller gates this).
+ */
+function DexSpawnAllButton({ count }: { count: number }): JSX.Element {
+  const { spawningAll, spawnAllReady } = useDexContext();
+  const plural = count === 1 ? "" : "s";
+  const label = spawningAll
+    ? `Spawning ${count} ready task${plural}…`
+    : `Spawn agents for ${count} ready task${plural}`;
+  return (
+    <button
+      className="icon-btn dex-spawn-all"
+      disabled={spawningAll}
+      title={label}
+      aria-label={label}
+      onClick={
+        spawningAll
+          ? undefined
+          : (e) => {
+              e.stopPropagation();
+              spawnAllReady();
+            }
+      }
+    >
+      <i className={spawningAll ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-rocket"} />
+    </button>
+  );
+}
+
+/**
+ * The delete control for a dex task: a trash button whose click hands the task to
+ * main, which raises a native confirm dialog and only deletes on confirm (the
+ * confirmation stays in main — the non-activating panel can't show a
+ * `window.confirm`, so there's no renderer prompt). {@link dexDeleteWarning} rides
+ * along so a live worktree/agent or cascading subtasks are flagged before the
+ * irreversible delete. Optimistically disables + spins while in flight (cleared
+ * whether the user confirms, declines, or it errors). `labeled` spells the action
+ * out for the roomier detail page; the compact row uses an icon-only button. The
+ * click never bubbles to the row's open-detail.
+ */
+function DexDeleteControl({
+  row,
+  labeled = false,
+}: {
+  row: DexRow;
+  labeled?: boolean;
+}): JSX.Element {
+  const { deleting, deleteDex } = useDexContext();
+  const inFlight = deleting.has(row.id);
+  // In a compact row the control hugs the trailing edge. When a spawn button or
+  // worktree indicator precedes it, their own `margin-left:auto` already pushes the
+  // trailing cluster right; otherwise the control itself anchors that push.
+  const anchor = !labeled && !canSpawnDex(row) && row.worktree === undefined;
+  const title = inFlight ? "Deleting…" : "Delete task";
+  return (
+    <span className={`chips dex-delete${anchor ? " dex-delete-anchor" : ""}`}>
+      <button
+        className={labeled ? "btn btn-sm dex-delete-btn" : "icon-btn dex-delete-btn"}
+        disabled={inFlight}
+        title={title}
+        aria-label={title}
+        onClick={
+          inFlight
+            ? undefined
+            : (e) => {
+                e.stopPropagation();
+                deleteDex(row);
+              }
+        }
+      >
+        <i className={inFlight ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-trash-can"} />
+        {labeled ? (inFlight ? " Deleting…" : " Delete") : null}
+      </button>
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Rows + tree
 // ---------------------------------------------------------------------------
 
 /**
  * One dex task row: an expand/collapse chevron (epics) or aligning spacer
  * (leaves), the status marker, the name, the identity dot + click-to-copy id
- * chip, and the optional blocker / landable / live-agent chips. Clicking the row
- * body opens the task's detail (sets the selection); clicking an epic's chevron
- * toggles its children without opening detail.
+ * chip, the optional blocker / landable / live-agent chips, and the trailing
+ * spawn (ready rows) + delete controls. Clicking the row body opens the task's
+ * detail (sets the selection); clicking an epic's chevron toggles its children
+ * without opening detail; the action buttons stop propagation so they don't.
  *
- * The per-row spawn/delete/worktree controls are NOT here yet — T8d (actions)
- * adds them; this is the row's identity + status skeleton they hang off. The row
- * is a drag source + drop target for dependency editing (drop A onto B ⇒ B
- * blocked-by A), via {@link useDexRowDrag}.
+ * The row is a drag source + drop target for dependency editing (drop A onto B ⇒
+ * B blocked-by A), via {@link useDexRowDrag}. The linked-worktree indicator is
+ * NOT here yet — its own follow-on adds it.
  */
 function DexTaskRow({ row }: { row: DexRow }): JSX.Element {
   const { collapsed, toggleCollapsed, setSelectedId } = useDexContext();
@@ -516,6 +730,11 @@ function DexTaskRow({ row }: { row: DexRow }): JSX.Element {
       {row.blockedByCount > 0 && <DexBlockedChip count={row.blockedByCount} />}
       {row.landable && <LandableChip state={row.landable} />}
       {row.agent && <AgentMarker agent={row.agent} />}
+
+      {/* A ready, unblocked, unworked task trails a spawn play button; every row
+          trails a delete control (both stop propagation so the row stays closed). */}
+      {canSpawnDex(row) && <DexSpawnButton id={row.id} />}
+      <DexDeleteControl row={row} />
     </div>
   );
 }
@@ -539,31 +758,44 @@ function visibleTreeRows(rows: readonly DexRow[], collapsed: ReadonlySet<string>
 }
 
 /**
- * The Dex section header — for T8a, just the expand/collapse-all toggle over the
- * tree's epics (rendered only when there are epics to fold). The view-mode toggle
- * (T8b), the New-task composer control (T8f), and the spawn-all-ready button
- * (T8d) land alongside this in their own children.
+ * The Dex section header — the top-level "spawn all ready" button (when any task
+ * is ready) plus, in tree mode, the expand/collapse-all toggle over the tree's
+ * epics (when there are epics to fold). The view-mode toggle (T8b) and the
+ * New-task composer control (T8f) land alongside these in their own children. The
+ * caller renders the header only when at least one of these controls applies.
  */
-function DexHeader({ epicIds }: { epicIds: string[] }): JSX.Element {
+function DexHeader({
+  epicIds,
+  readyCount,
+}: {
+  epicIds: string[];
+  readyCount: number;
+}): JSX.Element {
   const { collapsed, toggleCollapsed } = useDexContext();
   const allCollapsed = epicIds.every((id) => collapsed.has(id));
   return (
     <div className="repo-header dex-header">
-      <button
-        className="icon-btn dex-toggle-all"
-        title={allCollapsed ? "Expand all" : "Collapse all"}
-        aria-label={allCollapsed ? "Expand all" : "Collapse all"}
-        onClick={() => {
-          // Collapse-all collapses any still-open epic; expand-all (when every
-          // epic is already collapsed) reopens them. Toggle only the epics whose
-          // state needs flipping so the result is uniform either way.
-          for (const id of epicIds) {
-            if (allCollapsed === collapsed.has(id)) toggleCollapsed(id);
-          }
-        }}
-      >
-        <i className={`fa-solid fa-${allCollapsed ? "angles-down" : "angles-up"}`} />
-      </button>
+      {/* Fleet launch: spawn an agent for every ready task at once. Hidden when
+          nothing is ready (a no-op that would just toast "no ready tasks"). */}
+      {readyCount > 0 && <DexSpawnAllButton count={readyCount} />}
+
+      {epicIds.length > 0 && (
+        <button
+          className="icon-btn dex-toggle-all"
+          title={allCollapsed ? "Expand all" : "Collapse all"}
+          aria-label={allCollapsed ? "Expand all" : "Collapse all"}
+          onClick={() => {
+            // Collapse-all collapses any still-open epic; expand-all (when every
+            // epic is already collapsed) reopens them. Toggle only the epics whose
+            // state needs flipping so the result is uniform either way.
+            for (const id of epicIds) {
+              if (allCollapsed === collapsed.has(id)) toggleCollapsed(id);
+            }
+          }}
+        >
+          <i className={`fa-solid fa-${allCollapsed ? "angles-down" : "angles-up"}`} />
+        </button>
+      )}
     </div>
   );
 }
@@ -576,7 +808,7 @@ function DexHeader({ epicIds }: { epicIds: string[] }): JSX.Element {
  * Whether a task is ready to hand to a fresh agent: an unblocked `ready` row with
  * no live worktree or agent (so a started task shows its status instead of a
  * start button). A 1:1 port of the old `dex.ts#canSpawnDex`; the per-row spawn
- * controls T8d adds reuse it.
+ * controls (the Actions section above) reuse it.
  */
 function canSpawnDex(row: DexRow): boolean {
   return (
@@ -608,29 +840,6 @@ function DexMeta({ row }: { row: DexRow }): JSX.Element {
       {row.landable && <LandableChip state={row.landable} />}
       {row.agent && <AgentMarker agent={row.agent} />}
     </div>
-  );
-}
-
-/**
- * The detail-page launch control: a labeled button that starts an agent for a
- * ready task via `dex.spawn`. The detail-page twin of the per-row spawn button,
- * carrying the shared `dex-spawn` hook plus the detail-specific `dex-detail-spawn`
- * class. Only rendered for {@link canSpawnDex} rows. (T8d folds spawn into the
- * shared optimistic in-flight state alongside the per-row buttons; here it fires
- * the bridge action directly.)
- */
-function DexDetailSpawnButton({ id }: { id: string }): JSX.Element {
-  const actions = useActions();
-  return (
-    <button
-      className="btn btn-sm dex-spawn dex-detail-spawn"
-      title="Start an agent for this task"
-      aria-label="Start an agent for this task"
-      onClick={() => void actions.dexSpawn(id)}
-    >
-      <i className="fa-solid fa-play" />
-      {" Start agent"}
-    </button>
   );
 }
 
@@ -802,7 +1011,7 @@ function DexDetail({ row }: { row: DexRow }): JSX.Element {
           <DexMeta row={row} />
 
           <div className="dex-detail-actions">
-            {canSpawnDex(row) && <DexDetailSpawnButton id={row.id} />}
+            {canSpawnDex(row) && <DexSpawnButton id={row.id} detail />}
             <button
               className="btn btn-sm dex-edit-btn"
               title="Edit this task's name and description"
@@ -812,6 +1021,7 @@ function DexDetail({ row }: { row: DexRow }): JSX.Element {
               <i className="fa-solid fa-pen" />
               {" Edit"}
             </button>
+            <DexDeleteControl row={row} labeled />
           </div>
 
           {row.description && <DexBody text={row.description} />}
@@ -853,10 +1063,13 @@ function DexSectionBody({ section }: { section: DexSection }): JSX.Element {
   }
 
   const epicIds = section.rows.filter((r) => r.isEpic).map((r) => r.id);
+  const readyCount = section.rows.filter(canSpawnDex).length;
   const rows = visibleTreeRows(section.rows, collapsed);
   return (
     <>
-      {epicIds.length > 0 && <DexHeader epicIds={epicIds} />}
+      {(epicIds.length > 0 || readyCount > 0) && (
+        <DexHeader epicIds={epicIds} readyCount={readyCount} />
+      )}
       {rows.map((row) => (
         <DexTaskRow key={row.id} row={row} />
       ))}

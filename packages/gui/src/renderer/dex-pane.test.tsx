@@ -14,12 +14,34 @@ import { afterEach, beforeEach, test } from "node:test";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { DexPane } from "./dex-pane.js";
 import { dexHealth, type DexRow, type DexSection } from "../dex-state.js";
-import type { DexEditRequest, PerchBridge } from "../ipc.js";
+import type { DexDeleteRequest, DexEditRequest, PerchBridge } from "../ipc.js";
 
-/** Bridge spies the pane drives (copyText from the tree; dexEdit/dexSpawn from the detail). */
+/** Bridge spies the pane drives (copyText + dexEdit from the tree/detail; the spawn/delete actions). */
 let copyTextCalls: string[];
 let dexEditCalls: DexEditRequest[];
 let dexSpawnCalls: string[];
+let dexSpawnReadyCalls: number;
+let dexDeleteCalls: DexDeleteRequest[];
+/**
+ * Pending resolvers for the in-flight action promises — the spawn/delete bridge
+ * calls stay pending until {@link settleActions} resolves them, so a test can
+ * observe the optimistic in-flight state before the round-trip completes.
+ */
+let actionResolvers: Array<() => void>;
+
+/** A fresh promise whose resolver is parked for the test to settle on demand. */
+function pending(): Promise<void> {
+  return new Promise<void>((resolve) => actionResolvers.push(resolve));
+}
+
+/** Resolve every in-flight action promise and flush the resulting state updates. */
+async function settleActions(): Promise<void> {
+  await act(async () => {
+    for (const resolve of actionResolvers.splice(0)) resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
 
 const bridge = {
   copyText(text: string) {
@@ -31,7 +53,15 @@ const bridge = {
   },
   dexSpawn(id: string) {
     dexSpawnCalls.push(id);
-    return Promise.resolve();
+    return pending();
+  },
+  dexSpawnReady() {
+    dexSpawnReadyCalls += 1;
+    return pending();
+  },
+  dexDelete(request: DexDeleteRequest) {
+    dexDeleteCalls.push(request);
+    return pending();
   },
 } as unknown as PerchBridge;
 
@@ -39,6 +69,9 @@ beforeEach(() => {
   copyTextCalls = [];
   dexEditCalls = [];
   dexSpawnCalls = [];
+  dexSpawnReadyCalls = 0;
+  dexDeleteCalls = [];
+  actionResolvers = [];
   (globalThis as unknown as { window: { perch: PerchBridge } }).window.perch = bridge;
 });
 
@@ -415,4 +448,183 @@ test("the description keeps focus + caret + draft across a background state push
   assert.equal(after.value, "half-typed thought", "the in-progress draft is not clobbered");
   assert.equal(after.selectionStart, 4, "the caret position survives");
   assert.equal(after.selectionEnd, 4, "the caret position survives");
+});
+
+// ---------------------------------------------------------------------------
+// Actions: spawn (row + detail), spawn-all-ready, delete — each with the
+// optimistic in-flight state that replaces dex.ts's module-global Sets.
+// ---------------------------------------------------------------------------
+
+test("the per-row spawn button calls dexSpawn and optimistically disables + spins", async () => {
+  const { container } = render(
+    <DexPane section={section([row({ id: "rdy", name: "Ready task" })])} />,
+  );
+  const btn = container.querySelector(".dex-row .dex-spawn") as HTMLButtonElement;
+  assert.ok(btn, "a ready, unblocked, unworked row gets a start button");
+  assert.equal(btn.disabled, false);
+  assert.equal(btn.title, "Start an agent for this task");
+  assert.ok(btn.querySelector(".fa-play"), "the idle button shows the play glyph");
+
+  fireEvent.click(btn);
+  assert.deepEqual(dexSpawnCalls, ["rdy"], "the click fires dexSpawn for the row's id");
+  // stopPropagation: spawning must not also open the row's detail.
+  assert.equal(container.querySelector(".dex-detail"), null, "spawning must not open the detail");
+  // Optimistic in-flight: disabled + spinner immediately, before the round-trip.
+  const spinning = container.querySelector(".dex-row .dex-spawn") as HTMLButtonElement;
+  assert.equal(spinning.disabled, true, "the in-flight button is disabled");
+  assert.equal(spinning.title, "Starting agent…");
+  assert.ok(spinning.querySelector(".fa-spin"), "the in-flight button shows a spinner");
+
+  // The optimistic state clears once the spawn resolves (the next board state then
+  // reflects the started task).
+  await settleActions();
+  const settled = container.querySelector(".dex-row .dex-spawn") as HTMLButtonElement;
+  assert.equal(settled.disabled, false, "the spinner clears when the spawn resolves");
+  assert.ok(settled.querySelector(".fa-play"), "the button returns to the play glyph");
+});
+
+test("the detail-page spawn button spells out the action and runs the same spawn", () => {
+  const { container } = render(
+    <DexPane section={section([row({ id: "deet", name: "Detail task" })])} />,
+  );
+  fireEvent.click(container.querySelector(".dex-row")!); // open the detail
+  const btn = container.querySelector(".dex-detail-spawn") as HTMLButtonElement;
+  assert.ok(btn, "a ready task's detail page carries the labeled spawn twin");
+  assert.match(btn.textContent ?? "", /Start agent/);
+
+  fireEvent.click(btn);
+  assert.deepEqual(dexSpawnCalls, ["deet"], "the detail button shares the dexSpawn path");
+  const spinning = container.querySelector(".dex-detail-spawn") as HTMLButtonElement;
+  assert.equal(spinning.disabled, true);
+  assert.match(spinning.textContent ?? "", /Starting…/, "it shows the optimistic Starting… label");
+});
+
+test("a non-spawnable row (live agent) shows no spawn button but still a delete control", () => {
+  const { container } = render(
+    <DexPane
+      section={section([
+        row({
+          id: "live",
+          name: "Already running",
+          agent: { sessionId: "s1", state: "running", lastActivity: 1 },
+        }),
+      ])}
+    />,
+  );
+  assert.equal(container.querySelector(".dex-spawn"), null, "a worked task isn't spawnable");
+  assert.ok(container.querySelector(".dex-delete-btn"), "but every row keeps a delete control");
+});
+
+test("the spawn-all-ready button calls dexSpawnReady and shows the Spawning… state", async () => {
+  const { container } = render(
+    <DexPane
+      section={section([
+        row({ id: "r1", name: "Ready one" }),
+        row({ id: "r2", name: "Ready two" }),
+        row({ id: "blk", name: "Blocked", status: "blocked", blockedByCount: 1 }),
+      ])}
+    />,
+  );
+  const btn = container.querySelector(".dex-spawn-all") as HTMLButtonElement;
+  assert.ok(btn, "the header carries a spawn-all-ready button when tasks are ready");
+  // The label carries the ready count (the two ready rows, not the blocked one).
+  assert.equal(btn.title, "Spawn agents for 2 ready tasks");
+
+  fireEvent.click(btn);
+  assert.equal(dexSpawnReadyCalls, 1, "the click fires dexSpawnReady");
+  const spinning = container.querySelector(".dex-spawn-all") as HTMLButtonElement;
+  assert.equal(spinning.disabled, true);
+  assert.equal(spinning.title, "Spawning 2 ready tasks…");
+  assert.ok(spinning.querySelector(".fa-spin"), "the in-flight fleet launch shows a spinner");
+
+  await settleActions();
+  const settled = container.querySelector(".dex-spawn-all") as HTMLButtonElement;
+  assert.equal(settled.disabled, false, "the spinner clears when the fleet launch resolves");
+});
+
+test("the spawn-all-ready button is absent when nothing is ready", () => {
+  const { container } = render(
+    <DexPane
+      section={section([row({ id: "blk", name: "Blocked", status: "blocked", blockedByCount: 1 })])}
+    />,
+  );
+  assert.equal(container.querySelector(".dex-spawn-all"), null, "no ready tasks → no fleet launch");
+});
+
+test("the row delete control calls dexDelete and optimistically disables + spins", async () => {
+  const { container } = render(
+    <DexPane section={section([row({ id: "del", name: "Delete me" })])} />,
+  );
+  const btn = container.querySelector(".dex-delete-btn") as HTMLButtonElement;
+  assert.ok(btn, "every row gets a delete control");
+  assert.equal(btn.title, "Delete task");
+
+  fireEvent.click(btn);
+  // The renderer just fires the action — the confirm dialog is raised in main.
+  assert.deepEqual(
+    dexDeleteCalls,
+    [{ id: "del", name: "Delete me", warning: undefined }],
+    "the click hands the task (id, name, warning) to main",
+  );
+  // stopPropagation: deleting must not also open the row's detail.
+  assert.equal(container.querySelector(".dex-detail"), null, "deleting must not open the detail");
+  const spinning = container.querySelector(".dex-delete-btn") as HTMLButtonElement;
+  assert.equal(spinning.disabled, true, "the in-flight delete is disabled");
+  assert.equal(spinning.title, "Deleting…");
+  assert.ok(spinning.querySelector(".fa-spin"), "the in-flight delete shows a spinner");
+
+  // The optimistic state clears when the delete resolves (confirm, decline, or error).
+  await settleActions();
+  const settled = container.querySelector(".dex-delete-btn") as HTMLButtonElement;
+  assert.equal(settled.disabled, false, "the spinner clears when the delete resolves");
+});
+
+test("delete carries a warning for an epic (cascading subtasks) and a worked task", () => {
+  const { container, rerender } = render(
+    <DexPane section={section([row({ id: "epic", name: "Big epic", isEpic: true })])} />,
+  );
+  fireEvent.click(container.querySelector(".dex-delete-btn")!);
+  assert.match(
+    dexDeleteCalls[0]!.warning ?? "",
+    /subtasks will also be deleted/,
+    "an epic's delete warns its subtasks cascade",
+  );
+
+  dexDeleteCalls = [];
+  rerender(
+    <DexPane
+      section={section([
+        row({
+          id: "worked",
+          name: "Has a worktree",
+          agent: { sessionId: "s1", state: "running", lastActivity: 1 },
+        }),
+      ])}
+    />,
+  );
+  fireEvent.click(container.querySelector(".dex-delete-btn")!);
+  assert.match(
+    dexDeleteCalls[0]!.warning ?? "",
+    /live worktree\/agent that won't be removed/,
+    "a worked task's delete warns the live worktree/agent is orphaned",
+  );
+});
+
+test("the optimistic in-flight state clears when a push drops the deleted row", async () => {
+  const { container, rerender } = render(
+    <DexPane section={section([row({ id: "going", name: "Going away" })])} />,
+  );
+  fireEvent.click(container.querySelector(".dex-delete-btn")!);
+  assert.deepEqual(
+    dexDeleteCalls.map((r) => r.id),
+    ["going"],
+  );
+
+  // Main confirms + deletes; the next pushed state no longer lists the task, and
+  // the in-flight resolver settles. The pane reconciles to the tree without it —
+  // no orphaned spinner.
+  rerender(<DexPane section={section([row({ id: "stays", name: "Stays" })])} />);
+  await settleActions();
+  assert.equal(container.querySelectorAll(".dex-row").length, 1);
+  assert.match(container.querySelector(".dex-row")!.textContent ?? "", /Stays/);
 });
