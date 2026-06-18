@@ -12,12 +12,14 @@
  * state to track. Class names + titles match the old imperative builder so
  * renderer.css keeps matching.
  */
+import { useState } from "react";
 import type {
   ServiceAction,
   ServiceHealth,
   ServicesBulkAction,
   ServiceRow,
   ServicesControl,
+  ServicesRepoGroup,
   ServicesSection,
 } from "../services-state.js";
 import { HEALTH_ICON } from "./common.js";
@@ -169,10 +171,53 @@ function ServicesControlEl({
 }
 
 /**
+ * One repo group: a collapsible header (chevron + repo name + service-count chip)
+ * over its service rows. Clicking the header toggles just this group's rows. The
+ * simple PR-pane pattern (no per-repo controls) — the bulk Start/Stop/Restart-all
+ * stays pane-level since it targets the whole process-compose stack, not a repo
+ * subset.
+ */
+function ServicesRepoGroupView({
+  group,
+  collapsed,
+  onToggle,
+}: {
+  group: ServicesRepoGroup;
+  collapsed: boolean;
+  onToggle: (project: string) => void;
+}): JSX.Element {
+  const count = group.rows.length;
+  return (
+    <div className="services-repo-group">
+      <button
+        className="services-repo-header-btn"
+        title={`${group.project} — ${count} service${count === 1 ? "" : "s"}`}
+        onClick={(e) => {
+          // Toggle this group's rows without propagating.
+          e.stopPropagation();
+          onToggle(group.project);
+        }}
+      >
+        <i className={`fa-solid fa-chevron-${collapsed ? "right" : "down"}`} />
+        <span className="branch services-repo-name">{group.project}</span>
+        <span className="chip muted services-repo-count">{count}</span>
+      </button>
+      {!collapsed && group.rows.map((svc) => <ServiceRowEl key={svc.name} svc={svc} />)}
+    </div>
+  );
+}
+
+/**
  * The "Services" section: a header (optional title + whole-stack controls) and
- * one row per process. Renders nothing when the section is hidden (no services
- * live and none configured), so the panel is unchanged for users without
+ * the process rows. Renders nothing when the section is hidden (no services live
+ * and none configured), so the panel is unchanged for users without
  * process-compose.
+ *
+ * With more than one repo configured (`section.multiRepo`) the rows render under
+ * collapsible per-repo headers (config order, including configured-but-empty
+ * repos); otherwise they render as a flat list, exactly as before. Collapse is
+ * LOCAL component state (like the PRs pane), so it survives the 5s `services.list`
+ * poll re-render.
  *
  * `showTitle` is false when this section is the active full-tab pane: the panel
  * header title already names "Services", so the section's own title would
@@ -188,6 +233,20 @@ export function ServicesPane({
   section: ServicesSection;
   showTitle?: boolean;
 }): JSX.Element | null {
+  // Collapsed-repo set as component state, keyed by repo name — survives the
+  // background poll re-render and resets on tab switch/relaunch (the pane
+  // unmounts), matching the PRs/Dex/Worktrees panes.
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+
+  function toggle(project: string): void {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(project)) next.delete(project);
+      else next.add(project);
+      return next;
+    });
+  }
+
   if (!section.visible) return null;
   const hasHeader = showTitle || section.controls.length > 0;
   return (
@@ -208,9 +267,16 @@ export function ServicesPane({
           ) : null}
         </div>
       ) : null}
-      {section.rows.map((svc) => (
-        <ServiceRowEl key={svc.name} svc={svc} />
-      ))}
+      {section.multiRepo
+        ? section.repoGroups.map((group) => (
+            <ServicesRepoGroupView
+              key={group.project}
+              group={group}
+              collapsed={collapsed.has(group.project)}
+              onToggle={toggle}
+            />
+          ))
+        : section.rows.map((svc) => <ServiceRowEl key={svc.name} svc={svc} />)}
     </section>
   );
 }

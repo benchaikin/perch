@@ -9,15 +9,18 @@
  * an injected `FetchJson` lives in `provider.test.ts`.)
  */
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { type AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import { type CapabilityContext } from "@perch/sdk";
 
 import plugin, { __setLogsSpawn, __setProviderSpawn, resolveComposeFile } from "./index.js";
 import { generatedComposePath, type SyncComposeResult } from "./compose.js";
+import { type ServiceList } from "./services.js";
 
 /** One request the fake process-compose server saw. */
 interface SeenRequest {
@@ -238,6 +241,47 @@ test("services.stopAll is a no-op success when the server is down", async () => 
   })) as { ok: boolean; message: string };
   assert.equal(result.ok, true);
   assert.match(result.message, /not running/);
+});
+
+test("services.list tags rows with their repo and surfaces the configured projects[]", async () => {
+  const server = await fakeServer(["api"]); // `api` is live (Running)
+  // Sandbox HOME so the generated-compose write the list read triggers can't
+  // touch the real config dir (it lands under a throwaway tmp tree instead).
+  const prevHome = process.env.HOME;
+  const sandbox = mkdtempSync(join(tmpdir(), "perch-services-"));
+  process.env.HOME = sandbox;
+  try {
+    const ashby = join(sandbox, "ashby");
+    const web = join(sandbox, "web");
+    const result = (await plugin.capabilities.list!.run({
+      input: {},
+      ctx: {
+        config: {
+          address: server.address,
+          procs: [
+            // `api` infers its repo from cwd; `worker` (absent → stopped) pins it explicitly.
+            { name: "api", command: "run", cwd: join(ashby, "services") },
+            { name: "worker", command: "run", repo: "web" },
+          ],
+        },
+        global: { repos: [ashby, web] },
+        log: () => {},
+      },
+    })) as ServiceList;
+    assert.deepEqual(
+      result.services.map((s) => [s.name, s.status, s.project]),
+      [
+        ["api", "running", "ashby"],
+        ["worker", "stopped", "web"],
+      ],
+    );
+    // Every configured repo surfaces (config order), so empty repos get a header.
+    assert.deepEqual(result.projects, ["ashby", "web"]);
+  } finally {
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    await server.close();
+  }
 });
 
 test("resolveComposeFile: procs (non-empty) take precedence over composeFile", () => {

@@ -44,6 +44,13 @@ export interface Proc {
   command: string;
   /** Optional working directory (`working_dir`); omitted from output when unset. */
   cwd?: string;
+  /**
+   * Optional repo this process belongs to (a configured `global.repos` basename),
+   * driving the Services tab's per-repo grouping. Purely a GUI association — it
+   * never affects the generated compose file. When unset, the repo is inferred
+   * from {@link cwd}. See {@link resolveProject}.
+   */
+  repo?: string;
 }
 
 /**

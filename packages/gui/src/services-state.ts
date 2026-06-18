@@ -26,12 +26,20 @@ export interface Service {
   uptime?: number;
   restartCount?: number;
   exitCode?: number;
+  /** Repo (configured repo basename) this process belongs to, for grouping. */
+  project?: string;
 }
 
 /** `services.list`'s output: the process list + server reachability. */
 export interface ServiceList {
   services: Service[];
   available: boolean;
+  /**
+   * The configured repos (basenames) in config order, so the Services tab
+   * renders a header for every monitored repo — including ones with zero
+   * services. Absent from an older daemon (the section then renders flat).
+   */
+  projects?: string[];
 }
 
 /** A rendered service row's marker health → CSS dot color. */
@@ -56,6 +64,8 @@ export interface ServiceRow {
   health: ServiceHealth;
   /** A short detail suffix (e.g. "exit 1", "pid 4242"), when relevant. */
   detail?: string;
+  /** Repo (configured repo basename) this process belongs to, for grouping. */
+  project?: string;
   /** Context-appropriate action buttons for this status (M2). */
   buttons: ServiceButton[];
   /**
@@ -77,6 +87,14 @@ export interface ServicesControl {
   label: string;
 }
 
+/** One repo's service rows, grouped under a per-repo header on a multi-repo board. */
+export interface ServicesRepoGroup {
+  /** Source project label (a configured repo basename) the rows belong to. */
+  project: string;
+  /** This project's rows, in the list's order. */
+  rows: ServiceRow[];
+}
+
 /**
  * The rendered Services section. `visible` is false only when there's nothing to
  * show — no list yet, or no processes live *and* none configured — so users
@@ -85,12 +103,19 @@ export interface ServicesControl {
  * offers **Start all** to bring the stack up. `controls` is the top-level button
  * set; `bulkActing` names the whole-stack action currently in flight (its button
  * spins and the cluster disables), if any.
+ *
+ * `multiRepo` is true when more than one repo is *configured* (mirrors Dex): the
+ * renderer then groups `rows` under collapsible per-repo headers, one per
+ * `repoGroups` entry (config order, INCLUDING configured-but-empty repos as
+ * empty groups). When false `repoGroups` is empty and rows render as a flat list.
  */
 export interface ServicesSection {
   visible: boolean;
   rows: ServiceRow[];
   controls: ServicesControl[];
   bulkActing?: ServicesBulkAction;
+  multiRepo: boolean;
+  repoGroups: ServicesRepoGroup[];
 }
 
 /** Map a normalized status to its marker health (color). */
@@ -152,10 +177,63 @@ export function toServiceRow(svc: Service, inFlight: ReadonlySet<string>): Servi
     statusLabel: svc.status,
     health: serviceHealth(svc.status),
     detail: detailOf(svc),
+    project: svc.project,
     buttons: serviceButtons(svc.status),
     logs: true,
     inFlight: inFlight.has(svc.name),
   };
+}
+
+/**
+ * The repos the section groups by: the configured `projects` (config order,
+ * including any with zero services) unioned with any project seen on a service
+ * but not configured (a repo dropped from config but still holding a service),
+ * appended in first-appearance order. When `projects` is absent (an older
+ * daemon's list), it degrades to just the projects seen on services — so a list
+ * with no project tags stays flat. Mirrors `dex-state`'s `configuredRepos`.
+ */
+function configuredRepos(list: ServiceList): string[] {
+  const seen = new Set<string>();
+  const repos: string[] = [];
+  const add = (project: string): void => {
+    if (seen.has(project)) return;
+    seen.add(project);
+    repos.push(project);
+  };
+  for (const project of list.projects ?? []) add(project);
+  for (const svc of list.services) {
+    if (svc.project) add(svc.project);
+  }
+  return repos;
+}
+
+/**
+ * Group rows by `project` into one {@link ServicesRepoGroup} per repo. The order
+ * is seeded from the `configured` repo list (config order) so a
+ * configured-but-empty repo still yields an EMPTY group (header only), then any
+ * project seen only on rows (a repo dropped from config but still holding a
+ * service) is appended in first-appearance order. Within a group rows keep the
+ * list's order. A row with no `project` buckets under `"(unknown)"`. Mirrors
+ * `dex-state`'s `groupRowsByProject`.
+ */
+function groupRowsByProject(
+  rows: ServiceRow[],
+  configured: readonly string[],
+): ServicesRepoGroup[] {
+  const byProject = new Map<string, ServiceRow[]>();
+  const order: string[] = [];
+  const ensure = (project: string): ServiceRow[] => {
+    let group = byProject.get(project);
+    if (!group) {
+      group = [];
+      byProject.set(project, group);
+      order.push(project);
+    }
+    return group;
+  };
+  for (const project of configured) ensure(project);
+  for (const row of rows) ensure(row.project ?? "(unknown)").push(row);
+  return order.map((project) => ({ project, rows: byProject.get(project)! }));
 }
 
 /**
@@ -202,13 +280,18 @@ export function buildServicesSection(
   bulkActing?: ServicesBulkAction,
 ): ServicesSection {
   if (!list || list.services.length === 0) {
-    return { visible: false, rows: [], controls: [] };
+    return { visible: false, rows: [], controls: [], multiRepo: false, repoGroups: [] };
   }
   const inFlight = new Set(acting);
+  const rows = list.services.map((svc) => toServiceRow(svc, inFlight));
+  const repos = configuredRepos(list);
+  const multiRepo = repos.length > 1;
   return {
     visible: true,
-    rows: list.services.map((svc) => toServiceRow(svc, inFlight)),
+    rows,
     controls: servicesControls(list.available),
     bulkActing,
+    multiRepo,
+    repoGroups: multiRepo ? groupRowsByProject(rows, repos) : [],
   };
 }

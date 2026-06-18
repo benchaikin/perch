@@ -9,18 +9,41 @@
  * M3. `startAll` also brings process-compose up on demand when it's down.
  */
 import type { spawn as nodeSpawn } from "node:child_process";
+import { basename } from "node:path";
 
-import { action, definePlugin, read, spawnInTerminal, terminalConfigOf, z } from "@perch/sdk";
+import {
+  action,
+  definePlugin,
+  read,
+  reposOf,
+  spawnInTerminal,
+  terminalConfigOf,
+  z,
+} from "@perch/sdk";
 
 import { syncCompose, type Proc } from "./compose.js";
 import { buildLogsCommand } from "./logs.js";
 import { crashNotifications } from "./notify.js";
-import { buildServiceList, mapStatus, ServiceList, type ServiceStatus } from "./services.js";
+import {
+  buildServiceList,
+  mapStatus,
+  resolveProject,
+  ServiceList,
+  type ServiceStatus,
+} from "./services.js";
 import { ServicesProvider, type ServerTarget } from "./provider.js";
 
 export type { FetchJson, ProcessState, ServerTarget } from "./provider.js";
 export { defaultFetchJson, DEFAULT_ADDRESS, ServicesProvider } from "./provider.js";
-export { buildServiceList, mapStatus, Service, ServiceList, ServiceStatus } from "./services.js";
+export {
+  buildServiceList,
+  mapStatus,
+  resolveProject,
+  Service,
+  ServiceList,
+  ServiceStatus,
+} from "./services.js";
+export type { ServiceProc } from "./services.js";
 export { crashNotifications } from "./notify.js";
 export { buildLogsCommand } from "./logs.js";
 export {
@@ -70,6 +93,14 @@ const Proc = z.object({
   command: z.string(),
   /** Optional working directory (`working_dir` in the compose file). */
   cwd: z.string().optional(),
+  /**
+   * Optional repo this process belongs to (a configured `global.repos`
+   * basename), driving the Services tab's per-repo grouping. Purely a GUI
+   * association — it never affects the generated compose file; when unset the
+   * repo is inferred from `cwd`. The Services settings tab gains a matching repo
+   * field in a follow-up (this is the GUI-CRUD-mirrored shape).
+   */
+  repo: z.string().optional(),
 });
 
 /**
@@ -200,12 +231,19 @@ export default definePlugin({
       refresh: { every: "5s", on: ["focus"] },
       view: { kind: "list", title: "Services" },
       expose: { mcp: true },
-      // Pass the configured proc names so they surface as `stopped` rows even
-      // when process-compose is down — the panel stays visible to launch from.
+      // Pass the configured procs (each tagged with its resolved repo) so they
+      // surface as `stopped` rows even when process-compose is down — the panel
+      // stays visible to launch from — and the configured repo list so the GUI
+      // groups by repo (a header per repo, including empty ones).
       run: async ({ ctx }) => {
         const cfg = configOf(ctx.config);
-        const procNames = (cfg.procs ?? []).map((p) => p.name);
-        return buildServiceList(await providerOf(ctx).processes(), procNames);
+        const repos = reposOf(ctx.global);
+        const procs = (cfg.procs ?? []).map((p) => ({
+          name: p.name,
+          project: resolveProject(p, repos),
+        }));
+        const projects = repos.map((dir) => basename(dir));
+        return buildServiceList(await providerOf(ctx).processes(), procs, projects);
       },
       // Diff each poll against the previous list and fire one notification per
       // process that newly entered `crashed`. `prev`/`next` carry the schema's

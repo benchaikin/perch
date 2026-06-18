@@ -6,8 +6,11 @@
  * stable enum the panel + agents reason about. Kept Electron-free and provider-
  * free so it unit-tests as a pure function over a `ProcessState[]` fixture.
  */
+import { basename, isAbsolute, relative, resolve } from "node:path";
+
 import { z } from "@perch/sdk";
 
+import type { Proc } from "./compose.js";
 import type { ProcessState } from "./provider.js";
 
 /**
@@ -36,6 +39,12 @@ export const Service = z.object({
   restartCount: z.number().int().optional(),
   /** Last exit code, when the process has exited. */
   exitCode: z.number().int().optional(),
+  /**
+   * The repo (a configured `global.repos` basename) this process belongs to,
+   * for the Services tab's per-repo grouping; undefined when it maps to no
+   * configured repo. See {@link resolveProject}.
+   */
+  project: z.string().optional(),
 });
 export type Service = z.infer<typeof Service>;
 
@@ -45,6 +54,13 @@ export const ServiceList = z.object({
   services: z.array(Service),
   /** False when the process-compose server is unreachable. */
   available: z.boolean(),
+  /**
+   * The configured repos (`global.repos` basenames) in config order, so the GUI
+   * renders a header for every monitored repo — including ones with zero
+   * services. Mirrors `DexBoard.projects`; omitted by an older daemon (the GUI
+   * then degrades to a flat list).
+   */
+  projects: z.array(z.string()).optional(),
 });
 export type ServiceList = z.infer<typeof ServiceList>;
 
@@ -92,14 +108,61 @@ export function toService(state: ProcessState): Service {
   });
 }
 
-/** Synthesize a `stopped` {@link Service} for a configured-but-absent proc. */
-function stoppedService(name: string): Service {
-  return Service.parse({ name, status: "stopped" });
+/**
+ * Whether `child` is the same directory as, or nested inside, `dir`. Compares
+ * resolved absolute paths so trailing slashes / `..` segments don't matter.
+ */
+function isWithin(dir: string, child: string): boolean {
+  const rel = relative(resolve(dir), resolve(child));
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
 /**
- * Build the `services.list` output from a raw process list and the names of the
- * user's **configured** procs (`plugins.services.procs[]`).
+ * Resolve the repo (project label) a configured proc belongs to, for the
+ * Services tab's per-repo grouping:
+ * 1. an explicit `proc.repo` (already a configured repo's basename), else
+ * 2. the configured `repos` dir that contains `proc.cwd` (its basename), else
+ * 3. `undefined` (the proc maps to no configured repo → ungrouped).
+ *
+ * Pure: `repos` is the list of absolute repo directories (`reposOf(ctx.global)`).
+ */
+export function resolveProject(
+  proc: Pick<Proc, "cwd" | "repo">,
+  repos: readonly string[],
+): string | undefined {
+  if (proc.repo !== undefined) return proc.repo;
+  if (proc.cwd !== undefined) {
+    const match = repos.find((dir) => isWithin(dir, proc.cwd!));
+    if (match !== undefined) return basename(match);
+  }
+  return undefined;
+}
+
+/** A configured proc paired with its resolved {@link resolveProject} project. */
+export interface ServiceProc {
+  /** Process name (matches a live process / synthesized `stopped` row). */
+  name: string;
+  /** Resolved repo basename, or undefined when it maps to no configured repo. */
+  project?: string;
+}
+
+/** Synthesize a `stopped` {@link Service} for a configured-but-absent proc. */
+function stoppedService(name: string, project?: string): Service {
+  return Service.parse({ name, status: "stopped", project });
+}
+
+/** Tag an already-normalized live {@link Service} with its resolved project. */
+function withProject(svc: Service, project: string | undefined): Service {
+  return project === undefined ? svc : { ...svc, project };
+}
+
+/**
+ * Build the `services.list` output from a raw process list and the user's
+ * **configured** procs (`plugins.services.procs[]`), each already paired with
+ * its resolved {@link ServiceProc.project} so every row — live or synthesized —
+ * carries its repo. `projects` is the configured repo list (config order) that
+ * surfaces on the output so the GUI renders a header even for repos with zero
+ * services (mirrors `DexBoard.projects`).
  *
  * `processes` is `undefined` when the server is unreachable → `available: false`,
  * but any configured procs still surface as `stopped` rows so the panel shows
@@ -116,18 +179,27 @@ function stoppedService(name: string): Service {
  */
 export function buildServiceList(
   processes: ProcessState[] | undefined,
-  procNames: readonly string[] = [],
+  procs: readonly ServiceProc[] = [],
+  projects: readonly string[] = [],
 ): ServiceList {
+  const withProjects = (list: ServiceList): ServiceList =>
+    projects.length > 0 ? { ...list, projects: [...projects] } : list;
   if (processes === undefined) {
-    return { services: procNames.map(stoppedService), available: false };
+    return withProjects({
+      services: procs.map((p) => stoppedService(p.name, p.project)),
+      available: false,
+    });
   }
   const live = new Map(processes.map((state) => [state.name, toService(state)]));
-  // Configured procs first, in definition order (live status, else `stopped`).
-  const ordered = procNames.map((name) => live.get(name) ?? stoppedService(name));
+  // Configured procs first, in definition order (live status, else `stopped`),
+  // each tagged with its resolved project.
+  const ordered = procs.map((p) =>
+    withProject(live.get(p.name) ?? stoppedService(p.name), p.project),
+  );
   // Then any live process not in the configured set, in process-compose's order.
-  const configured = new Set(procNames);
+  const configured = new Set(procs.map((p) => p.name));
   const extras = processes
     .filter((state) => !configured.has(state.name))
     .map((state) => live.get(state.name)!);
-  return { services: [...ordered, ...extras], available: true };
+  return withProjects({ services: [...ordered, ...extras], available: true });
 }
