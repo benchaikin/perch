@@ -35,6 +35,11 @@ function board(...tasks: DexTask[]): DexBoard {
   return { tasks };
 }
 
+/** A board carrying an explicit configured-projects list (config order). */
+function boardWithProjects(projects: string[], ...tasks: DexTask[]): DexBoard {
+  return { tasks, projects };
+}
+
 test("dexHealth maps each status to a marker color", () => {
   assert.equal(dexHealth("blocked"), "bad");
   assert.equal(dexHealth("in-progress"), "warn");
@@ -137,6 +142,102 @@ test("buildDexSection: rows spanning >1 project group into repoGroups (first-app
   );
   // The grouped rows are the same row objects as the flat `rows` (no recompute).
   assert.equal(section.repoGroups[0]!.rows[0], section.rows[0]);
+});
+
+test("buildDexSection: grouping is driven by configured projects, not task count", () => {
+  // Two configured repos but only one has a task → still a multi-repo board, with
+  // the empty repo rendered as an empty group (so it gets a header + New "+").
+  const section = buildDexSection(
+    boardWithProjects(["alpha", "beta"], task({ id: "a1", status: "ready", project: "alpha" })),
+    true,
+  );
+  assert.equal(section.multiRepo, true);
+  assert.deepEqual(
+    section.repoGroups.map((g) => g.project),
+    ["alpha", "beta"],
+  );
+  assert.deepEqual(
+    section.repoGroups.map((g) => g.rows.map((r) => r.id)),
+    [["a1"], []],
+  );
+});
+
+test("buildDexSection: two configured repos with ZERO tasks still group (empty headers)", () => {
+  const section = buildDexSection(boardWithProjects(["alpha", "beta"]), true);
+  assert.equal(section.multiRepo, true);
+  assert.deepEqual(
+    section.repoGroups.map((g) => g.project),
+    ["alpha", "beta"],
+  );
+  assert.deepEqual(
+    section.repoGroups.map((g) => g.rows.length),
+    [0, 0],
+  );
+  assert.equal(section.rows.length, 0);
+});
+
+test("buildDexSection: a single configured repo stays flat even with tasks", () => {
+  const section = buildDexSection(
+    boardWithProjects(
+      ["alpha"],
+      task({ id: "a1", status: "ready", project: "alpha" }),
+      task({ id: "a2", status: "ready", project: "alpha" }),
+    ),
+    true,
+  );
+  assert.equal(section.multiRepo, false);
+  assert.deepEqual(section.repoGroups, []);
+});
+
+test("buildDexSection: groups follow config order, not first-task order", () => {
+  // The first task is beta's, but config order (alpha, beta) wins.
+  const section = buildDexSection(
+    boardWithProjects(
+      ["alpha", "beta"],
+      task({ id: "b1", status: "ready", project: "beta" }),
+      task({ id: "a1", status: "ready", project: "alpha" }),
+    ),
+    true,
+  );
+  assert.deepEqual(
+    section.repoGroups.map((g) => g.project),
+    ["alpha", "beta"],
+  );
+});
+
+test("buildDexSection: a repo with tasks but dropped from config still groups (appended)", () => {
+  // `gamma` isn't in the configured list but still holds a task — it's unioned in
+  // after the configured repos so its tasks aren't lost.
+  const section = buildDexSection(
+    boardWithProjects(
+      ["alpha"],
+      task({ id: "a1", status: "ready", project: "alpha" }),
+      task({ id: "g1", status: "ready", project: "gamma" }),
+    ),
+    true,
+  );
+  assert.equal(section.multiRepo, true);
+  assert.deepEqual(
+    section.repoGroups.map((g) => g.project),
+    ["alpha", "gamma"],
+  );
+});
+
+test("buildDexSection: an older board without `projects` falls back to task projects", () => {
+  // No `projects` field (a pre-this-change daemon) → grouping derives from the
+  // projects seen on tasks, the original behavior.
+  const section = buildDexSection(
+    board(
+      task({ id: "a1", status: "ready", project: "alpha" }),
+      task({ id: "b1", status: "ready", project: "beta" }),
+    ),
+    true,
+  );
+  assert.equal(section.multiRepo, true);
+  assert.deepEqual(
+    section.repoGroups.map((g) => g.project),
+    ["alpha", "beta"],
+  );
 });
 
 test("buildDexSection carries the active blocker ids (edges) onto rows", () => {

@@ -116,6 +116,33 @@ test("aggregates multiple stores and tags each row with its project", () => {
   assert.equal(board.tasks.length, 2);
 });
 
+test("carries every group's project in config order, including empty ones", () => {
+  // A configured-but-empty repo (no tasks) still surfaces in `projects`, so the
+  // GUI can render its header + New "+". Order follows the input (config) order.
+  const board = buildDexBoard([
+    { project: "repo-a", tasks: [task({ id: "a1", name: "A1" })] },
+    { project: "repo-empty", tasks: [] },
+    { project: "repo-b", tasks: [task({ id: "b1", name: "B1" })] },
+  ]);
+  assert.deepEqual(board.projects, ["repo-a", "repo-empty", "repo-b"]);
+  // The empty repo contributes no rows.
+  assert.equal(board.tasks.length, 2);
+});
+
+test("an all-empty configured board still lists its projects (zero tasks)", () => {
+  const board = buildDexBoard([
+    { project: "repo-a", tasks: [] },
+    { project: "repo-b", tasks: [] },
+  ]);
+  assert.deepEqual(board.projects, ["repo-a", "repo-b"]);
+  assert.equal(board.tasks.length, 0);
+});
+
+test("a single cwd store (no project) yields no projects", () => {
+  const board = buildDexBoard([{ tasks: [task({ id: "x", name: "X" })] }]);
+  assert.deepEqual(board.projects, []);
+});
+
 test("parseRawTasks tolerates extra fields and rejects non-arrays", () => {
   const ok = parseRawTasks([{ id: "x", name: "X", surprise: 42 }]);
   assert.equal(ok.length, 1);

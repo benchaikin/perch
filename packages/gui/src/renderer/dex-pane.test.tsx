@@ -131,20 +131,25 @@ function section(rows: DexRow[]): DexSection {
 
 /**
  * A multi-repo Dex section: the rows grouped into one {@link DexRepoGroup} per
- * project, in first-appearance order (mirroring `buildDexSection`). Every row must
- * carry a `project`.
+ * project, in config order (mirroring `buildDexSection`). Every row must carry a
+ * `project`. `configured` seeds the group order (config order) and lets a
+ * configured-but-empty repo appear as an empty group; when omitted it falls back
+ * to the rows' first-appearance order.
  */
-function multiRepoSection(rows: DexRow[]): DexSection {
+function multiRepoSection(rows: DexRow[], configured?: string[]): DexSection {
   const byProject = new Map<string, DexRow[]>();
   const order: string[] = [];
-  for (const r of rows) {
-    const project = r.project ?? "(unknown)";
-    if (!byProject.has(project)) {
-      byProject.set(project, []);
+  const ensure = (project: string): DexRow[] => {
+    let group = byProject.get(project);
+    if (!group) {
+      group = [];
+      byProject.set(project, group);
       order.push(project);
     }
-    byProject.get(project)!.push(r);
-  }
+    return group;
+  };
+  for (const project of configured ?? []) ensure(project);
+  for (const r of rows) ensure(r.project ?? "(unknown)").push(r);
   return {
     visible: true,
     rows,
@@ -1097,4 +1102,48 @@ test("selecting a task still takes over the whole pane on a multi-repo board", (
     null,
     "groups are replaced by the detail",
   );
+});
+
+test("a configured-but-empty repo still renders its header (with a working New '+')", () => {
+  // Two configured repos, neither has a task → both render an empty group header.
+  const { container } = render(
+    <DexPane section={multiRepoSection([], ["alpha", "beta"])} />,
+  );
+  const headers = container.querySelectorAll(".dex-repo-header-btn");
+  assert.equal(headers.length, 2, "every configured repo gets a header, even with no tasks");
+  assert.match(headers[0]!.textContent ?? "", /alpha/);
+  assert.match(headers[1]!.textContent ?? "", /beta/);
+  // Each empty repo carries its own New control; no rows render.
+  assert.equal(container.querySelectorAll(".dex-new").length, 2, "one New '+' per empty repo");
+  assert.equal(container.querySelectorAll(".dex-row").length, 0, "no task rows on an empty board");
+
+  // Authoring the first task from beta's header lands it in beta's store.
+  fireEvent.click(container.querySelectorAll(".dex-new")[1]!);
+  const composer = container.querySelector(".dex-new-composer");
+  assert.ok(composer, "the empty repo header's + arms the composer");
+  fireEvent.change(composer!.querySelector(".dex-new-input")!, {
+    target: { value: "first beta task" },
+  });
+  fireEvent.click(composer!.querySelector(".dex-new-submit")!);
+  assert.equal(dexNewCalls.length, 1, "the first task for an empty repo can be authored here");
+  assert.deepEqual(dexNewCalls[0], { description: "first beta task", project: "beta" });
+});
+
+test("a non-empty repo and an empty configured repo render side by side", () => {
+  const { container } = render(
+    <DexPane
+      section={multiRepoSection(
+        [row({ id: "a1", name: "Alpha one", project: "alpha" })],
+        ["alpha", "beta"],
+      )}
+    />,
+  );
+  const headers = container.querySelectorAll(".dex-repo-header-btn");
+  assert.equal(headers.length, 2, "both the populated and the empty repo get headers");
+  // alpha shows its task count; beta is empty (0).
+  assert.equal(headers[0]!.querySelector(".dex-repo-count")!.textContent, "1");
+  assert.equal(headers[1]!.querySelector(".dex-repo-count")!.textContent, "0");
+  // Only alpha's single row renders.
+  assert.equal(container.querySelectorAll(".dex-row").length, 1);
+  assert.match(container.querySelector(".dex-row")!.textContent ?? "", /Alpha one/);
 });
