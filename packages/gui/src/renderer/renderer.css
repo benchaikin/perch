@@ -240,6 +240,53 @@ body {
   letter-spacing: 0.04em;
 }
 
+/* Collapsible PR repo header button (adapted from .worktree-repo-header-btn):
+   a clickable chevron + name + PR-count chip that toggles the repo's groups, so
+   the PR pane's repo sections read and behave like the Worktrees/Dex ones. Each
+   PR repo is its own .repo-section (separated by the parent's gap), so no
+   top-margin is needed here. */
+.pr-repo-header-btn {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 2px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  text-align: left;
+  -webkit-app-region: no-drag;
+}
+.pr-repo-header-btn:hover {
+  background: var(--hover-bg);
+  color: var(--fg);
+}
+/* Chevron icon on the repo header (down/right for collapsed state). */
+.pr-repo-header-btn > i:first-child {
+  flex: 0 0 auto;
+  width: 14px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.pr-repo-header-btn:hover > i:first-child {
+  color: var(--fg);
+}
+/* Repo name label (grows to push the count chip to the trailing edge). */
+.pr-repo-name {
+  flex: 1 1 auto;
+}
+.pr-repo-count {
+  flex: 0 0 auto;
+  font-size: 10px;
+}
+
 /* Worktree rows reuse .row/.dot/.chip/.branch; click opens the worktree dir. */
 .worktree-row {
   cursor: pointer;
