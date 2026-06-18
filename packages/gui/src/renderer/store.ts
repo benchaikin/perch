@@ -4,10 +4,9 @@
  * The main process derives the full {@link PanelState} (see
  * `panel-state.ts:buildPanelState`) and pushes it over the preload bridge; this
  * module wraps that push into a `useSyncExternalStore`-shaped store so a push
- * re-renders the component tree. It replaces the old imperative replay path
- * (`rerender.ts`'s setRenderer/setLastState/requestRender) — in React a panel
- * that changes its own interaction state just re-renders; the external store is
- * only the main→renderer channel.
+ * re-renders the component tree. It replaces the old imperative replay path — in
+ * React a panel that changes its own interaction state just re-renders; the
+ * external store is only the main→renderer channel.
  *
  * Sandbox-safe: this module touches nothing but the typed `window.perch` bridge
  * (no Node/Electron), so it runs in the renderer's isolated context.
