@@ -51,6 +51,15 @@ export interface DexTask {
 /** `dex.tasks`'s output: a flat, tree-ordered list of task rows. */
 export interface DexBoard {
   tasks: DexTask[];
+  /**
+   * The monitored projects (repo basenames) in config order, including any with
+   * zero tasks. Drives the board's per-repo grouping so a configured-but-empty
+   * repo still gets a header + New "+". Absent/empty when the daemon reads its own
+   * cwd store (no configured repos), keeping that board a flat list. Optional so an
+   * older daemon (whose `dex.tasks` predates this field) still decodes — grouping
+   * then falls back to the projects seen on tasks.
+   */
+  projects?: string[];
 }
 
 /** A rendered task row's marker health → CSS dot color. */
@@ -144,10 +153,12 @@ export interface DexRepoGroup {
  * it's false only when the dex plugin isn't installed — so users without the
  * plugin see the unchanged panel, while an installed-but-empty plugin still
  * shows an empty state. `rows` are pre-ordered (tree pre-order, depth-tagged);
- * `counts` drives the tab badge. `multiRepo` is true when the rows span more than
- * one distinct `project`, so the renderer groups them under collapsible per-repo
- * headers; when true, `repoGroups` holds the grouped rows (first-appearance
- * order), and when false `repoGroups` is empty and rows render as a flat list.
+ * `counts` drives the tab badge. `multiRepo` is true when more than one repo is
+ * *configured* (not merely when >1 repo has tasks), so the renderer groups them
+ * under collapsible per-repo headers; when true, `repoGroups` holds one group per
+ * configured repo (config order, then any project seen only on tasks) — INCLUDING
+ * configured-but-empty repos as empty groups, so each gets a header + New "+".
+ * When false `repoGroups` is empty and rows render as a flat list.
  */
 export interface DexSection {
   visible: boolean;
@@ -174,25 +185,54 @@ export function dexHealth(status: DexStatus): DexHealth {
 const ZERO_COUNTS: DexCounts = { ready: 0, blocked: 0, inProgress: 0, done: 0, total: 0 };
 
 /**
- * Group a board's rows by `project`, preserving each project's first-appearance
- * order (and the rows' pre-order within it). Mirrors `buildWorktreesSection`'s
- * grouping loop. A row with no `project` buckets under `"(unknown)"`; in practice
- * only a single-store board yields unprojected rows, and that board isn't
- * multi-repo, so this branch never runs for it.
+ * The repos the board groups by: the configured `projects` (config order,
+ * including any with zero tasks) unioned with any project seen on a task but not
+ * configured (a repo dropped from config but still holding tasks), appended in
+ * first-appearance order. When `projects` is absent (an older daemon's board), it
+ * degrades to just the projects seen on tasks — the pre-this-change behavior. A
+ * task with no project (the single cwd store) contributes nothing, so that board
+ * stays flat.
  */
-function groupRowsByProject(rows: DexRow[]): DexRepoGroup[] {
+function configuredRepos(board: DexBoard): string[] {
+  const seen = new Set<string>();
+  const repos: string[] = [];
+  const add = (project: string): void => {
+    if (seen.has(project)) return;
+    seen.add(project);
+    repos.push(project);
+  };
+  for (const project of board.projects ?? []) add(project);
+  for (const t of board.tasks) {
+    if (t.project) add(t.project);
+  }
+  return repos;
+}
+
+/**
+ * Group a board's rows by `project` into one {@link DexRepoGroup} per repo. The
+ * order is seeded from the `configured` repo list (config order) so a
+ * configured-but-empty repo still yields an EMPTY group (header + New "+"), then
+ * any project seen only on tasks (a repo dropped from config but still holding
+ * tasks) is appended in first-appearance order. Within a group rows keep the
+ * board's pre-order. A row with no `project` buckets under `"(unknown)"`; in
+ * practice only a single-store board yields unprojected rows, and that board
+ * isn't multi-repo, so this branch never runs for it.
+ */
+function groupRowsByProject(rows: DexRow[], configured: readonly string[]): DexRepoGroup[] {
   const byProject = new Map<string, DexRow[]>();
   const order: string[] = [];
-  for (const row of rows) {
-    const project = row.project ?? "(unknown)";
+  const ensure = (project: string): DexRow[] => {
     let group = byProject.get(project);
     if (!group) {
       group = [];
       byProject.set(project, group);
       order.push(project);
     }
-    group.push(row);
-  }
+    return group;
+  };
+  // Seed every configured repo first (in config order) so empty ones get a group.
+  for (const project of configured) ensure(project);
+  for (const row of rows) ensure(row.project ?? "(unknown)").push(row);
   return order.map((project) => ({ project, rows: byProject.get(project)! }));
 }
 
@@ -240,9 +280,7 @@ export function buildDexSection(
   }
   const activeAncestors = ancestorsWithActiveDescendant(board.tasks);
   const counts: DexCounts = { ...ZERO_COUNTS, total: board.tasks.length };
-  const projects = new Set<string>();
   const rows: DexRow[] = board.tasks.map((t) => {
-    if (t.project) projects.add(t.project);
     switch (t.status) {
       case "ready":
         counts.ready += 1;
@@ -275,8 +313,13 @@ export function buildDexSection(
       agent: agentByTaskId?.get(t.id),
     };
   });
-  const multiRepo = projects.size > 1;
-  const repoGroups = multiRepo ? groupRowsByProject(rows) : [];
+  // Grouping is driven by the CONFIGURED repo list (so a configured-but-empty repo
+  // still gets a header), falling back to the projects seen on tasks when the board
+  // predates the `projects` field. Union them so a repo dropped from config but
+  // still holding tasks isn't lost. >1 distinct repo ⇒ grouped; 0/1 stays flat.
+  const repos = configuredRepos(board);
+  const multiRepo = repos.length > 1;
+  const repoGroups = multiRepo ? groupRowsByProject(rows, repos) : [];
   return { visible: present, rows, counts, multiRepo, repoGroups };
 }
 

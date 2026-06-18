@@ -22,6 +22,7 @@ function board(...pairs: Array<[string, DexStatus]>): DexBoard {
       blockedByCount: status === "blocked" ? 1 : 0,
       blockedBy: status === "blocked" ? ["x"] : [],
     })),
+    projects: [],
   };
 }
 

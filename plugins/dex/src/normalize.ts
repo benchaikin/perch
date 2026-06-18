@@ -82,6 +82,13 @@ export type DexTaskView = z.infer<typeof DexTaskView>;
 /** `dex.tasks`'s output: a flat, tree-ordered list of task rows. */
 export const DexBoard = z.object({
   tasks: z.array(DexTaskView),
+  /**
+   * The monitored projects (repo basenames) in config order, INCLUDING any with
+   * zero tasks — so the GUI can render a header + New "+" for a configured-but-empty
+   * repo. Empty when the board reads the daemon's own cwd store (no configured
+   * repos), in which case the GUI stays a flat list.
+   */
+  projects: z.array(z.string()),
 });
 export type DexBoard = z.infer<typeof DexBoard>;
 
@@ -166,13 +173,19 @@ function buildGroup(tasks: RawDexTask[], project: string | undefined): DexTaskVi
  * Build the full {@link DexBoard} from one or more monitored stores' task
  * arrays. Each group is normalized independently (blocker resolution is
  * per-store) and concatenated; rows carry their `project` tag so the GUI can
- * group by source when more than one store is monitored. Pure: same input →
- * same output.
+ * group by source when more than one store is monitored. The board's `projects`
+ * lists every group's project in input (config) order — including groups with
+ * zero tasks — so a configured-but-empty repo still surfaces a header. Pure:
+ * same input → same output.
  */
 export function buildDexBoard(groups: ReadonlyArray<DexGroup>): DexBoard {
   const tasks: DexTaskView[] = [];
-  for (const group of groups) tasks.push(...buildGroup(group.tasks, group.project));
-  return { tasks };
+  const projects: string[] = [];
+  for (const group of groups) {
+    tasks.push(...buildGroup(group.tasks, group.project));
+    if (group.project !== undefined) projects.push(group.project);
+  }
+  return { tasks, projects };
 }
 
 /**
