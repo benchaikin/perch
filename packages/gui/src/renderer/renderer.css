@@ -23,6 +23,7 @@
   --bad: #e01e37;
   --bad-rgb: 224, 30, 55;
   --accent: #4a9eff;
+  --accent-rgb: 74, 158, 255;
   /* Body text for the dex detail view: a warm, slightly-yellowed off-white
      (softer than the near-pure --fg) so long task bodies are easier on the eyes. */
   --detail-fg: #e8e0cd;
@@ -45,6 +46,7 @@
     --bad: #d70015;
     --bad-rgb: 215, 0, 21;
     --accent: #0a66d6;
+    --accent-rgb: 10, 102, 214;
     /* Warm near-black for the detail body in light mode (the off-white only
        makes sense on a dark background). */
     --detail-fg: #33302a;
@@ -580,6 +582,27 @@ body {
   box-shadow: inset 0 0 0 2px var(--accent);
   background: rgba(74, 158, 255, 0.14);
   border-radius: 4px;
+}
+
+/* Spawn-all hover preview: while the pointer is over a rocket (fleet-launch)
+   button, the exact rows that button would launch light up so the "all" is
+   legible before the click. A softer, pulsing accent ring (thinner outline +
+   fainter fill, animated) keeps it visually distinct from the solid drag
+   drop-target ring above, so a hover-preview never reads as a drop zone. Uses
+   the --accent token, so it tracks the light/dark theme. */
+.dex-row.dex-row-spawn-preview {
+  background: rgba(var(--accent-rgb), 0.08);
+  border-radius: 4px;
+  animation: dex-spawn-preview-pulse 1.4s ease-in-out infinite;
+}
+@keyframes dex-spawn-preview-pulse {
+  0%,
+  100% {
+    box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.45);
+  }
+  50% {
+    box-shadow: inset 0 0 0 2px var(--accent);
+  }
 }
 
 /* Dependency-graph node row. Reuses .row/.dot/.chip/.branch; indentation is set

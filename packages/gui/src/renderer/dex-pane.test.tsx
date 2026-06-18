@@ -606,6 +606,97 @@ test("the spawn-all-ready button is absent when nothing is ready", () => {
   assert.equal(container.querySelector(".dex-spawn-all"), null, "no ready tasks → no fleet launch");
 });
 
+// Spawn-all hover preview: hovering a rocket lights exactly the rows it would
+// launch (the ready rows in its scope), so the "all" is legible before the click.
+
+/** The ids of the rows currently lit by the spawn-all hover preview, in DOM order. */
+function previewIds(container: HTMLElement): string[] {
+  return [...container.querySelectorAll(".dex-row-spawn-preview")].map(
+    (r) => r.querySelector(".dex-id")!.textContent ?? "",
+  );
+}
+
+test("hovering the pane-level rocket lights exactly the ready rows, and leaving clears it", () => {
+  const { container } = render(
+    <DexPane
+      section={section([
+        row({ id: "r1", name: "Ready one" }),
+        row({ id: "r2", name: "Ready two" }),
+        row({ id: "blk", name: "Blocked", status: "blocked", blockedByCount: 1 }),
+        row({ id: "wip", name: "In progress", status: "in-progress" }),
+      ])}
+    />,
+  );
+  // Nothing lit until the rocket is hovered.
+  assert.deepEqual(previewIds(container), []);
+
+  const btn = container.querySelector(".dex-spawn-all")!;
+  fireEvent.mouseEnter(btn);
+  // Exactly the two spawnable rows light up — not the blocked one, not the worked one.
+  assert.deepEqual(previewIds(container), ["r1", "r2"]);
+
+  fireEvent.mouseLeave(btn);
+  assert.deepEqual(previewIds(container), [], "moving off the rocket clears the preview");
+});
+
+test("hovering a repo's rocket lights only that repo's ready rows", () => {
+  const { container } = render(
+    <DexPane
+      section={multiRepoSection([
+        row({ id: "a1", name: "Alpha ready", project: "alpha", status: "ready" }),
+        row({ id: "a2", name: "Alpha ready two", project: "alpha", status: "ready" }),
+        row({ id: "b1", name: "Beta ready", project: "beta", status: "ready" }),
+      ])}
+    />,
+  );
+  const launches = container.querySelectorAll(".dex-spawn-all");
+  assert.equal(launches.length, 2, "both repos have a ready task → both show a rocket");
+
+  // Alpha's rocket lights only alpha's ready rows; beta's stay dark.
+  fireEvent.mouseEnter(launches[0]!);
+  assert.deepEqual(previewIds(container), ["a1", "a2"], "only alpha's ready rows light up");
+  fireEvent.mouseLeave(launches[0]!);
+
+  // Beta's rocket lights only beta's ready row.
+  fireEvent.mouseEnter(launches[1]!);
+  assert.deepEqual(previewIds(container), ["b1"], "only beta's ready row lights up");
+});
+
+test("the spawn-all preview works in graph view too", () => {
+  const { container } = render(
+    <DexPane
+      section={section([
+        row({ id: "r1", name: "Ready one" }),
+        row({ id: "r2", name: "Ready two" }),
+      ])}
+      savedViewMode="graph"
+    />,
+  );
+  assert.ok(container.querySelector(".dex-graph-row"), "rendered in graph view");
+  fireEvent.mouseEnter(container.querySelector(".dex-spawn-all")!);
+  assert.deepEqual(previewIds(container), ["r1", "r2"], "graph rows light up on hover");
+});
+
+test("after the launch fires no rows stay highlighted", async () => {
+  const { container } = render(
+    <DexPane section={section([row({ id: "r1", name: "Ready one" })])} />,
+  );
+  const btn = container.querySelector(".dex-spawn-all")!;
+  fireEvent.mouseEnter(btn);
+  assert.deepEqual(previewIds(container), ["r1"], "the row lights while hovered");
+
+  // Clicking launches; the button disables (so onMouseLeave never fires) — the
+  // preview must clear anyway, leaving no row stuck lit.
+  await act(async () => {
+    fireEvent.click(btn);
+  });
+  assert.equal(dexSpawnReadyCalls, 1, "the click fired the launch");
+  assert.equal((container.querySelector(".dex-spawn-all") as HTMLButtonElement).disabled, true);
+  assert.deepEqual(previewIds(container), [], "no rows remain highlighted after the launch fires");
+
+  await settleActions();
+});
+
 test("the row delete control calls dexDelete and optimistically disables + spins", async () => {
   const { container } = render(
     <DexPane section={section([row({ id: "del", name: "Delete me" })])} />,
