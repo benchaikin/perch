@@ -25,6 +25,10 @@ import type { LinkedWorktree } from "../worktree-task-link.js";
 import type { DexViewMode } from "../window-state.js";
 import type { DexEditRequest } from "../ipc.js";
 import { requestRender } from "./rerender.js";
+// The status → label map lives in the shared dex-task-chip module (reused by the
+// Worktrees pane and the React Dex port); import it here so this legacy builder
+// and the re-export below share that one source.
+import { DEX_STATUS_LABEL } from "./dex-task-chip.js";
 
 /** Collapsed dex epic ids (their descendants are hidden); preserved across re-renders. */
 const collapsedDexIds = new Set<string>();
@@ -119,12 +123,9 @@ const DEX_STATUS_ICON: Record<DexStatus, string> = {
   blocked: "ban",
   done: "circle-check",
 };
-export const DEX_STATUS_LABEL: Record<DexStatus, string> = {
-  ready: "Ready",
-  "in-progress": "In progress",
-  blocked: "Blocked",
-  done: "Done",
-};
+// Re-exported from the shared dex-task-chip module so the Worktrees pane's
+// existing `import … from "./dex.js"` keeps resolving while the value has one home.
+export { DEX_STATUS_LABEL };
 
 /**
  * Marker tone (CSS class) for a task's status dot. In-progress reads accent-blue
