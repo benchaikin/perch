@@ -10,6 +10,14 @@ isolated `dex/<id>-<slug>` worktree to work a task; this one *lands* it: once th
 worktree's PR is merged, it removes the worktree + branch and completes the dex
 task with evidence built from the PR.
 
+Before the first reap of a pass it **freshens the local trunk** — `git fetch
+origin <default-branch>` — so the just-merged commit is present locally and
+`dex complete --commit <mergeSha>` validates against the real merge commit (the
+local trunk is usually a step behind the PR that just merged on GitHub). This
+runs once per pass and is best-effort: a fetch failure (offline, no `origin`)
+leaves the trunk stale and never blocks the reap. It only advances the
+remote-tracking ref — it never touches the main worktree.
+
 Everything destructive is behind guards. A worktree is only reaped when its PR is
 **merged** AND its tree is **clean**. Anything unsafe — no PR, an unmerged PR, or
 a dirty/uncommitted tree — is **flagged and skipped**, never deleted.
@@ -88,9 +96,11 @@ inferable command → FLAG + skip.** Repos with CI skip this step.
 ### 4. Guarded cleanup (only when MERGED, clean, **and** build-gate satisfied)
 
 Confirm the tree is clean first — `git -C <path> status --porcelain` must be
-empty. Then, and only then:
+empty. Then, and only then (freshening the local trunk once per pass first so the
+merge commit is local and `--commit` validates):
 
 ```bash
+git fetch origin <default-branch>   # once per pass, best-effort — brings the merge commit local
 git worktree remove <path>
 git branch -d <branch>     # -d (not -D): refuses if somehow not merged — a 2nd net
 dex complete <id> --commit <mergeCommit-sha> --result "<PR-derived evidence>"

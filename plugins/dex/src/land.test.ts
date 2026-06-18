@@ -97,6 +97,8 @@ interface StubOpts {
   completedTasks?: string[];
   /** When true, `git cat-file -e <sha>` rejects (the merge commit isn't local). */
   commitMissing?: boolean;
+  /** When true, `git fetch origin <base>` rejects (offline / no origin). */
+  failFetch?: boolean;
 }
 
 function stub(opts: StubOpts): { exec: Exec; calls: Array<{ cmd: string; args: string[]; cwd?: string }> } {
@@ -106,6 +108,10 @@ function stub(opts: StubOpts): { exec: Exec; calls: Array<{ cmd: string; args: s
   const exec: Exec = (cmd, args, o) => {
     calls.push({ cmd, args, cwd: o?.cwd });
     if (cmd === "git") {
+      if (args[0] === "symbolic-ref") return Promise.resolve("origin/main\n");
+      if (args.includes("fetch")) {
+        return opts.failFetch ? Promise.reject(new Error("no origin")) : Promise.resolve("");
+      }
       if (args.includes("worktree") && args.includes("list")) return Promise.resolve(opts.worktrees);
       if (args.includes("config") && args.includes("perch.dexTask")) {
         const path = args[args.indexOf("-C") + 1]!;
@@ -362,20 +368,58 @@ test("runLand: an already-completed task is reaped but `dex complete` is skipped
   assert.equal(calls.some((c) => c.cmd === "dex" && c.args.includes("complete")), false);
 });
 
-test("runLand: merge commit not local → completes with --no-commit, still reaps", async () => {
+test("runLand: failed fetch leaves the merge commit absent → --no-commit, still reaps", async () => {
+  const logs: string[] = [];
   const { exec, calls } = stub({
     worktrees: porcelain("/work/perch", [{ path: "/wt/a", branch: "dex/abc12-foo" }]),
     prByBranch: { "dex/abc12-foo": mergedWithCi },
-    commitMissing: true, // GitHub merge commit isn't in the local repo
+    failFetch: true, // offline / no origin → the freshen can't pull the merge commit
+    commitMissing: true, // …so it isn't in the local repo
   });
-  const board = await runLand(deps(exec));
+  const board = await runLand(deps(exec, { log: (m) => logs.push(m) }));
   assert.equal(board.reaped.length, 1);
+  // The freshen was attempted, then degraded — not thrown.
+  assert.ok(calls.some((c) => c.cmd === "git" && c.args.includes("fetch")));
+  assert.ok(logs.some((m) => /couldn't fetch origin\/main/.test(m)));
   const complete = calls.find((c) => c.cmd === "dex" && c.args.includes("complete"));
   assert.ok(complete);
   assert.ok(complete!.args.includes("--no-commit"), "expected --no-commit fallback");
   assert.equal(complete!.args.includes("--commit"), false);
   // The merge SHA is still preserved in the evidence/result text.
   assert.match(board.reaped[0]!.reason, /merge commit sha123/);
+});
+
+test("runLand: freshens the repo (fetch) BEFORE completing the task, linking the real SHA", async () => {
+  const { exec, calls } = stub({
+    worktrees: porcelain("/work/perch", [{ path: "/wt/a", branch: "dex/abc12-foo" }]),
+    prByBranch: { "dex/abc12-foo": mergedWithCi },
+    // commit present locally (the default) — i.e. the fetch made it so.
+  });
+  const board = await runLand(deps(exec));
+  assert.equal(board.reaped.length, 1);
+
+  const fetch = calls.find((c) => c.cmd === "git" && c.args.includes("fetch"));
+  assert.deepEqual(fetch?.args, ["-C", "/work/perch", "fetch", "origin", "main"]);
+  // The fetch ran before `dex complete`, so the merge commit is present and the
+  // real SHA is linked via `--commit`.
+  const completeIdx = calls.findIndex((c) => c.cmd === "dex" && c.args.includes("complete"));
+  assert.ok(calls.indexOf(fetch!) < completeIdx);
+  assert.ok(calls[completeIdx]!.args.includes("--commit"));
+  assert.ok(calls[completeIdx]!.args.includes("sha123"));
+});
+
+test("runLand: freshens each repo only ONCE per pass, however many worktrees it has", async () => {
+  const { exec, calls } = stub({
+    worktrees: porcelain("/work/perch", [
+      { path: "/wt/a", branch: "dex/abc12-foo" },
+      { path: "/wt/b", branch: "dex/def34-bar" },
+    ]),
+    prByBranch: { "dex/abc12-foo": mergedWithCi, "dex/def34-bar": mergedWithCi },
+  });
+  const board = await runLand(deps(exec));
+  assert.equal(board.reaped.length, 2);
+  // Two merged worktrees in one repo → exactly one fetch, not two.
+  assert.equal(calls.filter((c) => c.cmd === "git" && c.args.includes("fetch")).length, 1);
 });
 
 test("runLand: branch -d refusal falls back to -D (merge is gh-confirmed)", async () => {

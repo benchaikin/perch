@@ -119,6 +119,24 @@ flagged=()
 note_flag() { flagged+=("$1"); echo "FLAG  $1" >&2; }
 note_reap() { reaped+=("$1"); echo "REAP  $1" >&2; }
 
+# Fast-forward the local trunk by fetching origin's default branch, ONCE per run
+# and only right before the first reap — so the PR's merge commit is present
+# locally and `dex complete --commit <sha>` can validate it (the local trunk is
+# usually behind the just-merged PR). Best-effort: a fetch failure (offline, no
+# origin) leaves the trunk stale and is non-fatal — it only advances the
+# remote-tracking ref, never the working tree.
+FRESHENED=0
+freshen_trunk() {
+  [[ "$FRESHENED" == 1 ]] && return 0
+  FRESHENED=1
+  local trunk
+  trunk="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')"
+  trunk="${trunk:-main}"
+  if ! git fetch origin "$trunk" >/dev/null 2>&1; then
+    echo "note: couldn't fetch origin/$trunk; reaping off the stale local trunk" >&2
+  fi
+}
+
 # Enumerate worktrees from porcelain output: emit "<path>\t<branch>" pairs,
 # skipping the main worktree (the first record) and detached/bare ones.
 main_path=""
@@ -219,6 +237,9 @@ process_record() {
   fi
 
   # --- Destructive, guarded ---
+  # Freshen the local trunk first (once per run) so the merge commit is present
+  # locally and `dex complete --commit "$merge_sha"` validates.
+  freshen_trunk
   # Remove the worktree first, then delete the branch with -d (refuses if git
   # thinks it isn't merged — a belt-and-braces second net).
   git worktree remove "$path"
