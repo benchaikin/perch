@@ -106,6 +106,17 @@ const configs = [
     platform: "browser",
     format: "iife",
     target: "es2022",
+    // React renderer: use the automatic JSX runtime (no `import React` needed)
+    // and force the production transform (`jsxDev: false`) — the dev runtime
+    // emits extra dev-only code and the renderer ships React's eval-free
+    // production build to satisfy the CSP (`script-src 'self'`, no eval).
+    jsx: "automatic",
+    jsxDev: false,
+    // React picks its dev vs prod build off `process.env.NODE_ENV`, which has no
+    // value in the browser. Define it to "production" so esbuild dead-code-
+    // eliminates the dev branches (the ones that use eval/new Function) and
+    // bundles React's eval-free production build, leaving no bare `process` ref.
+    define: { "process.env.NODE_ENV": '"production"' },
   },
 
   // The Settings window's preload — same .cjs requirement as the panel preload
@@ -121,7 +132,8 @@ const configs = [
     external: ["electron"],
   },
 
-  // The Settings window's renderer (sandboxed browser context).
+  // The Settings window's renderer (sandboxed browser context). Same React/JSX
+  // setup as the panel renderer above — see those comments for why each flag.
   {
     entryPoints: [join(src, "settings", "settings.ts")],
     outfile: join(dist, "settings", "settings.js"),
@@ -129,6 +141,9 @@ const configs = [
     platform: "browser",
     format: "iife",
     target: "es2022",
+    jsx: "automatic",
+    jsxDev: false,
+    define: { "process.env.NODE_ENV": '"production"' },
   },
 ];
 

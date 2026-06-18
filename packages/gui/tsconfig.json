@@ -9,7 +9,11 @@
     // The renderer + preload run in the browser/Electron, so they need DOM types
     // alongside Node. esbuild produces the actual browser bundles; tsc here is
     // for type-checking + emitting the Node main process.
-    "lib": ["ES2023", "DOM", "DOM.Iterable"]
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    // React renderer: type-check .tsx with the automatic JSX runtime, matching
+    // esbuild's jsx:"automatic" so neither needs an `import React`.
+    "jsx": "react-jsx",
+    "jsxImportSource": "react"
   },
   "include": ["src"],
   "references": [
