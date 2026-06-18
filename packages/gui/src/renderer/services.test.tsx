@@ -18,6 +18,7 @@ import type {
   ServiceRow,
   ServicesBulkAction,
   ServicesControl,
+  ServicesRepoGroup,
   ServicesSection,
 } from "../services-state.js";
 import type { ServiceActionRequest } from "../ipc.js";
@@ -70,13 +71,41 @@ const BULK_CONTROLS: ServicesControl[] = [
   { action: "restartAll", label: "Restart all" },
 ];
 
-/** Mount `<ServicesPane>` into a fresh, document-attached container. */
-function render(section: ServicesSection, showTitle = false): HTMLElement {
+/** A repo group with the given project label and rows (none → an empty group). */
+function group(project: string, ...rows: ServiceRow[]): ServicesRepoGroup {
+  return { project, rows };
+}
+
+/** A section literal that may omit the grouping fields (defaulted to the flat case). */
+type SectionInput = Omit<ServicesSection, "multiRepo" | "repoGroups"> &
+  Partial<Pick<ServicesSection, "multiRepo" | "repoGroups">>;
+
+/** Fill the grouping defaults so flat-case tests can pass plain literals. */
+function asSection(input: SectionInput): ServicesSection {
+  return { multiRepo: false, repoGroups: [], ...input };
+}
+
+/**
+ * Mount `<ServicesPane>` into a fresh, document-attached container, returning a
+ * `rerender` so collapse-state tests can push a follow-up render (like a 5s poll)
+ * into the SAME root.
+ */
+function mount(input: SectionInput, showTitle = false): {
+  container: HTMLElement;
+  rerender: (next: SectionInput) => void;
+} {
   const container = win.document.createElement("div");
   win.document.body.append(container);
   const root = createRoot(container);
-  flushSync(() => root.render(<ServicesPane section={section} showTitle={showTitle} />));
-  return container as unknown as HTMLElement;
+  const draw = (next: SectionInput): void =>
+    flushSync(() => root.render(<ServicesPane section={asSection(next)} showTitle={showTitle} />));
+  draw(input);
+  return { container: container as unknown as HTMLElement, rerender: draw };
+}
+
+/** Mount `<ServicesPane>` and return just the container (the common case). */
+function render(input: SectionInput, showTitle = false): HTMLElement {
+  return mount(input, showTitle).container;
 }
 
 /** A left click that bubbles to React's delegated listener on the root container. */
@@ -198,6 +227,61 @@ test("with showTitle the section renders its own Services title", () => {
   const c = render({ visible: true, rows: [], controls: [] }, true);
   const title = c.querySelector(".services-header > span:not(.services-controls)");
   assert.equal(title?.textContent, "Services");
+});
+
+test("multiRepo renders a collapsible header per repo with name + count chip", () => {
+  const c = render({
+    visible: true,
+    rows: [runningRow("api"), runningRow("ui")],
+    controls: [],
+    multiRepo: true,
+    // ashby (1) + web (1) + perch (0, configured-but-empty).
+    repoGroups: [group("ashby", runningRow("api")), group("web", runningRow("ui")), group("perch")],
+  });
+
+  const headers = [...c.querySelectorAll(".services-repo-header-btn")];
+  assert.equal(headers.length, 3);
+  const names = headers.map((h) => h.querySelector(".services-repo-name")?.textContent);
+  assert.deepEqual(names, ["ashby", "web", "perch"]);
+  // The count chip reflects each group's row count (empty repo → 0).
+  const counts = headers.map((h) => h.querySelector(".services-repo-count")?.textContent);
+  assert.deepEqual(counts, ["1", "1", "0"]);
+  // Both non-empty groups' rows render (everything expanded by default).
+  assert.equal(c.querySelectorAll(".service-row").length, 2);
+});
+
+test("clicking a repo header collapses just that group, and it survives a poll re-render", () => {
+  const section: SectionInput = {
+    visible: true,
+    rows: [runningRow("api"), runningRow("ui")],
+    controls: [],
+    multiRepo: true,
+    repoGroups: [group("ashby", runningRow("api")), group("web", runningRow("ui"))],
+  };
+  const { container: c, rerender } = mount(section);
+  assert.equal(c.querySelectorAll(".service-row").length, 2);
+
+  const ashbyHeader = [...c.querySelectorAll<HTMLButtonElement>(".services-repo-header-btn")].find(
+    (h) => h.querySelector(".services-repo-name")?.textContent === "ashby",
+  );
+  assert.ok(ashbyHeader);
+  // flushSync so the collapse state update re-renders before we assert.
+  flushSync(() => click(ashbyHeader));
+
+  // Only ashby's row is hidden; web's stays. The chevron flips to "right".
+  assert.deepEqual(
+    [...c.querySelectorAll(".service-row .branch")].map((n) => n.textContent),
+    ["ui"],
+  );
+  assert.ok(ashbyHeader.querySelector("i.fa-chevron-right"), "collapsed header shows a right chevron");
+
+  // A background poll pushes a fresh (identical) section; the local collapse
+  // state persists because the pane stays mounted.
+  rerender(section);
+  assert.deepEqual(
+    [...c.querySelectorAll(".service-row .branch")].map((n) => n.textContent),
+    ["ui"],
+  );
 });
 
 test("a hidden section renders nothing", () => {

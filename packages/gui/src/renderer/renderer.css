@@ -1076,6 +1076,65 @@ body {
   color: var(--warn);
 }
 
+/* Per-repo grouping on a multi-repo Services tab. Each group stacks a collapsible
+   header over its rows; the gap separates the header from its rows and groups
+   from each other. */
+.services-repo-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+/* Collapsible repo header button (adapted from .pr-repo-header-btn): a clickable
+   chevron + repo name + service-count chip that toggles the group's rows, so the
+   Services pane's repo sections read like the PRs/Dex/Worktrees ones. A little
+   top space separates each group from the one above. */
+.services-repo-header-btn {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 6px;
+  padding: 3px 2px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  text-align: left;
+  -webkit-app-region: no-drag;
+}
+/* The first group sits right under the pane header — no extra top space. */
+.services-repo-group:first-of-type .services-repo-header-btn {
+  margin-top: 0;
+}
+.services-repo-header-btn:hover {
+  background: var(--hover-bg);
+  color: var(--fg);
+}
+/* Chevron icon on the repo header (down/right for collapsed state). */
+.services-repo-header-btn > i:first-child {
+  flex: 0 0 auto;
+  width: 14px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.services-repo-header-btn:hover > i:first-child {
+  color: var(--fg);
+}
+/* Repo name label (grows to push the count chip to the trailing edge). */
+.services-repo-name {
+  flex: 1 1 auto;
+}
+.services-repo-count {
+  flex: 0 0 auto;
+  font-size: 10px;
+}
+
 /* Position number on a stacked PR (1 = trunk-adjacent base, up to the tip),
    colored by that layer's health (.ok green / .bad error red). */
 .num {

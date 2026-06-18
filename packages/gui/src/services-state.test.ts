@@ -86,18 +86,11 @@ test("buildServicesSection gives every row a Logs affordance", () => {
 });
 
 test("buildServicesSection hides when no list / unreachable / empty", () => {
-  assert.deepEqual(buildServicesSection(undefined), { visible: false, rows: [], controls: [] });
-  assert.deepEqual(buildServicesSection({ services: [], available: false }), {
-    visible: false,
-    rows: [],
-    controls: [],
-  });
+  const hidden = { visible: false, rows: [], controls: [], multiRepo: false, repoGroups: [] };
+  assert.deepEqual(buildServicesSection(undefined), hidden);
+  assert.deepEqual(buildServicesSection({ services: [], available: false }), hidden);
   // Reachable but empty → still hidden (nothing to show).
-  assert.deepEqual(buildServicesSection({ services: [], available: true }), {
-    visible: false,
-    rows: [],
-    controls: [],
-  });
+  assert.deepEqual(buildServicesSection({ services: [], available: true }), hidden);
 });
 
 test("buildServicesSection shows configured procs (stopped) when the server is down", () => {
@@ -159,6 +152,102 @@ test("buildServicesSection shows rows when available with services", () => {
   assert.equal(section.rows[1]!.inFlight, true);
 });
 
+test("buildServicesSection: single configured repo stays flat (no grouping)", () => {
+  const list: ServiceList = {
+    available: true,
+    projects: ["ashby"],
+    services: [{ name: "api", status: "running", project: "ashby" }],
+  };
+  const section = buildServicesSection(list);
+  assert.equal(section.multiRepo, false);
+  assert.deepEqual(section.repoGroups, []);
+});
+
+test("buildServicesSection: a list with no projects[] (older daemon) stays flat", () => {
+  const list: ServiceList = {
+    available: true,
+    services: [
+      { name: "api", status: "running" },
+      { name: "db", status: "stopped" },
+    ],
+  };
+  const section = buildServicesSection(list);
+  assert.equal(section.multiRepo, false);
+  assert.deepEqual(section.repoGroups, []);
+});
+
+test("buildServicesSection: 2+ configured repos group rows in config order", () => {
+  const list: ServiceList = {
+    available: true,
+    projects: ["ashby", "web", "perch"],
+    services: [
+      { name: "api", status: "running", project: "ashby" },
+      { name: "ui", status: "running", project: "web" },
+      { name: "worker", status: "stopped", project: "ashby" },
+    ],
+  };
+  const section = buildServicesSection(list);
+  assert.equal(section.multiRepo, true);
+  // One group per configured repo, in config order — INCLUDING the empty `perch`.
+  assert.deepEqual(
+    section.repoGroups.map((g) => [g.project, g.rows.map((r) => r.name)]),
+    [
+      ["ashby", ["api", "worker"]],
+      ["web", ["ui"]],
+      ["perch", []],
+    ],
+  );
+});
+
+test("buildServicesSection: an unmapped row buckets under (unknown) when multiRepo", () => {
+  const list: ServiceList = {
+    available: true,
+    projects: ["ashby", "web"],
+    services: [
+      { name: "api", status: "running", project: "ashby" },
+      // No project (e.g. an externally-managed compose proc) → "(unknown)".
+      { name: "stray", status: "running" },
+    ],
+  };
+  const section = buildServicesSection(list);
+  assert.equal(section.multiRepo, true);
+  assert.deepEqual(
+    section.repoGroups.map((g) => [g.project, g.rows.map((r) => r.name)]),
+    [
+      ["ashby", ["api"]],
+      ["web", []],
+      ["(unknown)", ["stray"]],
+    ],
+  );
+});
+
+test("buildServicesSection: a project on a row but not configured appends a trailing group", () => {
+  const list: ServiceList = {
+    available: true,
+    projects: ["ashby", "web"],
+    // `legacy` was dropped from config but still holds a service.
+    services: [
+      { name: "api", status: "running", project: "ashby" },
+      { name: "old", status: "stopped", project: "legacy" },
+    ],
+  };
+  const section = buildServicesSection(list);
+  assert.equal(section.multiRepo, true);
+  assert.deepEqual(
+    section.repoGroups.map((g) => g.project),
+    ["ashby", "web", "legacy"],
+  );
+});
+
+test("buildServicesSection: threads project onto each row", () => {
+  const section = buildServicesSection({
+    available: true,
+    projects: ["ashby", "web"],
+    services: [{ name: "api", status: "running", project: "ashby" }],
+  });
+  assert.equal(section.rows[0]!.project, "ashby");
+});
+
 test("worstServiceHealth picks the most severe row (bad > warn > ok > muted)", () => {
   const sec = (...statuses: ServiceList["services"][number]["status"][]) =>
     buildServicesSection({ available: true, services: statuses.map((s, i) => ({ name: `s${i}`, status: s })) });
@@ -171,5 +260,8 @@ test("worstServiceHealth picks the most severe row (bad > warn > ok > muted)", (
   // All stopped → muted (nothing notable).
   assert.equal(worstServiceHealth(sec("stopped", "stopped")), "muted");
   // No rows (hidden section) → muted.
-  assert.equal(worstServiceHealth({ visible: false, rows: [], controls: [] }), "muted");
+  assert.equal(
+    worstServiceHealth({ visible: false, rows: [], controls: [], multiRepo: false, repoGroups: [] }),
+    "muted",
+  );
 });
