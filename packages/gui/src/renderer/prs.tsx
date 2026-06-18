@@ -13,6 +13,7 @@
  * `pr`, `chips`, `stack-group`, `resolve-conflicts-btn`, `open-agent-btn`,
  * `merge-pr-btn`, the badge tones) so `renderer.css` keeps applying unchanged.
  */
+import { useState } from "react";
 import type { GroupRow, PanelState, PrRow, RepoSection } from "../panel-state.js";
 import { Badge, Chip, HEALTH_ICON, HEALTH_LABEL, Loading, Message } from "./components.js";
 import { useActions } from "./actions.js";
@@ -296,19 +297,52 @@ function GroupView({ group, flags }: { group: GroupRow; flags: PrFlags }): JSX.E
   );
 }
 
-/** One repo section: a header, an optional error note, then its groups. */
-function RepoSectionView({ repo, flags }: { repo: RepoSection; flags: PrFlags }): JSX.Element {
+/**
+ * One repo section: a collapsible header button (chevron + name + PR-count chip),
+ * an optional error note, then its groups. Clicking the header toggles the repo's
+ * groups hidden/shown — the error note stays visible even when collapsed, since a
+ * repo's failure is a signal worth surfacing. Mirrors the Worktrees/Dex repo
+ * headers so the panes read alike.
+ */
+function RepoSectionView({
+  repo,
+  flags,
+  collapsed,
+  onToggle,
+}: {
+  repo: RepoSection;
+  flags: PrFlags;
+  collapsed: boolean;
+  onToggle: (repo: string) => void;
+}): JSX.Element {
+  // A stack groups N PRs under one entry, so groups.length undercounts; sum the
+  // standalone rows + each stack's layer count for the true PR count.
+  const prCount = repo.groups.reduce(
+    (sum, group) => sum + (group.kind === "stack" ? group.rows.length : 1),
+    0,
+  );
   return (
     <section className="repo-section">
-      <div className="repo-header">{repo.name}</div>
+      <button
+        className="pr-repo-header-btn"
+        title={`${repo.name} — ${prCount} PR${prCount === 1 ? "" : "s"}`}
+        onClick={(e) => {
+          // Toggle the repo's groups without propagating.
+          e.stopPropagation();
+          onToggle(repo.name);
+        }}
+      >
+        <i className={`fa-solid fa-chevron-${collapsed ? "right" : "down"}`} />
+        <span className="branch pr-repo-name">{repo.name}</span>
+        <span className="chip muted pr-repo-count">{prCount}</span>
+      </button>
       {repo.error && (
         <div className="repo-error" title={repo.error}>
           {repo.error}
         </div>
       )}
-      {repo.groups.map((group, i) => (
-        <GroupView key={i} group={group} flags={flags} />
-      ))}
+      {!collapsed &&
+        repo.groups.map((group, i) => <GroupView key={i} group={group} flags={flags} />)}
     </section>
   );
 }
@@ -319,12 +353,32 @@ function RepoSectionView({ repo, flags }: { repo: RepoSection; flags: PrFlags })
  * (error-styled for daemon-down/error). A 1:1 port of `renderPrsPane`.
  */
 export function PrsPane({ state }: { state: PanelState }): JSX.Element {
+  // Collapsed-repo set as component state, keyed by repo name. The pane stays
+  // mounted while the PRs tab is active, so it survives background pushes and
+  // resets on tab switch/relaunch — matching the Worktrees/Dex panes.
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+
+  function toggle(repo: string): void {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(repo)) next.delete(repo);
+      else next.add(repo);
+      return next;
+    });
+  }
+
   if (state.status === "ok") {
     const flags = prFlags(state);
     return (
       <>
         {state.repos.map((repo) => (
-          <RepoSectionView key={repo.name} repo={repo} flags={flags} />
+          <RepoSectionView
+            key={repo.name}
+            repo={repo}
+            flags={flags}
+            collapsed={collapsed.has(repo.name)}
+            onToggle={toggle}
+          />
         ))}
       </>
     );

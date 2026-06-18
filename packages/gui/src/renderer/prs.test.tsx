@@ -204,6 +204,57 @@ test("the review-comment and needs-rebase badges render when warranted", () => {
   assert.ok(container.querySelector(".badge.rebase"), "expected a needs-rebase badge");
 });
 
+test("a repo header is a collapsible button that hides/shows its groups", () => {
+  const { container } = render(
+    <PrsPane
+      state={stateWith([
+        { kind: "pr", pr: mergeablePr() },
+        { kind: "pr", pr: conflictingPr() },
+      ])}
+    />,
+  );
+  const header = container.querySelector(".pr-repo-header-btn") as HTMLButtonElement;
+  assert.ok(header, "expected a collapsible repo header button");
+  // Expanded: a down chevron, a PR-count chip, and both rows.
+  assert.ok(header.querySelector(".fa-chevron-down"), "expanded header shows a down chevron");
+  assert.equal(container.querySelector(".pr-repo-count")?.textContent, "2");
+  assert.equal(container.querySelectorAll(".row").length, 2);
+
+  // Collapsing hides the rows and flips the chevron to "right".
+  fireEvent.click(header);
+  assert.equal(container.querySelectorAll(".row").length, 0);
+  assert.ok(header.querySelector(".fa-chevron-right"), "collapsed header shows a right chevron");
+  // Toggling the header never opens a PR (click is stopped from bubbling).
+  assert.deepEqual(openPrCalls, []);
+
+  // Expanding restores the rows.
+  fireEvent.click(header);
+  assert.equal(container.querySelectorAll(".row").length, 2);
+});
+
+test("a repo's error note stays visible when the repo is collapsed", () => {
+  const state = buildPanelState({
+    daemonUp: true,
+    syncAvailable: false,
+    overview: {
+      repos: [
+        { name: "acme/web", error: "lookup failed", groups: [{ kind: "pr", pr: mergeablePr() }] },
+      ],
+    },
+  });
+  const { container } = render(<PrsPane state={state} />);
+  const header = container.querySelector(".pr-repo-header-btn") as HTMLButtonElement;
+  assert.ok(container.querySelector(".repo-error"), "expected the error note while expanded");
+
+  fireEvent.click(header);
+  // The groups hide, but the failure note must remain reachable.
+  assert.equal(container.querySelectorAll(".row").length, 0);
+  assert.ok(
+    container.querySelector(".repo-error"),
+    "the error note stays visible when the repo is collapsed",
+  );
+});
+
 test("loading status renders the spinner placeholder", () => {
   const state = buildPanelState({ daemonUp: true, syncAvailable: false });
   assert.equal(state.status, "loading");
