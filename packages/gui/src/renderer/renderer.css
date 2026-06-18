@@ -10,6 +10,7 @@
 :root {
   --bg: #1e1e1e;
   --fg: #e6e6e6;
+  --fg-rgb: 230, 230, 230;
   --muted: #8a8a8a;
   --rule: #333;
   --chip-bg: #2a2a2a;
@@ -31,6 +32,7 @@
   :root {
     --bg: #f5f5f5;
     --fg: #1d1d1f;
+    --fg-rgb: 29, 29, 31;
     --muted: #6b6b70;
     --rule: #d2d2d7;
     --chip-bg: #e8e8ec;
@@ -725,13 +727,21 @@ body {
    circle in the task's stable color (set inline from the shared dexTaskColor),
    the PRIMARY at-a-glance cue that matches a task to its linked worktree. Sized
    to mirror the `.tab-dot` status dot, and leads both the dex row's id chip and
-   the worktree row's task chip so the two visibly share one "team color". Solid
-   fill reads clearly on both themes. */
+   the worktree row's task chip so the two visibly share one "team color".
+
+   A hairline contrast ring (a translucent shade of the theme foreground, so it's
+   dark on the light theme and light on the dark theme) outlines the dot. The
+   palette includes neutrals — white and grays — whose solid fill alone would
+   vanish into one theme's background (white on light, near-black on dark); the
+   ring is what keeps such an entry a visible circle on BOTH themes. It rides
+   outside the fill (no layout shift) and is a subtle definition cue for the
+   saturated entries too. */
 .dex-task-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   flex: 0 0 auto;
+  box-shadow: 0 0 0 1px rgba(var(--fg-rgb), 0.4);
 }
 /* Identity accent for an OPEN task's chip: a faint fill tinted with the task's
    stable color (set per-row as --task-color-rgb from the shared dexTaskColor),
@@ -740,10 +750,16 @@ body {
    doing); the id text keeps its own color so it stays legible on both themes.
    The .copied green confirmation still wins, since it sets `color` directly. The
    same tint rides the worktree row's task chip, so a worktree reads as its
-   task's color. */
+   task's color. The tint is layered OVER the chip's own `--chip-bg` (not painted
+   straight onto the page), so a near-white identity color — whose 16% tint over
+   the page would be lighter than a plain chip and read as washed-out — still
+   keeps the chip's baseline backing and stays a visible chip on the light theme.
+   The leading identity dot carries the strong, unambiguous color cue. */
 .dex-id.dex-open,
 .worktree-task.dex-open {
-  background: rgba(var(--task-color-rgb), 0.16);
+  background:
+    linear-gradient(rgba(var(--task-color-rgb), 0.16), rgba(var(--task-color-rgb), 0.16)),
+    var(--chip-bg);
 }
 .dex-detail-label {
   font-size: 11px;
