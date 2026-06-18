@@ -688,17 +688,17 @@ test("the optimistic in-flight state clears when a push drops the deleted row", 
 // New-task-from-description composer (T8f)
 // ---------------------------------------------------------------------------
 
-/** Arm the composer (click the + control) and return its textarea + submit. */
+/** Arm the dialog (click the + control) and return its textarea + submit. */
 function armComposer(container: HTMLElement): {
   textarea: HTMLTextAreaElement;
   submit: HTMLButtonElement;
 } {
   fireEvent.click(container.querySelector(".dex-new")!);
-  const composer = container.querySelector(".dex-new-composer");
-  assert.ok(composer, "the + control arms the inline composer");
+  const dialog = container.querySelector(".dex-new-dialog");
+  assert.ok(dialog, "the + control opens the New-task dialog");
   return {
-    textarea: composer!.querySelector(".dex-new-input") as HTMLTextAreaElement,
-    submit: composer!.querySelector(".dex-new-submit") as HTMLButtonElement,
+    textarea: dialog!.querySelector(".dex-new-input") as HTMLTextAreaElement,
+    submit: dialog!.querySelector(".dex-new-submit") as HTMLButtonElement,
   };
 }
 
@@ -750,24 +750,24 @@ test("Enter submits, and a submit shows an in-flight spinner + disables the cont
 
   // Optimistic feedback: while the (still-pending) launch is in flight the submit
   // spins and the textarea + cancel disable, so a double-submit can't fire.
-  const composer = container.querySelector(".dex-new-composer")!;
-  assert.ok(composer.querySelector(".dex-new-submit .fa-spin"), "submit spins while in flight");
-  assert.equal((composer.querySelector(".dex-new-input") as HTMLTextAreaElement).disabled, true);
-  assert.equal((composer.querySelector(".dex-new-cancel") as HTMLButtonElement).disabled, true);
+  const dialog = container.querySelector(".dex-new-dialog")!;
+  assert.ok(dialog.querySelector(".dex-new-submit .fa-spin"), "submit spins while in flight");
+  assert.equal((dialog.querySelector(".dex-new-input") as HTMLTextAreaElement).disabled, true);
+  assert.equal((dialog.querySelector(".dex-new-cancel") as HTMLButtonElement).disabled, true);
 });
 
-test("a successful submit closes the composer (the new task arrives via the next push)", async () => {
+test("a successful submit closes the dialog (the new task arrives via the next push)", async () => {
   const { container } = render(<DexPane section={section([row({ id: "a", name: "A" })])} />);
   const { textarea, submit } = armComposer(container);
   fireEvent.change(textarea, { target: { value: "go" } });
   fireEvent.click(submit);
-  assert.ok(container.querySelector(".dex-new-composer"), "composer stays open while in flight");
+  assert.ok(container.querySelector(".dex-new-dialog"), "dialog stays open while in flight");
 
-  // The author-agent launch settles → the composer closes (and its draft is gone).
+  // The author-agent launch settles → the dialog closes (and its draft is gone).
   await act(async () => {
     dexNewResolve!();
   });
-  assert.equal(container.querySelector(".dex-new-composer"), null, "success closes the composer");
+  assert.equal(container.querySelector(".dex-new-dialog"), null, "success closes the dialog");
 });
 
 test("the composer keeps focus + caret + draft across a background state push", () => {
@@ -802,17 +802,36 @@ test("the composer keeps focus + caret + draft across a background state push", 
   );
 });
 
-test("the cancel (✗) control closes the composer and discards the draft", () => {
+test("the cancel (✗) control closes the dialog and discards the draft", () => {
   const { container } = render(<DexPane section={section([row({ id: "a", name: "A" })])} />);
   const { textarea } = armComposer(container);
   fireEvent.change(textarea, { target: { value: "throwaway" } });
 
   fireEvent.click(container.querySelector(".dex-new-cancel")!);
-  assert.equal(container.querySelector(".dex-new-composer"), null, "cancel closes the composer");
+  assert.equal(container.querySelector(".dex-new-dialog"), null, "cancel closes the dialog");
 
   // Re-arming starts from a blank draft (the previous one was discarded).
   const reopened = armComposer(container);
   assert.equal(reopened.textarea.value, "", "re-arming starts from a blank draft");
+});
+
+test("a backdrop click cancels the dialog (parity with Esc); a click inside does not", () => {
+  const { container } = render(<DexPane section={section([row({ id: "a", name: "A" })])} />);
+  const { textarea } = armComposer(container);
+  fireEvent.change(textarea, { target: { value: "keep me" } });
+
+  // Clicking inside the dialog panel must NOT close it (the click is stopped from
+  // reaching the backdrop).
+  fireEvent.click(container.querySelector(".dex-new-dialog")!);
+  assert.ok(container.querySelector(".dex-new-dialog"), "an inside click leaves the dialog open");
+
+  // Clicking the backdrop closes it, just like Esc.
+  fireEvent.click(container.querySelector(".dex-new-backdrop")!);
+  assert.equal(
+    container.querySelector(".dex-new-dialog"),
+    null,
+    "a backdrop click closes the dialog",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -998,7 +1017,7 @@ test("collapsing a repo header hides only that repo's rows", () => {
   assert.equal(container.querySelectorAll(".dex-row").length, 2);
 });
 
-test("a repo header's New '+' arms a composer bound to THAT repo (no project selector)", () => {
+test("a repo header's New '+' arms a dialog bound to THAT repo (no project selector)", () => {
   const { container } = render(
     <DexPane
       section={multiRepoSection([
@@ -1012,20 +1031,20 @@ test("a repo header's New '+' arms a composer bound to THAT repo (no project sel
   assert.equal(newButtons.length, 2, "one New control per repo header");
   fireEvent.click(newButtons[1]!);
 
-  const composer = container.querySelector(".dex-new-composer");
-  assert.ok(composer, "the repo header's + arms the inline composer");
+  const dialog = container.querySelector(".dex-new-dialog");
+  assert.ok(dialog, "the repo header's + opens the New-task dialog");
   // The repo is implied, so no project selector is shown.
   assert.equal(
-    composer!.querySelector(".dex-new-project"),
+    dialog!.querySelector(".dex-new-project"),
     null,
-    "no project picker for a repo-scoped composer",
+    "no project picker for a repo-scoped dialog",
   );
 
   // Submitting lands the task in beta's store (the armed repo).
-  fireEvent.change(composer!.querySelector(".dex-new-input")!, {
+  fireEvent.change(dialog!.querySelector(".dex-new-input")!, {
     target: { value: "new beta task" },
   });
-  fireEvent.click(composer!.querySelector(".dex-new-submit")!);
+  fireEvent.click(dialog!.querySelector(".dex-new-submit")!);
   assert.equal(dexNewCalls.length, 1);
   assert.deepEqual(dexNewCalls[0], { description: "new beta task", project: "beta" });
 });
@@ -1106,9 +1125,7 @@ test("selecting a task still takes over the whole pane on a multi-repo board", (
 
 test("a configured-but-empty repo still renders its header (with a working New '+')", () => {
   // Two configured repos, neither has a task → both render an empty group header.
-  const { container } = render(
-    <DexPane section={multiRepoSection([], ["alpha", "beta"])} />,
-  );
+  const { container } = render(<DexPane section={multiRepoSection([], ["alpha", "beta"])} />);
   const headers = container.querySelectorAll(".dex-repo-header-btn");
   assert.equal(headers.length, 2, "every configured repo gets a header, even with no tasks");
   assert.match(headers[0]!.textContent ?? "", /alpha/);
@@ -1119,12 +1136,12 @@ test("a configured-but-empty repo still renders its header (with a working New '
 
   // Authoring the first task from beta's header lands it in beta's store.
   fireEvent.click(container.querySelectorAll(".dex-new")[1]!);
-  const composer = container.querySelector(".dex-new-composer");
-  assert.ok(composer, "the empty repo header's + arms the composer");
-  fireEvent.change(composer!.querySelector(".dex-new-input")!, {
+  const dialog = container.querySelector(".dex-new-dialog");
+  assert.ok(dialog, "the empty repo header's + opens the dialog");
+  fireEvent.change(dialog!.querySelector(".dex-new-input")!, {
     target: { value: "first beta task" },
   });
-  fireEvent.click(composer!.querySelector(".dex-new-submit")!);
+  fireEvent.click(dialog!.querySelector(".dex-new-submit")!);
   assert.equal(dexNewCalls.length, 1, "the first task for an empty repo can be authored here");
   assert.deepEqual(dexNewCalls[0], { description: "first beta task", project: "beta" });
 });
