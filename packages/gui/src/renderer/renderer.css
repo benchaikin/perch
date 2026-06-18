@@ -679,15 +679,34 @@ body {
   margin-left: 0;
 }
 
-/* The "New task from a description" composer: an inline textarea + project
-   selector + submit/cancel cluster, sitting between the header and the task rows.
+/* The "New task from a description" dialog: a centered modal (backdrop + panel)
+   holding a textarea + project selector + submit/cancel cluster, raised above the
+   board instead of injected inline (so arming it never shifts the task list down).
    A non-activating panel can't use window.prompt, so the description is typed here
    (same reason the delete-confirm is in-renderer). */
-.dex-new-composer {
+.dex-new-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.45);
+}
+.dex-new-dialog {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 8px 0;
+  width: 100%;
+  max-width: 420px;
+  box-sizing: border-box;
+  padding: 14px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
 }
 .dex-new-input {
   width: 100%;
@@ -729,7 +748,7 @@ body {
   padding: 2px 4px;
 }
 /* Submit reads as the "go" action (accent on hover); cancel stays neutral. */
-.dex-new-composer .dex-new-submit:hover:not(:disabled) {
+.dex-new-dialog .dex-new-submit:hover:not(:disabled) {
   color: var(--accent);
 }
 

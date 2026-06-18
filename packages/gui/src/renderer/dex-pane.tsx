@@ -645,8 +645,8 @@ function newTaskTargetProject(projects: string[], picked: string | undefined): s
 }
 
 /**
- * The "New task from a description" control: a "+" button that arms the inline
- * composer for `scope` (toggling it closed if already armed for that scope). The
+ * The "New task from a description" control: a "+" button that arms the New-task
+ * dialog for `scope` (toggling it closed if already armed for that scope). The
  * create-a-task counterpart to the per-row spawn play button — that spawns an
  * agent FOR a task; this spawns one to AUTHOR a task. `scope` is the repo
  * `project` on a multi-repo board (so the new task lands in that repo's store) or
@@ -672,21 +672,24 @@ function DexNewButton({ scope }: { scope: string }): JSX.Element {
 }
 
 /**
- * The armed New-task composer: an inline textarea (an affordance the non-activating
- * panel can rely on, unlike `window.prompt`), an optional project selector (only
- * when several repos have tasks, so the target store is unambiguous), and submit
- * (✓) / cancel (✗) controls. Enter submits, Shift+Enter inserts a newline, Esc
- * cancels; an empty/whitespace description disables submit; an in-flight launch
- * shows a spinner and disables the controls.
+ * The armed New-task dialog: a centered modal (backdrop + panel) holding a textarea
+ * (an affordance the non-activating panel can rely on, unlike `window.prompt`), an
+ * optional project selector (only when several repos have tasks, so the target store
+ * is unambiguous), and submit (✓) / cancel (✗) controls. Enter submits, Shift+Enter
+ * inserts a newline, Esc cancels, a backdrop click cancels (parity with Esc); an
+ * empty/whitespace description disables submit; an in-flight launch shows a spinner
+ * and disables the controls. Rendered once at the top of the board (keyed only by the
+ * armed `composing` scope), so it overlays the list rather than shifting it down.
  *
  * Focus continuity is free here: draft + in-flight are component state and the
  * textarea is a stable, controlled node, so a background board push re-renders
  * WITHOUT remounting it — focus, caret, and the half-typed draft all survive
- * untouched, with no focus-restoration hack. The mount effect
- * focuses the textarea ONCE when the composer arms (not per render), so the same
- * push can't steal focus mid-type either.
+ * untouched, with no focus-restoration hack. The dialog's mount is keyed only by
+ * whether it is open (the armed scope), never by board data, so a push can't
+ * remount it. The mount effect focuses the textarea ONCE when the dialog opens (not
+ * per render), so the same push can't steal focus mid-type either.
  */
-function DexNewComposer({ projects }: { projects: string[] }): JSX.Element {
+function DexNewDialog({ projects }: { projects: string[] }): JSX.Element {
   const actions = useActions();
   const { setComposing } = useDexContext();
   const [draft, setDraft] = useState("");
@@ -694,9 +697,9 @@ function DexNewComposer({ projects }: { projects: string[] }): JSX.Element {
   const [inFlight, setInFlight] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Grab focus once, when the composer is freshly armed (this runs on mount only —
-  // the composer mounts when armed and unmounts when closed). Not on every render,
-  // so a background board poll mid-type can't steal focus or reset the caret.
+  // Grab focus once, when the dialog opens (this runs on mount only — the dialog
+  // mounts when armed and unmounts when closed). Not on every render, so a
+  // background board poll mid-type can't steal focus or reset the caret.
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -709,7 +712,7 @@ function DexNewComposer({ projects }: { projects: string[] }): JSX.Element {
 
   // Launch the author agent for the trimmed draft (with the resolved target
   // project), marking it in flight so the controls disable + the submit shows a
-  // spinner. On success close the composer — its unmount drops the local draft, so
+  // spinner. On success close the dialog — its unmount drops the local draft, so
   // there's nothing to reset; on failure re-enable so the user can retry (the
   // success/error notice itself is pushed from main via panel state). Guards
   // against a second launch in flight and against an empty description.
@@ -726,62 +729,79 @@ function DexNewComposer({ projects }: { projects: string[] }): JSX.Element {
   }
 
   return (
-    // Clicks inside the composer must never bubble to a row/section open-detail.
-    <div className="dex-new-composer" onClick={(e) => e.stopPropagation()}>
-      <textarea
-        ref={textareaRef}
-        className="dex-new-input"
-        placeholder="Describe the task you want — an agent will read the code and author it."
-        rows={3}
-        value={draft}
-        disabled={inFlight}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault(); // Enter submits; Shift+Enter falls through to a newline.
-            void submit();
-          } else if (e.key === "Escape") {
-            e.preventDefault();
-            setComposing(undefined);
-          }
-        }}
-      />
-      <div className="dex-new-controls">
-        {/* A project selector only when several repos' tasks share the board, so the
-            target store is unambiguous; one (or zero) project needs no choice. */}
-        {projects.length > 1 && (
-          <select
-            className="dex-new-project"
-            disabled={inFlight}
-            title="Target repository"
-            value={project ?? projects[0]}
-            onChange={(e) => setProject(e.target.value)}
-          >
-            {projects.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
-        )}
-        <button
-          className="icon-btn dex-new-submit"
-          disabled={!canSubmit}
-          title={inFlight ? "Spawning the author agent…" : "Create task (Enter)"}
-          aria-label={inFlight ? "Spawning the author agent…" : "Create task (Enter)"}
-          onClick={() => void submit()}
-        >
-          <i className={inFlight ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-check"} />
-        </button>
-        <button
-          className="icon-btn dex-new-cancel"
+    // The backdrop dims the board and closes the dialog on an outside click (parity
+    // with Esc) — but never while a launch is in flight, so a stray click can't drop
+    // an in-progress submit.
+    <div
+      className="dex-new-backdrop"
+      onClick={() => {
+        if (!inFlight) setComposing(undefined);
+      }}
+    >
+      {/* Clicks inside the dialog must neither close it (don't reach the backdrop)
+          nor bubble to a row/section open-detail handler. */}
+      <div
+        className="dex-new-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="New task from a description"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <textarea
+          ref={textareaRef}
+          className="dex-new-input"
+          placeholder="Describe the task you want — an agent will read the code and author it."
+          rows={3}
+          value={draft}
           disabled={inFlight}
-          title="Cancel (Esc)"
-          aria-label="Cancel (Esc)"
-          onClick={() => setComposing(undefined)}
-        >
-          <i className="fa-solid fa-xmark" />
-        </button>
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault(); // Enter submits; Shift+Enter falls through to a newline.
+              void submit();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              setComposing(undefined);
+            }
+          }}
+        />
+        <div className="dex-new-controls">
+          {/* A project selector only when several repos' tasks share the board, so the
+              target store is unambiguous; one (or zero) project needs no choice. */}
+          {projects.length > 1 && (
+            <select
+              className="dex-new-project"
+              disabled={inFlight}
+              title="Target repository"
+              value={project ?? projects[0]}
+              onChange={(e) => setProject(e.target.value)}
+            >
+              {projects.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          )}
+          <button
+            className="icon-btn dex-new-submit"
+            disabled={!canSubmit}
+            title={inFlight ? "Spawning the author agent…" : "Create task (Enter)"}
+            aria-label={inFlight ? "Spawning the author agent…" : "Create task (Enter)"}
+            onClick={() => void submit()}
+          >
+            <i className={inFlight ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-check"} />
+          </button>
+          <button
+            className="icon-btn dex-new-cancel"
+            disabled={inFlight}
+            title="Cancel (Esc)"
+            aria-label="Cancel (Esc)"
+            onClick={() => setComposing(undefined)}
+          >
+            <i className="fa-solid fa-xmark" />
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1310,15 +1330,15 @@ function DexRepoHeader({
 
 /**
  * One repo group on a multi-repo board: its {@link DexRepoHeader} (with the
- * per-repo New / spawn-all / collapse-all controls), the group-scoped New-task
- * composer when armed for this repo, and — unless the group is collapsed — the
- * group's rows in the active view (the tree's visible rows, or the dependency
- * graph over just this repo's rows; blocker edges never span repos, so a per-repo
- * graph is the whole forest for that repo). The composer renders even while the
- * group is collapsed, so arming "+" on a folded repo still reveals it.
+ * per-repo New / spawn-all / collapse-all controls) and — unless the group is
+ * collapsed — the group's rows in the active view (the tree's visible rows, or the
+ * dependency graph over just this repo's rows; blocker edges never span repos, so a
+ * per-repo graph is the whole forest for that repo). The New-task dialog the "+"
+ * arms is a single top-level overlay (see {@link DexSectionBody}), not a per-group
+ * inline form, so it opens centered regardless of which repo armed it.
  */
 function DexRepoGroupView({ group }: { group: DexRepoGroup }): JSX.Element {
-  const { collapsed, viewMode, composing } = useDexContext();
+  const { collapsed, viewMode } = useDexContext();
   const isCollapsed = collapsed.has(repoCollapseKey(group.project));
   const epicIds = group.rows.filter((r) => r.isEpic).map((r) => r.id);
   const readyCount = group.rows.filter(canSpawnDex).length;
@@ -1330,9 +1350,6 @@ function DexRepoGroupView({ group }: { group: DexRepoGroup }): JSX.Element {
         epicIds={epicIds}
         readyCount={readyCount}
       />
-      {/* A one-element projects list pre-binds the composer to this repo (no
-          selector shown) and submits its `project`, so the task lands here. */}
-      {composing === group.project && <DexNewComposer projects={[group.project]} />}
       {!isCollapsed &&
         (viewMode === "graph" ? (
           <DexGraph rows={group.rows} />
@@ -1602,6 +1619,17 @@ function DexSectionBody({ section }: { section: DexSection }): JSX.Element {
   }, [selectedId, selected, setSelectedId]);
   if (selected) return <DexDetail row={selected} />;
 
+  // The New-task dialog is a single top-level overlay driven by the armed scope, not
+  // an inline form per render site — so it opens centered regardless of which "+"
+  // armed it, and (mounted only by `composing`, never by board data) survives a
+  // background push without remounting its textarea. The armed scope resolves the
+  // projects the inline sites used to pass: the pane sentinel offers the board's
+  // distinct projects (single-repo → no selector), a repo scope pre-binds to that
+  // one repo (one-element list → no selector, the task lands there).
+  const dialog = composing !== undefined && (
+    <DexNewDialog projects={composing === PANE_SCOPE ? dexProjects(section) : [composing]} />
+  );
+
   // Multi-repo board: a per-repo collapsible group, each with its own header +
   // controls. The pane-level header keeps only the view toggle.
   if (section.multiRepo && section.repoGroups.length > 0) {
@@ -1611,21 +1639,20 @@ function DexSectionBody({ section }: { section: DexSection }): JSX.Element {
         {section.repoGroups.map((group) => (
           <DexRepoGroupView key={group.project} group={group} />
         ))}
+        {dialog}
       </>
     );
   }
 
-  // Single-repo board: the header (+ its armed New-task composer) and the body
-  // render at stable positions whether the board is empty or has rows, so a
-  // background push that flips between them never remounts the composer's textarea
-  // mid-type. An installed-but-empty board still shows the header, so the first
-  // task can be authored from it; below it an empty state keeps the tab as "Dex".
+  // Single-repo board: the header and the body render at stable positions whether
+  // the board is empty or has rows. An installed-but-empty board still shows the
+  // header, so the first task can be authored from it; below it an empty state keeps
+  // the tab as "Dex".
   const epicIds = section.rows.filter((r) => r.isEpic).map((r) => r.id);
   const readyCount = section.rows.filter(canSpawnDex).length;
   return (
     <>
       <DexHeader epicIds={epicIds} readyCount={readyCount} />
-      {composing === PANE_SCOPE && <DexNewComposer projects={dexProjects(section)} />}
       {section.rows.length === 0 ? (
         <div className="message">No open tasks</div>
       ) : viewMode === "graph" ? (
@@ -1634,6 +1661,7 @@ function DexSectionBody({ section }: { section: DexSection }): JSX.Element {
       ) : (
         visibleTreeRows(section.rows, collapsed).map((row) => <DexTaskRow key={row.id} row={row} />)
       )}
+      {dialog}
     </>
   );
 }
