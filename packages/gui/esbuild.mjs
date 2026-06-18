@@ -29,6 +29,16 @@ const logErr = (msg) => process.stderr.write(`${msg}\n`);
 
 const watchMode = process.argv.includes("--watch");
 
+// React (and other libs) gate their dev-only code on `process.env.NODE_ENV`.
+// esbuild leaves that reference unresolved for the browser, so without this
+// define React's package entry falls to its DEVELOPMENT build — bigger, slower,
+// and full of console warnings. Pin it so `pnpm build` bundles the production
+// React (eval-free, required by the renderer CSP); keep the dev build under
+// `--watch` (pnpm dev) where React's warnings are worth having.
+const browserDefine = {
+  "process.env.NODE_ENV": JSON.stringify(watchMode ? "development" : "production"),
+};
+
 const root = dirname(fileURLToPath(import.meta.url));
 const src = join(root, "src");
 const dist = join(root, "dist");
@@ -106,17 +116,13 @@ const configs = [
     platform: "browser",
     format: "iife",
     target: "es2022",
-    // React renderer: use the automatic JSX runtime (no `import React` needed)
-    // and force the production transform (`jsxDev: false`) — the dev runtime
-    // emits extra dev-only code and the renderer ships React's eval-free
-    // production build to satisfy the CSP (`script-src 'self'`, no eval).
+    // JSX via React's automatic runtime (no per-file React import needed).
+    // jsxDev:false forces the production transform — the dev runtime emits
+    // eval-free but dev-only code, and the renderer CSP is strict, so we always
+    // ship the prod transform. React itself is bundled IN (no CDN; CSP blocks it).
     jsx: "automatic",
     jsxDev: false,
-    // React picks its dev vs prod build off `process.env.NODE_ENV`, which has no
-    // value in the browser. Define it to "production" so esbuild dead-code-
-    // eliminates the dev branches (the ones that use eval/new Function) and
-    // bundles React's eval-free production build, leaving no bare `process` ref.
-    define: { "process.env.NODE_ENV": '"production"' },
+    define: browserDefine,
   },
 
   // The Settings window's preload — same .cjs requirement as the panel preload
@@ -141,9 +147,10 @@ const configs = [
     platform: "browser",
     format: "iife",
     target: "es2022",
+    // Same JSX setup as the panel renderer (prod automatic runtime); see above.
     jsx: "automatic",
     jsxDev: false,
-    define: { "process.env.NODE_ENV": '"production"' },
+    define: browserDefine,
   },
 ];
 

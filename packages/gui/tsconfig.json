@@ -10,8 +10,9 @@
     // alongside Node. esbuild produces the actual browser bundles; tsc here is
     // for type-checking + emitting the Node main process.
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    // React renderer: type-check .tsx with the automatic JSX runtime, matching
-    // esbuild's jsx:"automatic" so neither needs an `import React`.
+    // Type-check .tsx with React's automatic runtime, matching esbuild's
+    // jsx:"automatic" transform (no per-file React import). jsxImportSource:
+    // "react" points the generated `jsx`/`jsxs` imports at react/jsx-runtime.
     "jsx": "react-jsx",
     "jsxImportSource": "react"
   },
