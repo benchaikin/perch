@@ -49,14 +49,8 @@ test(
       "expected the `dex-agent` marker class in the renderer bundle",
     );
     // A couple of the state labels, so a gutted agent-marker map is caught too.
-    assert.ok(
-      bundle.includes("Agent running"),
-      "expected the `Agent running` hint in the bundle",
-    );
-    assert.ok(
-      bundle.includes("Agent blocked"),
-      "expected the `Agent blocked` hint in the bundle",
-    );
+    assert.ok(bundle.includes("Agent running"), "expected the `Agent running` hint in the bundle");
+    assert.ok(bundle.includes("Agent blocked"), "expected the `Agent blocked` hint in the bundle");
   },
 );
 
@@ -126,18 +120,12 @@ test(
   { skip: !existsSync(bundlePath) ? "bundle not built (run pnpm build first)" : false },
   () => {
     const bundle = readFileSync(bundlePath, "utf8");
-    // The click-to-copy id chip, shared by the detail view and the main rows.
+    // The click-to-copy id chip (the shared `DexIdChip`), used by the detail view
+    // and the tree/graph rows alike. Its class + hint reaching the bundle proves
+    // the chip is wired into the renderer; that it renders on rows (not just the
+    // detail) is covered by the jsdom tests in `dex-pane.test.tsx`.
     assert.ok(bundle.includes("dex-id"), "expected the `dex-id` chip class in the renderer bundle");
-    assert.ok(
-      bundle.includes("Copy task id"),
-      "expected the `Copy task id` hint in the bundle",
-    );
-    // The shared helper bundles to a single arrow function the rows reference, so
-    // its presence proves the id chip reaches the row render (not just detail).
-    assert.ok(
-      bundle.includes("dexIdChipEl"),
-      "expected the shared `dexIdChipEl` helper in the renderer bundle",
-    );
+    assert.ok(bundle.includes("Copy task id"), "expected the `Copy task id` hint in the bundle");
   },
 );
 
@@ -215,26 +203,6 @@ test(
     assert.ok(
       bundle.includes("dexNew"),
       "expected the `dexNew` bridge call in the renderer bundle",
-    );
-  },
-);
-
-test(
-  "renderer bundle carries the in-panel focus preservation across re-renders",
-  { skip: !existsSync(bundlePath) ? "bundle not built (run pnpm build first)" : false },
-  () => {
-    const bundle = readFileSync(bundlePath, "utf8");
-    // The stable attribute in-panel text fields tag themselves with so render()
-    // can carry focus + caret across the board poll's full DOM rebuild.
-    assert.ok(
-      bundle.includes("data-focus-key"),
-      "expected the `data-focus-key` focus-preservation attribute in the renderer bundle",
-    );
-    // The caret-restoring call render() makes after the rebuild — proof the
-    // capture/restore wiring (not just the attribute) reaches the bundle.
-    assert.ok(
-      bundle.includes("setSelectionRange"),
-      "expected the `setSelectionRange` caret restore in the renderer bundle",
     );
   },
 );
