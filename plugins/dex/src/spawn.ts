@@ -186,6 +186,25 @@ export class GitRunner {
     }
   }
 
+  /**
+   * Freshen `<branch>` from origin so callers can base work on the latest pushed
+   * trunk: `git -C <repo> fetch origin <branch>`. Returns `true` when the fetch
+   * landed (and `origin/<branch>` is therefore a usable, current base), `false`
+   * on any failure — no `origin`, offline, or a branch origin doesn't have — so
+   * the caller falls back to the local ref. Best-effort by construction: it only
+   * advances the remote-tracking ref, never the working tree or the local branch,
+   * so it's safe no matter what the main worktree has checked out, and it never
+   * throws.
+   */
+  async fetchBase(repo: string, branch: string): Promise<boolean> {
+    try {
+      await this.exec(this.gitBin, ["-C", repo, "fetch", "origin", branch]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** Create the worktree; rejects (surfacing git's stderr) on failure. */
   worktreeAdd(repo: string, branch: string, path: string, base: string): Promise<string> {
     return this.exec(this.gitBin, worktreeAddArgs(repo, branch, path, base));
@@ -560,10 +579,21 @@ export async function runSpawn(input: SpawnInput, deps: SpawnDeps): Promise<Spaw
     };
   }
 
-  // Create the worktree off the repo's default branch. git's own `worktree add`
-  // refuses an existing path, but we surface a clearer message either way.
+  // Create the worktree off the repo's default branch. Freshen it from origin
+  // first so the agent starts from the latest pushed trunk, not a stale local
+  // ref — basing on `origin/<base>` when the fetch lands, falling back to the
+  // local `<base>` when it doesn't (offline, no origin). Best-effort: a fetch
+  // failure never blocks the spawn. git's own `worktree add` refuses an existing
+  // path, but we surface a clearer message either way.
   const git = new GitRunner(deps.gitBin, deps.exec);
-  const base = await git.defaultBranch(resolvedRepo);
+  const localBase = await git.defaultBranch(resolvedRepo);
+  const freshened = await git.fetchBase(resolvedRepo, localBase);
+  if (!freshened) {
+    deps.log?.(
+      `dex.spawn: couldn't fetch origin/${localBase} in ${resolvedRepo}; basing the worktree on the local ${localBase}`,
+    );
+  }
+  const base = freshened ? `origin/${localBase}` : localBase;
   try {
     await git.worktreeAdd(resolvedRepo, branch, worktreePath, base);
   } catch (err) {

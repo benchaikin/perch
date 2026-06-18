@@ -59,10 +59,23 @@ if [[ -e "$path" ]]; then
   exit 1
 fi
 
+# Freshen the base from origin so the new worktree starts from the latest pushed
+# trunk, not a stale local ref — basing it on origin/<base> when the fetch lands.
+# Best-effort: a fetch failure (offline, no origin, a local-only base) falls back
+# to the local <base>. This only advances the remote-tracking ref, never the
+# working tree or the local branch, so it's safe whatever the main worktree has
+# checked out.
+worktree_base="$base"
+if git fetch origin "$base" >/dev/null 2>&1; then
+  worktree_base="origin/$base"
+else
+  echo "note: couldn't fetch origin/$base; basing the worktree on the local $base" >&2
+fi
+
 # Create the worktree on a NEW branch ourselves so the branch matches the
 # convention. (The Agent tool's isolation:worktree auto-names worktree-agent-<hex>,
 # which would NOT match — so we never rely on that here.)
-git worktree add -b "$branch" "$path" "$base" >&2
+git worktree add -b "$branch" "$path" "$worktree_base" >&2
 
 # Link the repo's dex store into the worktree so `dex` resolves the shared store
 # from inside it. A worktree is a sibling dir with no `.dex` of its own, and dex

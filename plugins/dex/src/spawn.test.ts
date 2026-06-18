@@ -171,6 +171,23 @@ test("worktreeAddArgs: git -C <repo> worktree add -b <branch> <path> <base>", ()
   );
 });
 
+test("GitRunner.fetchBase: fetches origin/<branch> and reports success", async () => {
+  const calls: Array<{ cmd: string; args: string[] }> = [];
+  const exec: Exec = (cmd, args) => {
+    calls.push({ cmd, args });
+    return Promise.resolve("");
+  };
+  const git = new GitRunner("git", exec);
+  assert.equal(await git.fetchBase("/work/perch", "main"), true);
+  assert.deepEqual(calls, [{ cmd: "git", args: ["-C", "/work/perch", "fetch", "origin", "main"] }]);
+});
+
+test("GitRunner.fetchBase: a fetch failure returns false, never throws", async () => {
+  const exec: Exec = () => Promise.reject(new Error("could not resolve host"));
+  const git = new GitRunner("git", exec);
+  assert.equal(await git.fetchBase("/work/perch", "main"), false);
+});
+
 test("buildClaudeLaunch: cd's into the quoted path and execs claude with a quoted prompt", () => {
   const cmd = buildClaudeLaunch("/work/perch-worktrees/abc12-x", bootstrapPrompt("abc12"));
   // The session launches in auto mode so the spawned agent runs without a manual
@@ -267,6 +284,7 @@ function execStub(opts: {
   defaultBranch?: string;
   failWorktree?: boolean;
   failStart?: boolean;
+  failFetch?: boolean;
 }): { exec: Exec; calls: Array<{ cmd: string; args: string[] }> } {
   const calls: Array<{ cmd: string; args: string[] }> = [];
   const exec: Exec = (cmd, args) => {
@@ -287,6 +305,9 @@ function execStub(opts: {
     if (cmd === "git") {
       if (args[0] === "symbolic-ref") {
         return Promise.resolve(`origin/${opts.defaultBranch ?? "main"}\n`);
+      }
+      if (args.includes("fetch")) {
+        return opts.failFetch ? Promise.reject(new Error("could not fetch")) : Promise.resolve("");
       }
       if (args.includes("worktree")) {
         if (opts.failWorktree) return Promise.reject(new Error("fatal: already exists"));
@@ -381,7 +402,11 @@ test("runSpawn: happy path — finds the task's store, creates the worktree, lau
   assert.equal(res.worktreePath, "/work/perch-worktrees/abc12-add-the-spawn-action");
   assert.match(res.message, /branch dex\/abc12-add-the-spawn-action/);
 
-  // The worktree was created off the resolved default branch with the right args.
+  // The base was freshened from origin first…
+  const fetch = calls.find((c) => c.cmd === "git" && c.args.includes("fetch"));
+  assert.deepEqual(fetch!.args, ["-C", "/work/perch", "fetch", "origin", "main"]);
+  // …and the worktree was created off `origin/main` (the freshened ref), not the
+  // possibly-stale local `main`, with the right args.
   const add = calls.find((c) => c.cmd === "git" && c.args.includes("worktree"));
   assert.deepEqual(add!.args, [
     "-C",
@@ -391,8 +416,12 @@ test("runSpawn: happy path — finds the task's store, creates the worktree, lau
     "-b",
     "dex/abc12-add-the-spawn-action",
     "/work/perch-worktrees/abc12-add-the-spawn-action",
-    "main",
+    "origin/main",
   ]);
+  // The fetch happened BEFORE the worktree was created.
+  const fetchIdx = calls.indexOf(fetch!);
+  const addIdx = calls.indexOf(add!);
+  assert.ok(fetchIdx < addIdx);
   // The agent was launched once, cd'ing into the worktree + exec'ing claude.
   assert.equal(term.calls, 1);
   assert.equal(script.commands.length, 1);
@@ -417,6 +446,34 @@ test("runSpawn: happy path — finds the task's store, creates the worktree, lau
   const startIdx = calls.indexOf(start);
   const worktreeIdx = calls.findIndex((c) => c.cmd === "git" && c.args.includes("worktree"));
   assert.ok(startIdx < worktreeIdx);
+});
+
+test("runSpawn: a failed origin fetch falls back to the local base, still spawns", async () => {
+  const { exec, calls } = execStub({
+    tasks: { "/work/perch/.dex": { name: "Task" } },
+    failFetch: true, // offline / no origin
+  });
+  const term = fakeSpawn();
+  const logs: string[] = [];
+  const res = await runSpawn(
+    { id: "abc12" },
+    deps(exec, {
+      spawn: term.spawn,
+      writeScript: fakeWriteScript().writeScript,
+      log: (m) => logs.push(m),
+    }),
+  );
+
+  assert.equal(res.ok, true);
+  // The fetch was attempted…
+  assert.ok(calls.some((c) => c.cmd === "git" && c.args.includes("fetch")));
+  // …and on its failure the worktree was based on the LOCAL `main`, not `origin/main`.
+  const add = calls.find((c) => c.cmd === "git" && c.args.includes("worktree"));
+  assert.equal(add!.args[add!.args.length - 1], "main");
+  // The fallback was logged, not thrown.
+  assert.ok(logs.some((m) => /couldn't fetch origin\/main/.test(m)));
+  // The agent still launched.
+  assert.equal(term.calls, 1);
 });
 
 test("runSpawn: a failing `dex start` is surfaced and nothing is created", async () => {
@@ -543,6 +600,9 @@ test("runSpawn: default branch falls back to main when there's no origin/HEAD", 
     if (cmd === "dex" && args.includes("show")) return Promise.resolve(JSON.stringify({ name: "T" }));
     if (cmd === "dex") return Promise.resolve("");
     if (cmd === "git" && args[0] === "symbolic-ref") return Promise.reject(new Error("no HEAD"));
+    // No origin/HEAD ⇒ no origin to fetch from either, so the freshen fails and
+    // the worktree falls back to the bare local `main`.
+    if (cmd === "git" && args.includes("fetch")) return Promise.reject(new Error("no origin"));
     return Promise.resolve("");
   };
   const term = fakeSpawn();

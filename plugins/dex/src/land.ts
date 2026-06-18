@@ -34,6 +34,7 @@ import type { Notification } from "@perch/sdk";
 import { parseDexTaskId, parseWorktreeList } from "@perch/plugin-worktrees";
 
 import type { Exec } from "./provider.js";
+import { GitRunner } from "./spawn.js";
 
 /** The PR facts a land outcome carries (for evidence + notifications). */
 export const LandPr = z.object({
@@ -291,8 +292,12 @@ async function dexTaskOverride(deps: LandDeps, path: string): Promise<string> {
  */
 export async function runLand(deps: LandDeps): Promise<LandBoard> {
   const fs = deps.fs ?? defaultFsProbe;
+  const git = new GitRunner(deps.gitBin, deps.exec);
   const reaped: LandOutcome[] = [];
   const flagged: LandOutcome[] = [];
+  // Repos already freshened this pass — so N merged worktrees in one repo trigger
+  // a single fetch, not N. See the freshen step just before each reap.
+  const freshenedRepos = new Set<string>();
 
   const candidates = await enumerateDexWorktrees(deps);
   for (const c of candidates) {
@@ -362,6 +367,23 @@ export async function runLand(deps: LandDeps): Promise<LandBoard> {
     }
 
     // --- All guards passed: reap (worktree + branch + dex complete). ---
+    // First, freshen this repo's default branch from origin — ONCE per pass,
+    // before the reap completes the task — so the PR's merge commit is present
+    // locally and `reap` links the real SHA via `dex complete --commit` instead
+    // of the `--no-commit` fallback. Best-effort: a fetch failure (offline, no
+    // origin) leaves the trunk stale and the reap degrades to `--no-commit`; it
+    // never blocks the reap.
+    if (!freshenedRepos.has(c.repo)) {
+      freshenedRepos.add(c.repo);
+      const repoBase = await git.defaultBranch(c.repo);
+      const freshened = await git.fetchBase(c.repo, repoBase);
+      if (!freshened) {
+        deps.log?.(
+          `dex.land: couldn't fetch origin/${repoBase} in ${c.repo}; reaping off the stale local trunk`,
+        );
+      }
+    }
+
     const evidence = evidenceFor(pr);
     try {
       await reap(deps, c, pr, evidence);
@@ -392,10 +414,11 @@ export async function runLand(deps: LandDeps): Promise<LandBoard> {
 async function reap(deps: LandDeps, c: Candidate, pr: LandPr, evidence: string): Promise<void> {
   if (!(await isTaskCompleted(deps, c))) {
     const completeArgs = ["--storage-path", storagePathOf(c.repo), "complete", c.taskId];
-    // `dex complete --commit <sha>` validates the SHA exists in the LOCAL repo,
-    // but a GitHub merge/squash commit usually isn't local yet (the local trunk
-    // hasn't pulled it). Link the commit only when it's actually present; else
-    // complete with `--no-commit` (the merge SHA is still in the evidence text).
+    // `dex complete --commit <sha>` validates the SHA exists in the LOCAL repo.
+    // runLand fetches origin's default branch before reaping, so the merge commit
+    // is normally present by now — but the fetch is best-effort (it can fail when
+    // offline or origin-less), so link the commit only when it's actually present;
+    // else complete with `--no-commit` (the merge SHA is still in the evidence text).
     if (pr.mergeCommit && (await commitExistsLocally(deps, c.repo, pr.mergeCommit))) {
       completeArgs.push("--commit", pr.mergeCommit);
     } else {

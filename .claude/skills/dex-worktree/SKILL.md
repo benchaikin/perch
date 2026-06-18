@@ -52,7 +52,8 @@ If `dex` isn't on PATH, use `npx @zeeg/dex` instead.
 
 Use the helper script, which derives a kebab slug from the task name, picks a
 base branch (defaults to the repo's default branch via `origin/HEAD`, falling
-back to `main`), and creates the worktree on a new `dex/<id>-<slug>` branch:
+back to `main`), **freshens that base from origin**, and creates the worktree on
+a new `dex/<id>-<slug>` branch:
 
 ```bash
 .claude/skills/dex-worktree/create-dex-worktree.sh <id> "<task name>" [base-branch]
@@ -62,10 +63,19 @@ The script prints the created worktree path as its last stdout line; capture it
 as `WT`. It places worktrees in a sibling `../<repo>-worktrees/<id>-<slug>`
 directory so they don't collide.
 
-Doing it by hand instead is fine — just keep the branch matching the convention:
+The base is freshened with `git fetch origin <base>` and the worktree is based on
+`origin/<base>`, so a freshly-spawned agent starts from the latest **pushed**
+trunk rather than a possibly-stale local ref. It's best-effort: if the fetch
+fails (offline, no `origin`), it falls back to the local `<base>`. The fetch only
+advances the remote-tracking ref — it never touches the main worktree's working
+tree or its checked-out branch.
+
+Doing it by hand instead is fine — just keep the branch matching the convention
+and base it on the freshened `origin/<base>`:
 
 ```bash
-git worktree add -b dex/<id>-<slug> <path> <base>
+git fetch origin <base>                                # freshen (best-effort)
+git worktree add -b dex/<id>-<slug> <path> origin/<base>
 ```
 
 ### 3. (Optional) Harden with a worktree-local git config
@@ -99,7 +109,11 @@ already exists). In its prompt:
 
 ### 6. On completion (only after the work is verified)
 
-Mirror the repo's standard merge + cleanup flow:
+If the work went out as a PR that has since **merged**, prefer the `land-dex`
+skill — it reaps the worktree + branch and completes the task, freshening the
+local trunk first so `dex complete --commit <mergeSha>` validates against the
+real merge commit. Otherwise, mirror the repo's standard merge + cleanup flow by
+hand:
 
 ```bash
 # from the main worktree / repo root, on the default branch:
@@ -110,7 +124,9 @@ git worktree remove <WT>
 git branch -d dex/<id>-<slug>
 ```
 
-Then complete the dex task with verification evidence:
+The `git pull` above is the by-hand equivalent of the spawn-time freshen: it
+brings the local trunk up to date before the merge. Then complete the dex task
+with verification evidence:
 
 ```bash
 dex complete <id> --result "..." --commit <sha>
