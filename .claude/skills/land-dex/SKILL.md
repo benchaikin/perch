@@ -177,6 +177,26 @@ Lines are tagged `REAP` (guards passed), `ROLLUP` (a pure-container epic emptied
 by a reap and auto-completed), or `FLAG` (skipped, with the reason), and a
 `==== summary ====` block reports the counts.
 
+### Must stay bash-3.2 compatible
+
+The reaper runs under whatever `#!/usr/bin/env bash` resolves to. On macOS that's
+**GNU bash 3.2.57** (`/bin/bash`; Apple froze bash at 3.2 over GPLv3, and there is
+no bash 4+ on the box). So the script must avoid **bash-4-only** constructs —
+associative arrays (`declare -A`), `mapfile`/`readarray`, `${var^^}`/`${var,,}`
+case conversion, `&>>`, etc. (#55 reintroduced `declare -A`; with `set -euo
+pipefail` it aborts at that line *before* a single worktree is processed, silently
+turning auto-land into a no-op.) The script guards its shell at startup and exits
+loudly if it isn't running under bash ≥ 3.2.
+
+`reap-dex-lint.sh` is the regression guard: it greps the skill's shell scripts for
+known bash-4-only constructs and parses each under the running bash, exiting
+non-zero on a hit. Run it after editing any script here, and wire it into CI to
+keep a bash-4-ism from relanding:
+
+```bash
+.claude/skills/land-dex/reap-dex-lint.sh
+```
+
 ## When NOT to use this
 
 - The PR isn't merged yet — wait, or finish/merge it first (see `dex-worktree`).

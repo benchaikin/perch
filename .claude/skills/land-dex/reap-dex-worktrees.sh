@@ -33,6 +33,23 @@
 # worktree and only proceed if it passes. Repos WITH CI are unchanged.
 set -euo pipefail
 
+# Fail loud on an incompatible shell. This script is deliberately bash-3.2-safe
+# (macOS ships GNU bash 3.2.57 as /bin/bash — Apple froze it over GPLv3), so the
+# only hard requirement is bash itself: it relies on [[, BASH_REMATCH, and
+# `set -o pipefail`, none of which POSIX sh/dash provide. Guarding here means an
+# incompatible shell errors clearly instead of dying mid-run on the first
+# bashism — the failure mode that let #55's `declare -A` silently no-op every
+# reap. Note: don't reach for bash-4-only constructs (declare -A, mapfile,
+# ${v^^}); reap-dex-lint.sh enforces that.
+if [ -z "${BASH_VERSION:-}" ]; then
+  echo "error: reap-dex-worktrees.sh must run under bash (got a non-bash shell)" >&2
+  exit 1
+fi
+if [ "${BASH_VERSINFO:-0}" -lt 3 ]; then
+  echo "error: reap-dex-worktrees.sh needs bash >= 3.2 (found ${BASH_VERSION})" >&2
+  exit 1
+fi
+
 DRY_RUN=0
 ONLY_ID=""
 for arg in "$@"; do
@@ -140,7 +157,18 @@ freshen_trunk() {
 # The set of dex task ids that have a live worktree in this repo. The ancestor
 # rollup uses it to tell a pure container (no worktree of its own — safe to
 # auto-complete) from an epic with real work (its own worktree; it reaps itself).
-declare -A WORKTREE_IDS=()
+#
+# Stored as a space-delimited, space-bordered string (" id1 id2 ") rather than an
+# associative array so the script runs under bash 3.2 (no `declare -A`). dex ids
+# are lowercase alphanumerics, so they're safe to splice into the string and to
+# match with a `case` glob. Membership: has_worktree_id.
+WORKTREE_IDS=" "
+has_worktree_id() {
+  case "$WORKTREE_IDS" in
+    *" $1 "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 collect_worktree_ids() {
   local p="" b="" first=1 id=""
   while IFS= read -r line; do
@@ -157,7 +185,9 @@ collect_worktree_ids() {
       fi
       id="$(git -C "$p" config --worktree perch.dexTask 2>/dev/null || true)"
       [[ -z "$id" ]] && id="$(parse_dex_id "$b")"
-      [[ -n "$id" ]] && WORKTREE_IDS["$id"]=1
+      if [[ -n "$id" ]] && ! has_worktree_id "$id"; then
+        WORKTREE_IDS="$WORKTREE_IDS$id "
+      fi
     fi
   done < <(git worktree list --porcelain)
 }
@@ -177,7 +207,7 @@ rollup_containers() {
     task_json="$(dex show "$cur" --json 2>/dev/null)" || break
     parent_id="$(printf '%s' "$task_json" | jq -r '.parent_id // ""')" || break
     [[ -z "$parent_id" ]] && break
-    [[ -n "${WORKTREE_IDS[$parent_id]:-}" ]] && break # has its own worktree — reaps itself
+    has_worktree_id "$parent_id" && break # has its own worktree — reaps itself
     parent_json="$(dex show "$parent_id" --json 2>/dev/null)" || break
     completed="$(printf '%s' "$parent_json" | jq -r '.completed // false')"
     [[ "$completed" == "true" ]] && break # already done (idempotent)
