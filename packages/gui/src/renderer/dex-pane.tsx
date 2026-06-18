@@ -31,10 +31,27 @@ import { DEX_STATUS_LABEL, DexTaskDot } from "./dex-task-chip.js";
 // ---------------------------------------------------------------------------
 
 /**
+ * A dependency-edit drag in flight (the `draggingDex*` module globals of `dex.ts`,
+ * lifted into the shared store). `id` is the dragged task — the blocker side of an
+ * add (drop A onto B ⇒ B blocked-by A). `blockerId` is set only when the dragged
+ * row is a *nested graph node*: it's the blocker that node sits under, so dropping
+ * the node on the unblock zone removes exactly that edge. Tree rows and unblocked
+ * roots leave it `undefined`, so the remove gesture stays inert for them.
+ */
+interface DexDragState {
+  /** The dragged task's id (the blocker on an add edge). */
+  id: string;
+  /** The dragged task's project — a blocker edge can only link same-project tasks. */
+  project: string | undefined;
+  /** The blocker this nested node sits under, if any (the edge a drop on the unblock zone removes). */
+  blockerId: string | undefined;
+}
+
+/**
  * The Dex pane's interaction state, shared with the children the sub-epic adds
- * (T8b–T8f read + extend this). T8a owns two pieces: the collapsed-epic set and
- * the selected task. `selectedId` is the `selectedDexId` replacement — clicking a
- * row sets it; the detail view that reads it lands in T8c.
+ * (T8b–T8f read + extend this). It owns the collapsed-epic set, the selected task,
+ * and the in-flight dependency-edit drag. `selectedId` is the `selectedDexId`
+ * replacement — clicking a row sets it; the detail view that reads it lands in T8c.
  */
 interface DexContextValue {
   /** Ids of collapsed epics (their descendants are hidden). */
@@ -45,6 +62,12 @@ interface DexContextValue {
   selectedId: string | undefined;
   /** Open a task's detail (or clear with `undefined`). */
   setSelectedId(id: string | undefined): void;
+  /** The dependency-edit drag in flight, or `undefined` when nothing is dragging. */
+  drag: DexDragState | undefined;
+  /** Begin dragging a row (passing the blocker edge it's nested on, for graph nodes). */
+  beginDrag(row: DexRow, blockerId?: string): void;
+  /** End the in-flight drag (a drop fired, or the drag was cancelled). */
+  endDrag(): void;
 }
 
 const DexContext = createContext<DexContextValue | undefined>(undefined);
@@ -62,9 +85,10 @@ function useDexContext(): DexContextValue {
  * re-renders (the old `dex.ts` mutated a module-global `Set` + called
  * `requestRender()`; this is just component state).
  */
-function DexProvider({ children }: { children: React.ReactNode }): JSX.Element {
+export function DexProvider({ children }: { children: React.ReactNode }): JSX.Element {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
+  const [drag, setDrag] = useState<DexDragState | undefined>(undefined);
 
   const value = useMemo<DexContextValue>(
     () => ({
@@ -79,8 +103,15 @@ function DexProvider({ children }: { children: React.ReactNode }): JSX.Element {
       },
       selectedId,
       setSelectedId,
+      drag,
+      beginDrag(row, blockerId) {
+        setDrag({ id: row.id, project: row.project, blockerId });
+      },
+      endDrag() {
+        setDrag(undefined);
+      },
     }),
-    [collapsed, selectedId],
+    [collapsed, selectedId, drag],
   );
 
   return <DexContext.Provider value={value}>{children}</DexContext.Provider>;
@@ -278,6 +309,143 @@ function AgentMarker({ agent }: { agent: AgentSummary }): JSX.Element {
 }
 
 // ---------------------------------------------------------------------------
+// Drag-and-drop dependency wiring (the `dex.ts` makeDexRowDraggable port)
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether `target` is a valid drop target for the in-flight dependency drag: there
+ * is a drag, it isn't a self-drop (A onto A is a no-op), and source + target share
+ * a project — a blocker edge can only link tasks in the same store, so a
+ * cross-project drop is rejected before it reaches the daemon. Cycles aren't
+ * checked here; dex itself rejects them and the daemon surfaces a clear notice.
+ */
+export function isValidDexDropTarget(drag: DexDragState | undefined, target: DexRow): boolean {
+  if (drag === undefined || drag.id === target.id) return false;
+  return target.project === drag.project;
+}
+
+/** The drag-and-drop props + derived class a draggable row spreads onto its element. */
+interface DexRowDrag {
+  /** Spread onto the row element (`draggable` + the HTML5 drag handlers). */
+  props: {
+    draggable: true;
+    onDragStart(e: React.DragEvent): void;
+    onDragEnd(): void;
+    onDragOver(e: React.DragEvent): void;
+    onDragLeave(): void;
+    onDrop(e: React.DragEvent): void;
+  };
+  /** The drag-state class suffix to append to the row's `className`. */
+  className: string;
+}
+
+/**
+ * Drag-and-drop dependency editing for one dex task row. The row becomes a drag
+ * source; dropping ANOTHER row onto it makes THIS row blocked-by the dragged task
+ * (drop A onto B ⇒ B blocked-by A, via {@link PerchActions.dexAddBlocker}). A valid
+ * target (different task, same project) lights up while hovered. Shared by the tree
+ * row and the graph node so both surfaces edit dependencies identically.
+ *
+ * `blockerId` (graph nested nodes only) is the blocker this row sits under; passing
+ * it lets a drop on the {@link DexUnblockZone} remove exactly that edge. Tree rows
+ * and unblocked roots omit it and only add. The optimistic drop-target highlight is
+ * local component state; the dragged-row identity lives in the shared {@link drag}
+ * store so the target's drop handler can read it. The actual edge change comes back
+ * via the next pushed PanelState — a drag and a click stay distinct gestures, so
+ * the row's click-to-open-detail is untouched.
+ */
+export function useDexRowDrag(row: DexRow, blockerId?: string): DexRowDrag {
+  const actions = useActions();
+  const { drag, beginDrag, endDrag } = useDexContext();
+  const [isDropTarget, setIsDropTarget] = useState(false);
+  const isDragging = drag?.id === row.id;
+
+  return {
+    props: {
+      draggable: true,
+      onDragStart(e) {
+        beginDrag(row, blockerId);
+        if (e.dataTransfer) {
+          // A nested node drops two ways — onto a row to ADD a blocker (`link`) or
+          // onto the unblock zone to REMOVE one (`move`) — so allow both; a row with
+          // no parent blocker only adds, so it stays `link`.
+          e.dataTransfer.effectAllowed = blockerId !== undefined ? "all" : "link";
+          // Carry the id too, so a drop still resolves if the store is ever lost.
+          e.dataTransfer.setData("text/plain", row.id);
+        }
+      },
+      onDragEnd() {
+        endDrag();
+        setIsDropTarget(false);
+      },
+      onDragOver(e) {
+        if (!isValidDexDropTarget(drag, row)) return;
+        // preventDefault marks this a valid drop zone (and lets the drop fire).
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "link";
+        setIsDropTarget(true);
+      },
+      onDragLeave() {
+        setIsDropTarget(false);
+      },
+      onDrop(e) {
+        e.preventDefault();
+        setIsDropTarget(false);
+        const sourceId = drag?.id ?? e.dataTransfer?.getData("text/plain") ?? undefined;
+        if (!sourceId || !isValidDexDropTarget(drag, row)) return;
+        // Drop source onto this row ⇒ this row (the target) becomes blocked by source.
+        void actions.dexAddBlocker({ blockedId: row.id, blockerId: sourceId });
+      },
+    },
+    className: `${isDragging ? " dex-dragging" : ""}${isDropTarget ? " dex-drop-target" : ""}`,
+  };
+}
+
+/**
+ * The graph view's "drop here to unblock" zone: a drop target, hidden until a
+ * nested node is dragged (`armed`), that removes the dragged node's blocker edge —
+ * the inverse of dropping one row onto another. Dropping a node nested under blocker
+ * B fires `dexRemoveBlocker({ blockedId: node, blockerId: B })`, removing exactly
+ * that edge and leaving the task's other blockers intact; main refreshes the board
+ * and toasts the outcome. Inert unless the in-flight drag carries a parent blocker,
+ * so an unblocked-root / tree-row drag can't trip it. Class + label are kept
+ * byte-equivalent to `dex.ts` so `renderer.css` keeps applying. Exported for the
+ * graph view (T8b) — the only surface with nested nodes to drag out.
+ */
+export function DexUnblockZone(): JSX.Element {
+  const actions = useActions();
+  const { drag } = useDexContext();
+  const [isDropTarget, setIsDropTarget] = useState(false);
+  // Revealed only while a node sitting on a removable blocker edge is dragged.
+  const armed = drag?.blockerId !== undefined;
+
+  return (
+    <div
+      className={`dex-unblock-zone${armed ? " armed" : ""}${isDropTarget ? " dex-drop-target" : ""}`}
+      onDragOver={(e) => {
+        if (!armed) return;
+        // preventDefault marks this a valid drop zone (and lets the drop fire).
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+        setIsDropTarget(true);
+      }}
+      onDragLeave={() => setIsDropTarget(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setIsDropTarget(false);
+        // Both halves of the edge come from the in-flight drag: the dragged node is
+        // the blocked task, and it carries the specific blocker it was nested under.
+        if (drag?.id === undefined || drag?.blockerId === undefined) return;
+        void actions.dexRemoveBlocker({ blockedId: drag.id, blockerId: drag.blockerId });
+      }}
+    >
+      <i className="fa-solid fa-link-slash" />
+      <span>Drop here to remove this blocker</span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Rows + tree
 // ---------------------------------------------------------------------------
 
@@ -288,23 +456,27 @@ function AgentMarker({ agent }: { agent: AgentSummary }): JSX.Element {
  * body opens the task's detail (sets the selection); clicking an epic's chevron
  * toggles its children without opening detail.
  *
- * The per-row spawn/delete/worktree controls and drag-to-wire-deps are NOT here
- * yet — T8d (actions) and T8e (drag-and-drop) add them; this is the row's
- * identity + status skeleton they hang off.
+ * The per-row spawn/delete/worktree controls are NOT here yet — T8d (actions)
+ * adds them; this is the row's identity + status skeleton they hang off. The row
+ * is a drag source + drop target for dependency editing (drop A onto B ⇒ B
+ * blocked-by A), via {@link useDexRowDrag}.
  */
 function DexTaskRow({ row }: { row: DexRow }): JSX.Element {
   const { collapsed, toggleCollapsed, setSelectedId } = useDexContext();
   const open = isOpenDexTask(row);
   const isCollapsed = collapsed.has(row.id);
   const blockedHint = row.blockedByCount > 0 ? ` (blocked by ${row.blockedByCount})` : "";
+  // Drag this row onto another to wire a dependency (drop A onto B ⇒ B blocked-by A).
+  const drag = useDexRowDrag(row);
 
   return (
     <div
-      className={`row dex-row${row.isEpic ? " dex-epic" : ""}`}
+      className={`row dex-row${row.isEpic ? " dex-epic" : ""}${drag.className}`}
       // Indent by tree depth so epics → tasks → subtasks read as a hierarchy.
       style={{ paddingLeft: `${row.depth * 14}px` }}
       title={`${row.name} — ${DEX_STATUS_LABEL[row.status]}${blockedHint}`}
       onClick={() => setSelectedId(row.id)}
+      {...drag.props}
     >
       {row.isEpic ? (
         <button
