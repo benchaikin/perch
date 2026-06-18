@@ -457,8 +457,7 @@ test("the description keeps focus + caret + draft across a background state push
   // A background board poll lands a fresh PanelState — same task, but a NEW row
   // object (and an unrelated field changed) to mimic a real push.
   rerender(
-    <DexPane
-      section={section([{ ...initial, displayStatus: "in-progress", health: "warn" }])} />,
+    <DexPane section={section([{ ...initial, displayStatus: "in-progress", health: "warn" }])} />,
   );
 
   const after = container.querySelector(".dex-edit-description") as HTMLTextAreaElement;

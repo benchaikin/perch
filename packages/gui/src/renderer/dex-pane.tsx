@@ -38,7 +38,11 @@ import {
 import type { LandableState } from "../landable.js";
 import type { AgentState, AgentSummary } from "../agents-state.js";
 import type { DexEditRequest } from "../ipc.js";
-import { DEFAULT_DEX_VIEW_MODE, type DexViewMode } from "../window-state.js";
+// Type-only: `window-state.ts` reads/writes files (`node:fs`), so it must never
+// reach the browser bundle. The default mode is the `"tree"` literal below,
+// mirroring `dex.ts` — pulling in `DEFAULT_DEX_VIEW_MODE` as a value would bundle
+// the whole module (and its `node:fs` import) into the renderer.
+import type { DexViewMode } from "../window-state.js";
 import { dexTaskColor } from "@perch/sdk/dex-color";
 import { useActions } from "./actions.js";
 import { DEX_STATUS_LABEL, DexTaskDot } from "./dex-task-chip.js";
@@ -153,7 +157,9 @@ export function DexProvider({
   const [spawningAll, setSpawningAll] = useState(false);
   const [deleting, setDeleting] = useState<ReadonlySet<string>>(() => new Set());
   const [ownedViewMode, setViewMode] = useState<DexViewMode | undefined>(undefined);
-  const viewMode = ownedViewMode ?? savedViewMode ?? DEFAULT_DEX_VIEW_MODE;
+  // `"tree"` is `DEFAULT_DEX_VIEW_MODE` — inlined to keep `window-state.ts` (and its
+  // `node:fs` import) out of the browser bundle, matching `dex.ts`.
+  const viewMode = ownedViewMode ?? savedViewMode ?? "tree";
 
   const value = useMemo<DexContextValue>(
     () => ({
@@ -988,53 +994,79 @@ function visibleTreeRows(rows: readonly DexRow[], collapsed: ReadonlySet<string>
 // Graph view (the dependency-graph branch)
 // ---------------------------------------------------------------------------
 
-/** One graph node flattened to a render row: the task plus its blocker-nesting depth. */
+/**
+ * One graph node flattened to a render row: the task, its blocker-nesting depth,
+ * and the blocker it sits under (so a drag onto the unblock zone removes exactly
+ * that edge). Roots carry `blockerId: undefined`.
+ */
 interface DexGraphRowItem {
   row: DexRow;
   depth: number;
+  blockerId: string | undefined;
 }
 
 /**
  * Flatten the dependency forest depth-first into render rows, carrying each
- * node's blocker-nesting depth. A blocked task nests under *every* blocker it
- * waits on, so the same row can appear more than once — the index is what makes a
- * render key unique. A 1:1 port of `dex.ts`'s `dexGraphRows` walk (minus the
- * drag-to-unblock zone, which lands with the drag-and-drop child, T8e).
+ * node's blocker-nesting depth and the blocker it sits under. A blocked task
+ * nests under *every* blocker it waits on, so the same row can appear more than
+ * once — the index is what makes a render key unique. A 1:1 port of `dex.ts`'s
+ * `dexGraphRows` walk.
  */
 function flattenDexGraph(roots: readonly DexGraphNode[]): DexGraphRowItem[] {
   const items: DexGraphRowItem[] = [];
-  const walk = (node: DexGraphNode, depth: number): void => {
-    items.push({ row: node.row, depth });
-    for (const child of node.children) walk(child, depth + 1);
+  const walk = (node: DexGraphNode, depth: number, blockerId: string | undefined): void => {
+    items.push({ row: node.row, depth, blockerId });
+    for (const child of node.children) walk(child, depth + 1, node.row.id);
   };
-  for (const root of roots) walk(root, 0);
+  for (const root of roots) walk(root, 0, undefined);
   return items;
 }
 
 /**
  * One dependency-graph node row. Mirrors {@link DexTaskRow} (the shared
  * {@link DexRowBody} — status marker, name, identity dot + id chip, blocker /
- * landable / agent chips, click-to-open-detail) but indents by *graph* depth
- * rather than tree depth, and carries an aligning spacer where the tree's chevron
- * sits (the graph has no collapsible epics). The `dex-graph-row` class tags it for
- * the bundle test + any graph-specific styling; `dex-graph-nested` marks a
- * dependent drawn under one of its blockers.
+ * landable / agent chips, click-to-open-detail, the trailing spawn + delete
+ * controls) but indents by *graph* depth rather than tree depth, and carries an
+ * aligning spacer where the tree's chevron sits (the graph has no collapsible
+ * epics). The `dex-graph-row` class tags it for the bundle test + any
+ * graph-specific styling; `dex-graph-nested` marks a dependent drawn under one of
+ * its blockers. The row is a drag source/target like the tree row, and a nested
+ * node also carries the blocker it sits under so dragging it onto the
+ * {@link DexUnblockZone} removes that one edge.
  */
-function DexGraphRow({ row, depth }: { row: DexRow; depth: number }): JSX.Element {
+function DexGraphRow({
+  row,
+  depth,
+  blockerId,
+}: {
+  row: DexRow;
+  depth: number;
+  blockerId: string | undefined;
+}): JSX.Element {
   const { setSelectedId } = useDexContext();
   const blockedHint = row.blockedByCount > 0 ? ` (blocked by ${row.blockedByCount})` : "";
+  // Drag this node onto another to wire a dependency (drop A onto B ⇒ B blocked-by
+  // A); a nested node carries its parent blocker so a drop on the unblock zone
+  // removes that one edge.
+  const drag = useDexRowDrag(row, blockerId);
   return (
     <div
-      className={`row dex-row dex-graph-row${depth > 0 ? " dex-graph-nested" : ""}`}
+      className={`row dex-row dex-graph-row${depth > 0 ? " dex-graph-nested" : ""}${drag.className}`}
       // Indent by blocker-nesting depth so dependents read as nested under blockers.
       style={{ paddingLeft: `${depth * 14}px` }}
       title={`${row.name} — ${DEX_STATUS_LABEL[row.status]}${blockedHint}`}
       onClick={() => setSelectedId(row.id)}
+      {...drag.props}
     >
       {/* Aligning spacer where the tree's chevron sits, so markers line up with
           the tree view's columns. */}
       <span className="dex-chevron-spacer" />
       <DexRowBody row={row} />
+
+      {/* Mirror the tree row's trailing controls: a spawn play button on ready
+          rows, a delete control on every row (both stop propagation). */}
+      {canSpawnDex(row) && <DexSpawnButton id={row.id} />}
+      <DexDeleteControl row={row} />
     </div>
   );
 }
@@ -1043,14 +1075,21 @@ function DexGraphRow({ row, depth }: { row: DexRow; depth: number }): JSX.Elemen
  * The dependency-graph forest: the unblocked tasks as roots, each blocked task
  * nested under every blocker it waits on. Derivation lives in the pure, tested
  * {@link deriveDexGraph} (main-process vocabulary, no recompute here); this just
- * walks its output and lays out the node rows.
+ * walks its output and lays out the node rows. The "drop here to unblock" zone
+ * sits above the rows so a dragged-out node lands on it naturally.
  */
 function DexGraph({ section }: { section: DexSection }): JSX.Element {
   const items = useMemo(() => flattenDexGraph(deriveDexGraph(section.rows)), [section.rows]);
   return (
     <>
+      <DexUnblockZone />
       {items.map((item, i) => (
-        <DexGraphRow key={`${item.row.id}-${i}`} row={item.row} depth={item.depth} />
+        <DexGraphRow
+          key={`${item.row.id}-${i}`}
+          row={item.row}
+          depth={item.depth}
+          blockerId={item.blockerId}
+        />
       ))}
     </>
   );
