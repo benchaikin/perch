@@ -137,6 +137,65 @@ freshen_trunk() {
   fi
 }
 
+# The set of dex task ids that have a live worktree in this repo. The ancestor
+# rollup uses it to tell a pure container (no worktree of its own — safe to
+# auto-complete) from an epic with real work (its own worktree; it reaps itself).
+declare -A WORKTREE_IDS=()
+collect_worktree_ids() {
+  local p="" b="" first=1 id=""
+  while IFS= read -r line; do
+    if [[ "$line" == worktree\ * ]]; then
+      p="${line#worktree }"
+      b=""
+    elif [[ "$line" == branch\ * ]]; then
+      b="${line#branch }"
+      b="${b#refs/heads/}"
+      # The first record is the main worktree — skip it.
+      if [[ "$first" == 1 ]]; then
+        first=0
+        continue
+      fi
+      id="$(git -C "$p" config --worktree perch.dexTask 2>/dev/null || true)"
+      [[ -z "$id" ]] && id="$(parse_dex_id "$b")"
+      [[ -n "$id" ]] && WORKTREE_IDS["$id"]=1
+    fi
+  done < <(git worktree list --porcelain)
+}
+
+# Ancestor rollup: after a child reaps, walk UP its parent chain and complete
+# each ancestor that is now an empty PURE CONTAINER — one that has NO worktree of
+# its own, zero pending subtasks, and isn't already completed or blocked. The
+# rolled-up parent has no merge commit, so it completes with --no-commit and a
+# container-rollup result (the children's own results carry the PR SHAs). A
+# completed parent can empty its grandparent, so this recurses, re-reading each
+# ancestor fresh. Best-effort: any `dex show`/`complete` failure just stops the
+# walk — it never aborts the script (the child is already reaped).
+rollup_containers() {
+  local cur="$1"
+  while :; do
+    local task_json parent_id parent_json completed is_blocked pending done_count
+    task_json="$(dex show "$cur" --json 2>/dev/null)" || break
+    parent_id="$(printf '%s' "$task_json" | jq -r '.parent_id // ""')" || break
+    [[ -z "$parent_id" ]] && break
+    [[ -n "${WORKTREE_IDS[$parent_id]:-}" ]] && break # has its own worktree — reaps itself
+    parent_json="$(dex show "$parent_id" --json 2>/dev/null)" || break
+    completed="$(printf '%s' "$parent_json" | jq -r '.completed // false')"
+    [[ "$completed" == "true" ]] && break # already done (idempotent)
+    is_blocked="$(printf '%s' "$parent_json" | jq -r '.isBlocked // false')"
+    [[ "$is_blocked" == "true" ]] && break # blocked — leave it
+    pending="$(printf '%s' "$parent_json" | jq -r '.subtasks.pending // -1')"
+    [[ "$pending" != "0" ]] && break # still has live work (or unreadable)
+    done_count="$(printf '%s' "$parent_json" | jq -r '.subtasks.completed // 0')"
+    if dex complete "$parent_id" --no-commit --result "Auto-completed: all ${done_count} subtasks completed"; then
+      echo "ROLLUP  $parent_id — auto-completed (all ${done_count} subtasks done)" >&2
+    else
+      break
+    fi
+    cur="$parent_id"
+  done
+  return 0
+}
+
 # Enumerate worktrees from porcelain output: emit "<path>\t<branch>" pairs,
 # skipping the main worktree (the first record) and detached/bare ones.
 main_path=""
@@ -246,7 +305,16 @@ process_record() {
   git branch -d "$branch"
   dex complete "$id" --commit "$merge_sha" --result "$evidence"
   note_reap "$id [$branch] @ $path — reaped (worktree+branch removed, task completed)"
+
+  # The child is reaped; roll up any pure-container ancestor it just emptied.
+  # Best-effort — never aborts the pass (|| true belt-and-braces on top of the
+  # function's own guards).
+  rollup_containers "$id" || true
 }
+
+# Pre-scan the live worktree ids so the rollup can tell a pure container from an
+# epic that has its own worktree (and reaps itself) — see rollup_containers.
+collect_worktree_ids
 
 while IFS= read -r line; do
   if [[ "$line" == worktree\ * ]]; then
