@@ -141,7 +141,7 @@ const configs = [
   // The Settings window's renderer (sandboxed browser context). Same React/JSX
   // setup as the panel renderer above — see those comments for why each flag.
   {
-    entryPoints: [join(src, "settings", "settings.ts")],
+    entryPoints: [join(src, "settings", "settings.tsx")],
     outfile: join(dist, "settings", "settings.js"),
     bundle: true,
     platform: "browser",
