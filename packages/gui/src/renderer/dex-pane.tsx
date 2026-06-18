@@ -114,6 +114,16 @@ interface DexContextValue {
   composing: string | undefined;
   /** Arm the New-task composer for a scope, or close it with `undefined`. */
   setComposing(scope: string | undefined): void;
+  /**
+   * The scope whose fleet-launch (rocket) button is currently hovered, so the
+   * board can preview which rows that button would spawn: a repo `project` on a
+   * multi-repo board, the {@link PANE_SCOPE} sentinel on a single-repo board, or
+   * `undefined` when no rocket is hovered. Transient hover-only UI state, modeled
+   * exactly like {@link composing} — no persistence, no main-process round trip.
+   */
+  previewScope: string | undefined;
+  /** Arm the spawn-all preview for a scope, or clear it with `undefined`. */
+  setPreviewScope(scope: string | undefined): void;
   /** The dependency-edit drag in flight, or `undefined` when nothing is dragging. */
   drag: DexDragState | undefined;
   /** Begin dragging a row (passing the blocker edge it's nested on, for graph nodes). */
@@ -178,6 +188,7 @@ export function DexProvider({
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
   const [composing, setComposing] = useState<string | undefined>(undefined);
+  const [previewScope, setPreviewScope] = useState<string | undefined>(undefined);
   const [drag, setDrag] = useState<DexDragState | undefined>(undefined);
   // The optimistic in-flight sets (the `spawningDexIds` / `deletingDexIds` module
   // globals from dex.ts) + the per-scope spawn-all set — now component state, so a
@@ -205,6 +216,8 @@ export function DexProvider({
       setSelectedId,
       composing,
       setComposing,
+      previewScope,
+      setPreviewScope,
       drag,
       beginDrag(row, blockerId) {
         setDrag({ id: row.id, project: row.project, blockerId });
@@ -277,7 +290,18 @@ export function DexProvider({
       viewMode,
       setViewMode,
     }),
-    [actions, collapsed, selectedId, composing, drag, spawning, spawningAll, deleting, viewMode],
+    [
+      actions,
+      collapsed,
+      selectedId,
+      composing,
+      previewScope,
+      drag,
+      spawning,
+      spawningAll,
+      deleting,
+      viewMode,
+    ],
   );
 
   return <DexContext.Provider value={value}>{children}</DexContext.Provider>;
@@ -873,23 +897,37 @@ function DexSpawnButton({ id, detail = false }: { id: string; detail?: boolean }
  * `count > 0` (the caller gates this).
  */
 function DexSpawnAllButton({ count, project }: { count: number; project?: string }): JSX.Element {
-  const { spawningAll, spawnAllReady } = useDexContext();
-  const inFlight = spawningAll.has(project ?? PANE_SCOPE);
+  const { spawningAll, spawnAllReady, setPreviewScope } = useDexContext();
+  const scope = project ?? PANE_SCOPE;
+  const inFlight = spawningAll.has(scope);
   const plural = count === 1 ? "" : "s";
   const label = inFlight
     ? `Spawning ${count} ready task${plural}…`
     : `Spawn agents for ${count} ready task${plural}`;
+  // Once the launch is in flight the button disables, so its onMouseLeave never
+  // fires — clear the preview here so no rows stay stuck lit after the click (and
+  // a disabled button can't leave a stale scope armed).
+  useEffect(() => {
+    if (inFlight) setPreviewScope(undefined);
+  }, [inFlight, setPreviewScope]);
   return (
     <button
       className="icon-btn dex-spawn-all"
       disabled={inFlight}
       title={label}
       aria-label={label}
+      // Hovering arms the board's preview for this rocket's scope (the exact rows a
+      // click would launch); leaving/blurring clears it. Skip arming while disabled
+      // so a focus-then-launch can't re-arm a stale scope.
+      onMouseEnter={inFlight ? undefined : () => setPreviewScope(scope)}
+      onMouseLeave={() => setPreviewScope(undefined)}
+      onBlur={() => setPreviewScope(undefined)}
       onClick={
         inFlight
           ? undefined
           : (e) => {
               e.stopPropagation();
+              setPreviewScope(undefined);
               spawnAllReady(project);
             }
       }
@@ -992,15 +1030,18 @@ function DexRowBody({ row }: { row: DexRow }): JSX.Element {
  * NOT here yet — its own follow-on adds it.
  */
 function DexTaskRow({ row }: { row: DexRow }): JSX.Element {
-  const { collapsed, toggleCollapsed, setSelectedId } = useDexContext();
+  const { collapsed, toggleCollapsed, setSelectedId, previewScope } = useDexContext();
   const isCollapsed = collapsed.has(row.id);
   const blockedHint = row.blockedByCount > 0 ? ` (blocked by ${row.blockedByCount})` : "";
   // Drag this row onto another to wire a dependency (drop A onto B ⇒ B blocked-by A).
   const drag = useDexRowDrag(row);
+  // Light up when a hovered rocket would spawn this row, so the "all" it launches
+  // is legible before the click.
+  const preview = isSpawnPreviewRow(row, previewScope) ? " dex-row-spawn-preview" : "";
 
   return (
     <div
-      className={`row dex-row${row.isEpic ? " dex-epic" : ""}${drag.className}`}
+      className={`row dex-row${row.isEpic ? " dex-epic" : ""}${preview}${drag.className}`}
       // Indent by tree depth so epics → tasks → subtasks read as a hierarchy.
       style={{ paddingLeft: `${row.depth * 14}px` }}
       title={`${row.name} — ${DEX_STATUS_LABEL[row.status]}${blockedHint}`}
@@ -1105,15 +1146,18 @@ function DexGraphRow({
   depth: number;
   blockerId: string | undefined;
 }): JSX.Element {
-  const { setSelectedId } = useDexContext();
+  const { setSelectedId, previewScope } = useDexContext();
   const blockedHint = row.blockedByCount > 0 ? ` (blocked by ${row.blockedByCount})` : "";
   // Drag this node onto another to wire a dependency (drop A onto B ⇒ B blocked-by
   // A); a nested node carries its parent blocker so a drop on the unblock zone
   // removes that one edge.
   const drag = useDexRowDrag(row, blockerId);
+  // Light up when a hovered rocket would spawn this row — same affordance as the
+  // tree row, so the preview works in graph view too.
+  const preview = isSpawnPreviewRow(row, previewScope) ? " dex-row-spawn-preview" : "";
   return (
     <div
-      className={`row dex-row dex-graph-row${depth > 0 ? " dex-graph-nested" : ""}${drag.className}`}
+      className={`row dex-row dex-graph-row${depth > 0 ? " dex-graph-nested" : ""}${preview}${drag.className}`}
       // Indent by blocker-nesting depth so dependents read as nested under blockers.
       style={{ paddingLeft: `${depth * 14}px` }}
       title={`${row.name} — ${DEX_STATUS_LABEL[row.status]}${blockedHint}`}
@@ -1377,6 +1421,20 @@ function canSpawnDex(row: DexRow): boolean {
     row.worktree === undefined &&
     row.agent === undefined
   );
+}
+
+/**
+ * Whether `row` is one a hovered rocket (fleet-launch) button would spawn, given
+ * the armed `previewScope`. Reuses {@link canSpawnDex} verbatim so the lit set and
+ * the launched set can never drift, then matches the rocket's scope: the
+ * {@link PANE_SCOPE} sentinel lights every ready row (the single-repo board's sole
+ * store), while a repo scope lights only that repo's ready rows — mirroring how
+ * {@link DexContextValue.spawnAllReady} keys a launch on `project ?? PANE_SCOPE`.
+ * `undefined` (no rocket hovered) lights nothing.
+ */
+function isSpawnPreviewRow(row: DexRow, previewScope: string | undefined): boolean {
+  if (previewScope === undefined || !canSpawnDex(row)) return false;
+  return previewScope === PANE_SCOPE || row.project === previewScope;
 }
 
 /** A pre-formatted, wrapping text block for the detail view (description / result). */
