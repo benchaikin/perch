@@ -110,13 +110,48 @@ The evidence is built from the PR — title, number/URL, and merge SHA, e.g.
 `Merged PR #123: <title> (<url>) — merge commit <sha>`. If `dex` isn't on PATH,
 use `npx @zeeg/dex`.
 
-### 5. Flag, never delete, anything unsafe
+### 5. Roll up the emptied container epic (after a successful reap)
+
+A reaped child may have been the **last** subtask of an epic. If that epic is a
+**pure container** — a "collection of subtasks" with no work of its own — it
+should auto-complete too, so a finished epic never lingers in-progress. After a
+reap, walk **up** the parent chain (`dex show <id> --json` → `parent_id`) and
+complete each ancestor that is now an empty container. Complete an ancestor only
+when **all** of these hold:
+
+- **It has no dex worktree of its own.** An epic with real work had an agent
+  spawned for it, giving it its own `dex/<id>` worktree — which makes it its own
+  reap candidate (it completes on its own land pass when its PR merges). Only a
+  worktree-less parent is a pure container safe to roll up. (Compare against the
+  set of live worktree ids in the repo.)
+- **All its subtasks are done** — `dex show <id> --json` reports
+  `subtasks.pending == 0`. Gating on this means a plain `dex complete` succeeds;
+  never use `--force` here (it would close an epic with live children).
+- **It isn't already completed or blocked** (`completed`/`isBlocked`).
+
+Complete it with **no merge commit** (there is none — the children's results
+already carry the PR SHAs) and a container-rollup result:
+
+```bash
+dex complete <epic-id> --no-commit --result "Auto-completed: all <N> subtasks completed"
+```
+
+Completing a parent can empty its **grandparent**, so recurse up, re-reading each
+ancestor fresh (so a sibling reaped earlier in the same pass is reflected). Stop
+at the first ancestor with pending subtasks, its own worktree, or that's already
+completed/blocked. The rollup is **best-effort**: a failed `dex show`/`complete`
+just leaves that ancestor as-is and never fails the child reap that already
+succeeded. It only runs on a real reap — `--dry-run` makes no changes, so it
+never rolls anything up. This closes the gap on the path perch owns (auto-land); a
+manual `dex complete` on a leaf elsewhere won't trigger it.
+
+### 6. Flag, never delete, anything unsafe
 
 An unmerged PR, no PR at all, a dirty/uncommitted worktree, or (for a no-CI repo)
 a failed/uninferable build → report it clearly and **SKIP**. No `git worktree
 remove`, no `git branch -d`, no `dex complete`.
 
-### 6. Modes
+### 7. Modes
 
 - **Batch (default):** reap **all** merged dex worktrees in one pass.
 - **Single:** pass a `<id>` to reap only that task's worktree.
@@ -138,8 +173,9 @@ of what was reaped vs. flagged. Run it from the repo root:
 ```
 
 Always prefer a `--dry-run` pass first to review the plan, then run for real.
-Lines are tagged `REAP` (guards passed) or `FLAG` (skipped, with the reason),
-and a `==== summary ====` block reports the counts.
+Lines are tagged `REAP` (guards passed), `ROLLUP` (a pure-container epic emptied
+by a reap and auto-completed), or `FLAG` (skipped, with the reason), and a
+`==== summary ====` block reports the counts.
 
 ## When NOT to use this
 

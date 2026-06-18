@@ -22,6 +22,12 @@
  * worktree whose PR is still open (or has none) is simply skipped — it's
  * in-progress, not actionable — so the lander never nags about live work.
  *
+ * After a child reaps, an ANCESTOR ROLLUP (see {@link rollupContainers}) walks up
+ * its parent chain and auto-completes each pure-container epic the child just
+ * emptied — one with no worktree of its own and no pending subtasks left — so a
+ * finished epic never lingers in-progress. It's best-effort and never fails the
+ * reap; it only runs on the auto-land (reap) path, so detection mode stays inert.
+ *
  * Like every other provider here it runs over the injected {@link Exec} seam (and
  * a small {@link FsProbe} for the build-gate file checks), so the whole
  * enumerate→guard→reap flow unit-tests without spawning git/gh/dex.
@@ -300,6 +306,10 @@ export async function runLand(deps: LandDeps): Promise<LandBoard> {
   const freshenedRepos = new Set<string>();
 
   const candidates = await enumerateDexWorktrees(deps);
+  // The set of task ids that have a live dex worktree this pass — the "has its
+  // own worktree" signal the ancestor rollup uses to tell a pure container
+  // (safe to auto-complete) from an epic with real work (reaps itself).
+  const worktreeTaskIds = new Set(candidates.map((c) => c.taskId));
   for (const c of candidates) {
     const base = { taskId: c.taskId, branch: c.branch, path: c.path, repo: c.repo };
     const flag = (reason: string, pr?: LandPr): void => {
@@ -389,6 +399,9 @@ export async function runLand(deps: LandDeps): Promise<LandBoard> {
       await reap(deps, c, pr, evidence);
       reaped.push({ ...base, action: "reaped", reason: evidence, pr });
       deps.log?.(`dex.land: reaped ${c.taskId} [${c.branch}] — ${evidence}`);
+      // The child is reaped; now roll up any pure-container ancestor it just
+      // emptied. Best-effort and non-throwing, so it never undoes the reap above.
+      await rollupContainers(deps, c.repo, c.taskId, worktreeTaskIds);
     } catch (err) {
       flag(`merged, but the reap failed: ${String(err)}`, pr);
     }
@@ -465,6 +478,117 @@ async function isTaskCompleted(deps: LandDeps, c: Candidate): Promise<boolean> {
     return Boolean(task && typeof task === "object" && (task as { completed?: unknown }).completed);
   } catch {
     return false;
+  }
+}
+
+/** An ancestor task's rollup-relevant fields, read from `dex show <id> --json`. */
+interface RollupView {
+  /** The parent id, walking one step further up the chain. */
+  parentId?: string;
+  completed: boolean;
+  isBlocked: boolean;
+  /** `subtasks.pending`; undefined when the field is absent/unreadable. */
+  pending?: number;
+  /** `subtasks.completed`, for the rollup result text. */
+  completedSubtasks: number;
+}
+
+/**
+ * Read a task's rollup-relevant fields (`parent_id`, `completed`, `isBlocked`,
+ * `subtasks`) from `dex show <id> --json`, unwrapping the array-or-object shape
+ * like {@link isTaskCompleted}. Best-effort: any failure (missing task,
+ * unparseable output) returns undefined so the walk stops rather than guessing.
+ */
+async function showRollupView(
+  deps: LandDeps,
+  repo: string,
+  id: string,
+): Promise<RollupView | undefined> {
+  let out: string;
+  try {
+    out = await deps.exec(deps.dexBin, [
+      "--storage-path",
+      storagePathOf(repo),
+      "show",
+      id,
+      "--json",
+    ]);
+  } catch {
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(out);
+  } catch {
+    return undefined;
+  }
+  const task = Array.isArray(parsed) ? parsed[0] : parsed;
+  if (!task || typeof task !== "object") return undefined;
+  const o = task as Record<string, unknown>;
+  const subs =
+    o.subtasks && typeof o.subtasks === "object" ? (o.subtasks as Record<string, unknown>) : {};
+  return {
+    parentId: typeof o.parent_id === "string" ? o.parent_id : undefined,
+    completed: Boolean(o.completed),
+    isBlocked: Boolean(o.isBlocked),
+    pending: typeof subs.pending === "number" ? subs.pending : undefined,
+    completedSubtasks: typeof subs.completed === "number" ? subs.completed : 0,
+  };
+}
+
+/**
+ * Ancestor rollup: after a child reaps, walk UP its parent chain and complete
+ * each ancestor that is now an empty PURE CONTAINER — one that
+ *
+ *   - has NO dex worktree of its own (an epic with real work has its own
+ *     `dex/<id>` worktree and reaps itself on its own land pass — so it's in
+ *     `worktreeTaskIds` and skipped here),
+ *   - has zero pending subtasks (so plain `dex complete` succeeds without
+ *     `--force`, which would otherwise wrongly close an epic with live children),
+ *   - and isn't already `completed` or `isBlocked`.
+ *
+ * Completing a parent can empty its grandparent, so this recurses up, re-reading
+ * each ancestor FRESH (so a sibling reaped earlier in the same pass is reflected
+ * in `subtasks.pending`). The walk stops at the first ancestor that fails a gate.
+ *
+ * The rolled-up parent has no single merge commit, so it's completed with
+ * `--no-commit` and a container-rollup result distinct from PR-merge evidence —
+ * the children's own results already carry the PR SHAs.
+ *
+ * Best-effort and non-blocking: the child is already reaped, so a failed `dex
+ * show`/`complete` here must never throw out of the pass — it just leaves that
+ * ancestor (and everything above it) as-is.
+ */
+async function rollupContainers(
+  deps: LandDeps,
+  repo: string,
+  childId: string,
+  worktreeTaskIds: Set<string>,
+): Promise<void> {
+  try {
+    let current = await showRollupView(deps, repo, childId);
+    while (current?.parentId) {
+      const parentId = current.parentId;
+      if (worktreeTaskIds.has(parentId)) break; // has its own worktree — reaps itself
+      const parent = await showRollupView(deps, repo, parentId);
+      if (!parent) break;
+      if (parent.completed || parent.isBlocked) break; // already done, or blocked → leave it
+      if (parent.pending !== 0) break; // still has live work (or its subtasks are unreadable)
+      const result = `Auto-completed: all ${parent.completedSubtasks} subtasks completed`;
+      await deps.exec(deps.dexBin, [
+        "--storage-path",
+        storagePathOf(repo),
+        "complete",
+        parentId,
+        "--no-commit",
+        "--result",
+        result,
+      ]);
+      deps.log?.(`dex.land: rolled up container ${parentId} — ${result}`);
+      current = parent;
+    }
+  } catch (err) {
+    deps.log?.(`dex.land: ancestor rollup stopped near ${childId}: ${String(err)}`);
   }
 }
 

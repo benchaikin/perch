@@ -99,6 +99,22 @@ interface StubOpts {
   commitMissing?: boolean;
   /** When true, `git fetch origin <base>` rejects (offline / no origin). */
   failFetch?: boolean;
+  /**
+   * Per-task `dex show --json` rollup fields (for the ancestor walk): parent
+   * link, subtask counts, and blocked/completed flags. A task absent here falls
+   * back to a leaf with no parent.
+   */
+  tasksById?: Record<
+    string,
+    {
+      parent_id?: string;
+      completed?: boolean;
+      isBlocked?: boolean;
+      subtasks?: { pending: number; completed: number };
+    }
+  >;
+  /** Task ids whose `dex complete` rejects (rollup-failure isolation). */
+  failCompleteIds?: string[];
 }
 
 function stub(opts: StubOpts): { exec: Exec; calls: Array<{ cmd: string; args: string[]; cwd?: string }> } {
@@ -139,7 +155,20 @@ function stub(opts: StubOpts): { exec: Exec; calls: Array<{ cmd: string; args: s
     if (cmd === "dex") {
       if (args.includes("show")) {
         const id = args[args.indexOf("show") + 1]!;
-        return Promise.resolve(JSON.stringify({ id, completed: (opts.completedTasks ?? []).includes(id) }));
+        const t = opts.tasksById?.[id];
+        return Promise.resolve(
+          JSON.stringify({
+            id,
+            completed: (opts.completedTasks ?? []).includes(id) || Boolean(t?.completed),
+            parent_id: t?.parent_id ?? null,
+            isBlocked: Boolean(t?.isBlocked),
+            ...(t?.subtasks ? { subtasks: t.subtasks } : {}),
+          }),
+        );
+      }
+      if (args.includes("complete")) {
+        const id = args[args.indexOf("complete") + 1]!;
+        if ((opts.failCompleteIds ?? []).includes(id)) return Promise.reject(new Error("complete failed"));
       }
       return Promise.resolve(""); // complete
     }
@@ -431,6 +460,142 @@ test("runLand: branch -d refusal falls back to -D (merge is gh-confirmed)", asyn
   const board = await runLand(deps(exec));
   assert.equal(board.reaped.length, 1);
   assert.ok(calls.some((c) => c.args.includes("-D")), "expected the -D fallback");
+});
+
+// --- ancestor rollup --------------------------------------------------------
+
+/** The rollup `dex complete <id> --no-commit --result …` call, if any. */
+function rollupComplete(
+  calls: Array<{ cmd: string; args: string[] }>,
+  id: string,
+): { cmd: string; args: string[] } | undefined {
+  return calls.find(
+    (c) =>
+      c.cmd === "dex" &&
+      c.args.includes("complete") &&
+      c.args[c.args.indexOf("complete") + 1] === id &&
+      c.args.includes("--no-commit"),
+  );
+}
+
+test("runLand: last child reaping rolls up its pure-container parent", async () => {
+  const wt = "/wt/leaf";
+  const { exec, calls } = stub({
+    worktrees: porcelain("/work/perch", [{ path: wt, branch: "dex/leaf1-foo" }]),
+    prByBranch: { "dex/leaf1-foo": mergedWithCi },
+    tasksById: {
+      leaf1: { parent_id: "epic1" },
+      epic1: { subtasks: { pending: 0, completed: 1 } },
+    },
+  });
+  const board = await runLand(deps(exec));
+
+  assert.equal(board.reaped.length, 1);
+  const roll = rollupComplete(calls, "epic1");
+  assert.ok(roll, "expected epic1 to be rolled up");
+  assert.deepEqual(roll!.args, [
+    "--storage-path",
+    "/work/perch/.dex",
+    "complete",
+    "epic1",
+    "--no-commit",
+    "--result",
+    "Auto-completed: all 1 subtasks completed",
+  ]);
+});
+
+test("runLand: a parent with its OWN dex worktree is NOT rolled up by a child", async () => {
+  const { exec, calls } = stub({
+    worktrees: porcelain("/work/perch", [
+      { path: "/wt/leaf", branch: "dex/leaf1-foo" },
+      { path: "/wt/epic", branch: "dex/epic1-bar" }, // epic has its own worktree
+    ]),
+    // The leaf's PR is merged; the epic's PR isn't, so the epic isn't reaped at all.
+    prByBranch: { "dex/leaf1-foo": mergedWithCi },
+    tasksById: {
+      leaf1: { parent_id: "epic1" },
+      epic1: { subtasks: { pending: 0, completed: 1 } },
+    },
+  });
+  await runLand(deps(exec));
+  assert.equal(rollupComplete(calls, "epic1"), undefined);
+});
+
+test("runLand: rollup cascades up an emptied grandparent, stopping at the top", async () => {
+  const wt = "/wt/leaf";
+  const { exec, calls } = stub({
+    worktrees: porcelain("/work/perch", [{ path: wt, branch: "dex/leaf1-foo" }]),
+    prByBranch: { "dex/leaf1-foo": mergedWithCi },
+    tasksById: {
+      leaf1: { parent_id: "mid1" },
+      mid1: { parent_id: "top1", subtasks: { pending: 0, completed: 1 } },
+      top1: { subtasks: { pending: 0, completed: 1 } },
+    },
+  });
+  await runLand(deps(exec));
+  assert.ok(rollupComplete(calls, "mid1"), "expected mid1 rolled up");
+  assert.ok(rollupComplete(calls, "top1"), "expected top1 rolled up (cascade)");
+});
+
+test("runLand: a parent with a still-pending sibling is left untouched", async () => {
+  const wt = "/wt/leaf";
+  const { exec, calls } = stub({
+    worktrees: porcelain("/work/perch", [{ path: wt, branch: "dex/leaf1-foo" }]),
+    prByBranch: { "dex/leaf1-foo": mergedWithCi },
+    tasksById: {
+      leaf1: { parent_id: "epic1" },
+      epic1: { subtasks: { pending: 1, completed: 1 } }, // a sibling is still pending
+    },
+  });
+  const board = await runLand(deps(exec));
+  assert.equal(board.reaped.length, 1);
+  assert.equal(rollupComplete(calls, "epic1"), undefined);
+});
+
+test("runLand: a rollup `dex complete` failure doesn't fail the child reap or throw", async () => {
+  const wt = "/wt/leaf";
+  const { exec, calls } = stub({
+    worktrees: porcelain("/work/perch", [{ path: wt, branch: "dex/leaf1-foo" }]),
+    prByBranch: { "dex/leaf1-foo": mergedWithCi },
+    tasksById: {
+      leaf1: { parent_id: "epic1" },
+      epic1: { subtasks: { pending: 0, completed: 1 } },
+    },
+    failCompleteIds: ["epic1"],
+  });
+  const board = await runLand(deps(exec));
+  // The child reaped fine; the failed rollup degraded to a no-op, not a flag.
+  assert.equal(board.reaped.length, 1);
+  assert.equal(board.flagged.length, 0);
+  // The rollup was attempted (and rejected) — the parent stays as-is.
+  assert.ok(calls.some((c) => c.cmd === "dex" && c.args[c.args.indexOf("complete") + 1] === "epic1"));
+});
+
+test("runLand: a blocked / already-completed ancestor stops the walk", async () => {
+  const { exec, calls } = stub({
+    worktrees: porcelain("/work/perch", [{ path: "/wt/leaf", branch: "dex/leaf1-foo" }]),
+    prByBranch: { "dex/leaf1-foo": mergedWithCi },
+    tasksById: {
+      leaf1: { parent_id: "epic1" },
+      epic1: { completed: true, subtasks: { pending: 0, completed: 1 } },
+    },
+  });
+  await runLand(deps(exec));
+  assert.equal(rollupComplete(calls, "epic1"), undefined);
+});
+
+test("runLand: detection mode (autoLand=false) never rolls up a parent", async () => {
+  const { exec, calls } = stub({
+    worktrees: porcelain("/work/perch", [{ path: "/wt/leaf", branch: "dex/leaf1-foo" }]),
+    prByBranch: { "dex/leaf1-foo": mergedWithCi },
+    tasksById: {
+      leaf1: { parent_id: "epic1" },
+      epic1: { subtasks: { pending: 0, completed: 1 } },
+    },
+  });
+  const board = await runLand(deps(exec, { autoLand: false }));
+  assert.equal(board.reaped.length, 0);
+  assert.equal(rollupComplete(calls, "epic1"), undefined);
 });
 
 // --- landNotifications ------------------------------------------------------
