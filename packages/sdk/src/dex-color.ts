@@ -7,14 +7,18 @@
  * all three author against ONE mapping — same id, same color, everywhere.
  *
  * The mapping is a stable string hash of the id indexed into a curated,
- * color-blind-friendly palette of 20 well-separated mid-tone hues that stay
- * legible as an accent on BOTH the light and dark themes. Hashing into a
+ * color-blind-friendly palette of 24 well-separated entries. Most are mid-tone
+ * hues that stay legible as an accent on their own; the last four are neutrals
+ * (white + three grays) that deliberately sit outside the mid-tone band and lean
+ * on how the dot/chip is rendered (a theme-aware contrast ring on the identity
+ * dot, plus a tint layered over the chip's own background) to stay visible on
+ * BOTH the light and dark themes — see {@link DEX_TASK_PALETTE}. Hashing into a
  * bounded palette (rather than hash → hue) trades a small chance of collision
  * for guaranteed-distinct, vetted colors — two tasks may share a color, but no
- * task ever gets an illegible or muddy one. Twenty hues (vs. ten) roughly
- * halves the per-pair collision chance, so a fleet of concurrent agents is far
- * less likely to show two same-colored tasks. Pure + total over arbitrary ids
- * (including ""), so callers never have to guard the input.
+ * task ever gets an illegible or muddy one. Twenty-four entries (vs. ten)
+ * roughly halve the per-pair collision chance, so a fleet of concurrent agents
+ * is far less likely to show two same-colored tasks. Pure + total over arbitrary
+ * ids (including ""), so callers never have to guard the input.
  *
  * This module is deliberately dependency-free (no node built-ins) so the browser
  * renderer can import it via the `@perch/sdk/dex-color` subpath without pulling
@@ -39,17 +43,27 @@ export interface DexTaskColor {
 }
 
 /**
- * The curated identity palette: twenty categorical hues chosen to be mutually
- * distinguishable and mid-toned enough to read as an accent on either theme.
- * The first ten are Tableau 10; the next ten are hand-checked additions that
- * fill the gaps — concentrated in the blue→magenta arc (the palette's sparsest
- * region, and the one where the common red-green color deficiencies preserve
- * the most discrimination), plus a sea-green, lime, sienna, and ochre to round
- * out the wheel. Every entry sits in a mid-tone lightness band (CIELAB L* ≈
- * 42–68; the lone outlier is the inherited light pink), and every pair is well
- * separated in normal vision (min ΔE ≈ 12) so neighbors differ clearly. Adding
- * hues changes which id maps to which color, but that is cosmetic and recomputed
- * everywhere from the id, so nothing persisted needs migrating.
+ * The curated identity palette: twenty categorical hues plus four neutrals.
+ * The first ten hues are Tableau 10; the next ten are hand-checked additions
+ * that fill the gaps — concentrated in the blue→magenta arc (the palette's
+ * sparsest region, and the one where the common red-green color deficiencies
+ * preserve the most discrimination), plus a sea-green, lime, sienna, and ochre
+ * to round out the wheel. Every one of those twenty sits in a mid-tone lightness
+ * band (CIELAB L* ≈ 42–68; the lone outlier is the inherited light pink) and is
+ * well separated from its neighbors in normal vision (min ΔE ≈ 12).
+ *
+ * The final four entries are NEUTRALS — white plus a light, mid, and dark gray.
+ * They intentionally break the mid-tone band (white sits well above it, the dark
+ * gray below it) and the min-ΔE separation goal (the grays differ from each
+ * other mostly by lightness/role, not chroma, so several are close in ΔE). That
+ * is deliberate: an identity color is HASHED, never user-picked, and the GUI now
+ * renders the identity dot with a theme-aware contrast ring and the id/worktree
+ * chip with a tint layered over the chip's own background, so even a pure-white
+ * or near-black entry reads as a visible ring + chip on BOTH themes rather than
+ * an invisible blob. Legibility for these four comes from that rendering, not
+ * from the lightness band the twenty hues rely on. Adding entries changes which
+ * id maps to which color, but that is cosmetic and recomputed everywhere from
+ * the id, so nothing persisted needs migrating.
  *
  * Order is load-bearing only in that the hash indexes into it (and `% length`
  * scales automatically as the array grows); the entries are already
@@ -76,6 +90,10 @@ export const DEX_TASK_PALETTE = [
   "#9caf3f", // lime
   "#cf6a3a", // sienna
   "#b0873b", // ochre
+  "#ffffff", // white
+  "#d4d4d4", // light gray
+  "#8a8a8a", // mid gray
+  "#555555", // dark gray
 ] as const;
 
 /**
