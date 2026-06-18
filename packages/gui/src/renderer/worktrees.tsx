@@ -4,11 +4,10 @@
  * with its linked dex task's identity color + status. {@link WorktreesPane} is
  * the component the panel body renders for the Worktrees tab (see `panel.tsx`).
  *
- * A 1:1 port of the imperative DOM builders in the old `worktrees.ts`, following
- * the {@link ./prs.js} reference pane: data down as props (the pushed
+ * Follows the {@link ./prs.js} reference pane: data down as props (the pushed
  * {@link WorktreesSection}), events up via the typed {@link useActions} surface,
- * and the collapsed-repo set lifted from a file-scope `Set` + `requestRender()`
- * to explicit React state. It borrows the shared {@link DexTaskDot} /
+ * and the collapsed-repo set held as explicit React state. It borrows the shared
+ * {@link DexTaskDot} /
  * {@link DEX_STATUS_LABEL} from {@link ./dex-task-chip.js} so a worktree reads as
  * the same "team color" as its task across the fleet.
  *
@@ -180,9 +179,8 @@ function WorktreeRowView({ row }: { row: WorktreeRow }): JSX.Element {
  * otherwise a flat list of rows. No section title — the active "Worktrees" tab
  * already names it.
  *
- * The collapsed-repo set is component state (a `requestRender()`-driven
- * file-scope `Set` in the old builder); preserved across pushes because the pane
- * stays mounted while the Worktrees tab is active.
+ * The collapsed-repo set is component state, preserved across pushes because the
+ * pane stays mounted while the Worktrees tab is active.
  */
 export function WorktreesPane({ section }: { section: WorktreesSection }): JSX.Element | null {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());

@@ -129,8 +129,7 @@ function useDexContext(): DexContextValue {
 /**
  * Hold the Dex pane's interaction state and expose it via {@link DexContext}.
  * Collapse is a fresh `Set` per toggle so React sees a new reference and
- * re-renders (the old `dex.ts` mutated a module-global `Set` + called
- * `requestRender()`; this is just component state).
+ * re-renders, rather than mutating a shared `Set` in place.
  *
  * The view mode seeds-then-owns like the active tab (T4): component state starts
  * undefined and falls back to the pushed `savedViewMode` (then the persisted
@@ -640,10 +639,10 @@ function DexNewButton(): JSX.Element {
  * cancels; an empty/whitespace description disables submit; an in-flight launch
  * shows a spinner and disables the controls.
  *
- * The HEADLINE guard the old `dex.ts` reached for `data-focus-key` to satisfy is
- * free here: draft + in-flight are component state and the textarea is a stable,
- * controlled node, so a background board push re-renders WITHOUT remounting it —
- * focus, caret, and the half-typed draft all survive untouched. The mount effect
+ * Focus continuity is free here: draft + in-flight are component state and the
+ * textarea is a stable, controlled node, so a background board push re-renders
+ * WITHOUT remounting it — focus, caret, and the half-typed draft all survive
+ * untouched, with no focus-restoration hack. The mount effect
  * focuses the textarea ONCE when the composer arms (not per render), so the same
  * push can't steal focus mid-type either.
  */
@@ -1246,8 +1245,7 @@ function DexMeta({ row }: { row: DexRow }): JSX.Element {
  * HEADLINE: the inputs keep focus + caret while typing across a background push.
  * Achieved the React way — this component stays mounted with stable identity while
  * editing, so its `<input>`/`<textarea>` are reconciled in place rather than
- * rebuilt, preserving focus + selection. No `data-focus-key` hack (that imperative
- * focus-restore path is deleted wholesale in T10).
+ * rebuilt, preserving focus + selection with no focus-restoration hack.
  */
 function DexEditor({ row, onClose }: { row: DexRow; onClose: () => void }): JSX.Element {
   const actions = useActions();
