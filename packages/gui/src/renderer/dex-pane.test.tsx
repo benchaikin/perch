@@ -15,15 +15,17 @@ import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { DexPane } from "./dex-pane.js";
 import { dexHealth, type DexRow, type DexSection } from "../dex-state.js";
 import type { DexDeleteRequest, DexEditRequest, DexNewRequest, PerchBridge } from "../ipc.js";
+import type { DexViewMode } from "../window-state.js";
 
 /** Bridge spies the pane drives: copyText + dexEdit from the tree/detail; the
- *  spawn/delete actions; dexNew from the composer. */
+ *  spawn/delete actions; dexNew from the composer; setDexViewMode from the toggle. */
 let copyTextCalls: string[];
 let dexEditCalls: DexEditRequest[];
 let dexSpawnCalls: string[];
 let dexSpawnReadyCalls: number;
 let dexDeleteCalls: DexDeleteRequest[];
 let dexNewCalls: DexNewRequest[];
+let setDexViewModeCalls: DexViewMode[];
 /**
  * Pending resolvers for the in-flight action promises — the spawn/delete bridge
  * calls stay pending until {@link settleActions} resolves them, so a test can
@@ -74,6 +76,9 @@ const bridge = {
       dexNewResolve = resolve;
     });
   },
+  setDexViewMode(mode: DexViewMode) {
+    setDexViewModeCalls.push(mode);
+  },
 } as unknown as PerchBridge;
 
 beforeEach(() => {
@@ -85,6 +90,7 @@ beforeEach(() => {
   actionResolvers = [];
   dexNewCalls = [];
   dexNewResolve = undefined;
+  setDexViewModeCalls = [];
   (globalThis as unknown as { window: { perch: PerchBridge } }).window.perch = bridge;
 });
 
@@ -771,4 +777,113 @@ test("the cancel (✗) control closes the composer and discards the draft", () =
   // Re-arming starts from a blank draft (the previous one was discarded).
   const reopened = armComposer(container);
   assert.equal(reopened.textarea.value, "", "re-arming starts from a blank draft");
+});
+
+// ---------------------------------------------------------------------------
+// View-mode toggle (tree ↔ graph) + the dependency-graph view
+// ---------------------------------------------------------------------------
+
+test("the toggle defaults to tree view and offers to switch to the graph", () => {
+  const { container } = render(<DexPane section={section([row({ id: "a", name: "A" })])} />);
+  const toggle = container.querySelector(".dex-view-toggle") as HTMLButtonElement;
+  assert.ok(toggle, "expected the view-mode toggle in the header");
+  // In tree view the button offers the graph; the tree rows (not graph rows) show.
+  assert.equal(toggle.title, "Switch to graph view");
+  assert.ok(container.querySelector(".dex-row"), "tree rows render by default");
+  assert.equal(container.querySelector(".dex-graph-row"), null, "no graph rows in tree view");
+});
+
+test("clicking the toggle switches tree↔graph and persists each flip", () => {
+  const { container } = render(<DexPane section={section([row({ id: "a", name: "A" })])} />);
+  const toggle = (): HTMLButtonElement =>
+    container.querySelector(".dex-view-toggle") as HTMLButtonElement;
+
+  // Tree → graph: the graph branch renders and the new mode is persisted.
+  fireEvent.click(toggle());
+  assert.equal(toggle().title, "Switch to tree view", "the toggle now offers the tree");
+  assert.ok(container.querySelector(".dex-graph-row"), "graph rows render after the switch");
+  assert.deepEqual(setDexViewModeCalls, ["graph"]);
+
+  // Graph → tree: back to the tree, persisting again.
+  fireEvent.click(toggle());
+  assert.equal(toggle().title, "Switch to graph view");
+  assert.equal(container.querySelector(".dex-graph-row"), null, "tree rows return");
+  assert.deepEqual(setDexViewModeCalls, ["graph", "tree"]);
+});
+
+test("the view mode seeds from savedViewMode, then the toggle owns it", () => {
+  const { container } = render(
+    <DexPane section={section([row({ id: "a", name: "A" })])} savedViewMode="graph" />,
+  );
+  // Seeded into graph view from the persisted mode — no flash of the tree.
+  assert.ok(container.querySelector(".dex-graph-row"), "seeds into graph from savedViewMode");
+  assert.equal(
+    (container.querySelector(".dex-view-toggle") as HTMLButtonElement).title,
+    "Switch to tree view",
+  );
+
+  // Once toggled, the component owns the mode (overrides the seed).
+  fireEvent.click(container.querySelector(".dex-view-toggle")!);
+  assert.equal(container.querySelector(".dex-graph-row"), null, "the toggle now owns the mode");
+  assert.ok(container.querySelector(".dex-row"), "switched to the tree");
+  assert.deepEqual(setDexViewModeCalls, ["tree"]);
+});
+
+test("graph mode renders the dependency forest: roots, with blocked tasks nested under blockers", () => {
+  const rows = [
+    row({ id: "root", name: "Unblocked root" }),
+    row({
+      id: "dep",
+      name: "Blocked dependent",
+      status: "blocked",
+      blockedByCount: 1,
+      blockedBy: ["root"],
+    }),
+  ];
+  const { container } = render(<DexPane section={section(rows)} savedViewMode="graph" />);
+
+  const graphRows = container.querySelectorAll(".dex-graph-row");
+  assert.equal(graphRows.length, 2, "the root plus its one nested dependent");
+  // The unblocked task is a top-level root (not nested).
+  assert.match(graphRows[0]!.textContent ?? "", /Unblocked root/);
+  assert.equal(graphRows[0]!.classList.contains("dex-graph-nested"), false, "a root is not nested");
+  // The blocked task nests under its blocker.
+  assert.match(graphRows[1]!.textContent ?? "", /Blocked dependent/);
+  assert.ok(
+    graphRows[1]!.classList.contains("dex-graph-nested"),
+    "a dependent nests under its blocker",
+  );
+  // The nested row still carries the shared row vocabulary (here, its blocker chip).
+  assert.match(graphRows[1]!.textContent ?? "", /blocked ×1/);
+});
+
+test("a graph node opens the task detail when clicked", () => {
+  const { container } = render(
+    <DexPane section={section([row({ id: "g", name: "Graph node" })])} savedViewMode="graph" />,
+  );
+  fireEvent.click(container.querySelector(".dex-graph-row")!);
+  const detail = container.querySelector(".dex-detail");
+  assert.ok(detail, "clicking a graph node opens its detail");
+  assert.match(detail!.querySelector(".dex-detail-title")!.textContent ?? "", /Graph node/);
+});
+
+test("a graph node's id chip copies without opening the detail", () => {
+  const { container } = render(
+    <DexPane section={section([row({ id: "gcopy", name: "Copy" })])} savedViewMode="graph" />,
+  );
+  fireEvent.click(container.querySelector(".dex-graph-row .dex-id")!);
+  assert.deepEqual(copyTextCalls, ["gcopy"]);
+  assert.equal(container.querySelector(".dex-detail"), null, "copying must not open the detail");
+});
+
+test("graph mode hides the collapse-all control even when epics exist", () => {
+  const rows = [
+    row({ id: "epic", name: "Epic", isEpic: true, depth: 0 }),
+    row({ id: "child", name: "Child", depth: 1 }),
+  ];
+  const { container } = render(<DexPane section={section(rows)} savedViewMode="graph" />);
+  // The collapse-all toggle is a tree-only affordance — the graph has no
+  // collapsible epics — but the view toggle stays put.
+  assert.equal(container.querySelector(".dex-toggle-all"), null, "no collapse-all in graph mode");
+  assert.ok(container.querySelector(".dex-view-toggle"), "the view toggle remains in graph mode");
 });
