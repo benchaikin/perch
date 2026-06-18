@@ -14,20 +14,25 @@ import { afterEach, beforeEach, test } from "node:test";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { DexPane } from "./dex-pane.js";
 import { dexHealth, type DexRow, type DexSection } from "../dex-state.js";
-import type { DexDeleteRequest, DexEditRequest, PerchBridge } from "../ipc.js";
+import type { DexDeleteRequest, DexEditRequest, DexNewRequest, PerchBridge } from "../ipc.js";
 
-/** Bridge spies the pane drives (copyText + dexEdit from the tree/detail; the spawn/delete actions). */
+/** Bridge spies the pane drives: copyText + dexEdit from the tree/detail; the
+ *  spawn/delete actions; dexNew from the composer. */
 let copyTextCalls: string[];
 let dexEditCalls: DexEditRequest[];
 let dexSpawnCalls: string[];
 let dexSpawnReadyCalls: number;
 let dexDeleteCalls: DexDeleteRequest[];
+let dexNewCalls: DexNewRequest[];
 /**
  * Pending resolvers for the in-flight action promises — the spawn/delete bridge
  * calls stay pending until {@link settleActions} resolves them, so a test can
  * observe the optimistic in-flight state before the round-trip completes.
  */
 let actionResolvers: Array<() => void>;
+/** Captured resolver for the in-flight `dexNew` promise, so a test controls when
+ *  the author-agent launch settles (drives the optimistic spinner + close-on-success). */
+let dexNewResolve: (() => void) | undefined;
 
 /** A fresh promise whose resolver is parked for the test to settle on demand. */
 function pending(): Promise<void> {
@@ -63,6 +68,12 @@ const bridge = {
     dexDeleteCalls.push(request);
     return pending();
   },
+  dexNew(request: DexNewRequest) {
+    dexNewCalls.push(request);
+    return new Promise<void>((resolve) => {
+      dexNewResolve = resolve;
+    });
+  },
 } as unknown as PerchBridge;
 
 beforeEach(() => {
@@ -72,6 +83,8 @@ beforeEach(() => {
   dexSpawnReadyCalls = 0;
   dexDeleteCalls = [];
   actionResolvers = [];
+  dexNewCalls = [];
+  dexNewResolve = undefined;
   (globalThis as unknown as { window: { perch: PerchBridge } }).window.perch = bridge;
 });
 
@@ -627,4 +640,135 @@ test("the optimistic in-flight state clears when a push drops the deleted row", 
   await settleActions();
   assert.equal(container.querySelectorAll(".dex-row").length, 1);
   assert.match(container.querySelector(".dex-row")!.textContent ?? "", /Stays/);
+});
+
+// ---------------------------------------------------------------------------
+// New-task-from-description composer (T8f)
+// ---------------------------------------------------------------------------
+
+/** Arm the composer (click the + control) and return its textarea + submit. */
+function armComposer(container: HTMLElement): {
+  textarea: HTMLTextAreaElement;
+  submit: HTMLButtonElement;
+} {
+  fireEvent.click(container.querySelector(".dex-new")!);
+  const composer = container.querySelector(".dex-new-composer");
+  assert.ok(composer, "the + control arms the inline composer");
+  return {
+    textarea: composer!.querySelector(".dex-new-input") as HTMLTextAreaElement,
+    submit: composer!.querySelector(".dex-new-submit") as HTMLButtonElement,
+  };
+}
+
+test("the + control arms the composer; submit calls dexNew with the trimmed description", () => {
+  const { container } = render(<DexPane section={section([row({ id: "a", name: "A" })])} />);
+  const { textarea, submit } = armComposer(container);
+
+  // An empty draft is a no-op: submit is disabled.
+  assert.equal(submit.disabled, true, "an empty draft disables submit");
+
+  // Type a description (with surrounding whitespace to prove it's trimmed on submit).
+  fireEvent.change(textarea, { target: { value: "  build the thing  " } });
+  assert.equal(submit.disabled, false, "a non-empty draft enables submit");
+
+  fireEvent.click(submit);
+  assert.equal(dexNewCalls.length, 1, "submit calls dexNew once");
+  assert.equal(dexNewCalls[0]!.description, "build the thing", "the description is trimmed");
+});
+
+test("the + control also arms the composer on an empty board (author the first task)", () => {
+  const { container } = render(<DexPane section={section([])} />);
+  // The empty board still shows the header + its New-task control.
+  assert.ok(container.querySelector(".dex-new"), "the empty board still offers the + control");
+  assert.match(container.querySelector(".message")!.textContent ?? "", /No open tasks/);
+  const { textarea } = armComposer(container);
+  fireEvent.change(textarea, { target: { value: "first task" } });
+  fireEvent.click(container.querySelector(".dex-new-submit")!);
+  assert.equal(dexNewCalls.length, 1, "the first task can be authored from an empty board");
+});
+
+test("an empty / whitespace-only description is a no-op (no dexNew call)", () => {
+  const { container } = render(<DexPane section={section([row({ id: "a", name: "A" })])} />);
+  const { textarea, submit } = armComposer(container);
+
+  fireEvent.change(textarea, { target: { value: "   \n  " } });
+  assert.equal(submit.disabled, true, "a whitespace-only draft keeps submit disabled");
+  // Enter on the textarea must also no-op for a whitespace-only draft.
+  fireEvent.keyDown(textarea, { key: "Enter" });
+  assert.equal(dexNewCalls.length, 0, "a whitespace-only Enter does not call dexNew");
+});
+
+test("Enter submits, and a submit shows an in-flight spinner + disables the controls", () => {
+  const { container } = render(<DexPane section={section([row({ id: "a", name: "A" })])} />);
+  const { textarea } = armComposer(container);
+
+  fireEvent.change(textarea, { target: { value: "go" } });
+  fireEvent.keyDown(textarea, { key: "Enter" });
+  assert.equal(dexNewCalls.length, 1, "Enter submits");
+
+  // Optimistic feedback: while the (still-pending) launch is in flight the submit
+  // spins and the textarea + cancel disable, so a double-submit can't fire.
+  const composer = container.querySelector(".dex-new-composer")!;
+  assert.ok(composer.querySelector(".dex-new-submit .fa-spin"), "submit spins while in flight");
+  assert.equal((composer.querySelector(".dex-new-input") as HTMLTextAreaElement).disabled, true);
+  assert.equal((composer.querySelector(".dex-new-cancel") as HTMLButtonElement).disabled, true);
+});
+
+test("a successful submit closes the composer (the new task arrives via the next push)", async () => {
+  const { container } = render(<DexPane section={section([row({ id: "a", name: "A" })])} />);
+  const { textarea, submit } = armComposer(container);
+  fireEvent.change(textarea, { target: { value: "go" } });
+  fireEvent.click(submit);
+  assert.ok(container.querySelector(".dex-new-composer"), "composer stays open while in flight");
+
+  // The author-agent launch settles → the composer closes (and its draft is gone).
+  await act(async () => {
+    dexNewResolve!();
+  });
+  assert.equal(container.querySelector(".dex-new-composer"), null, "success closes the composer");
+});
+
+test("the composer keeps focus + caret + draft across a background state push", () => {
+  const { container, rerender } = render(
+    <DexPane section={section([row({ id: "a", name: "A" })])} />,
+  );
+  const { textarea } = armComposer(container);
+  // Arming grabs focus once (no data-focus-key needed — the node stays mounted).
+  assert.equal(document.activeElement, textarea, "arming focuses the textarea");
+
+  fireEvent.change(textarea, { target: { value: "half typed" } });
+  // Caret parked in the middle of the draft.
+  textarea.setSelectionRange(4, 4);
+
+  // A background board poll pushes a fresh PanelState (new section reference, an
+  // extra task) — the periodic re-render the old code fought with data-focus-key.
+  rerender(
+    <DexPane section={section([row({ id: "a", name: "A" }), row({ id: "b", name: "B" })])} />,
+  );
+
+  const after = container.querySelector(".dex-new-input") as HTMLTextAreaElement;
+  assert.equal(after, textarea, "the textarea node is not remounted by the push");
+  assert.equal(document.activeElement, after, "focus survives the push");
+  assert.equal(after.value, "half typed", "the draft survives the push");
+  assert.equal(after.selectionStart, 4, "the caret survives the push");
+  assert.equal(after.selectionEnd, 4);
+  // The composer carries no data-focus-key — React keeps the node mounted instead.
+  assert.equal(
+    after.getAttribute("data-focus-key"),
+    null,
+    "focus survival is structural, not via data-focus-key",
+  );
+});
+
+test("the cancel (✗) control closes the composer and discards the draft", () => {
+  const { container } = render(<DexPane section={section([row({ id: "a", name: "A" })])} />);
+  const { textarea } = armComposer(container);
+  fireEvent.change(textarea, { target: { value: "throwaway" } });
+
+  fireEvent.click(container.querySelector(".dex-new-cancel")!);
+  assert.equal(container.querySelector(".dex-new-composer"), null, "cancel closes the composer");
+
+  // Re-arming starts from a blank draft (the previous one was discarded).
+  const reopened = armComposer(container);
+  assert.equal(reopened.textarea.value, "", "re-arming starts from a blank draft");
 });

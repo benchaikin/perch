@@ -1,18 +1,18 @@
 /**
- * The Dex pane as a React component tree — part (a) of the Dex port: the section
- * shell, the task tree (rows + collapse/expand), the click-to-copy id chip, and
- * the shared landable / live-agent markers. A behavioral port of the tree branch
- * of the imperative `dexSectionEl` in {@link ./dex.ts}, following the reference
- * shape of {@link ./prs.js#PrsPane}: data down as props (the pushed
+ * The Dex pane as a React component tree: the section shell, the task tree (rows +
+ * collapse/expand), the click-to-copy id chip, the shared landable / live-agent
+ * markers, and the New-task-from-description composer. A behavioral port of the
+ * tree branch of the imperative `dexSectionEl` in {@link ./dex.ts}, following the
+ * reference shape of {@link ./prs.js#PrsPane}: data down as props (the pushed
  * {@link DexSection}), events up via the typed {@link useActions} surface.
  *
  * Interaction state that the old `dex.ts` held in module-global `Set`s/`let`s
- * (`collapsedDexIds`, `selectedDexId`) becomes explicit React state, lifted into
- * {@link DexContext} so the rest of the sub-epic (graph view, detail, actions,
- * drag-and-drop, composer — T8b–T8f) reads + extends one shared store rather than
- * re-introducing globals. The view-mode toggle, the detail view, the per-row
- * spawn/delete/worktree controls, and drag-and-drop deps are deliberately NOT
- * here yet — each is its own follow-on child; the seams are marked below.
+ * (`collapsedDexIds`, `selectedDexId`, `composingNewTask`) becomes explicit React
+ * state, lifted into {@link DexContext} so the rest of the sub-epic (graph view,
+ * detail, actions, drag-and-drop — T8b–T8e) reads + extends one shared store
+ * rather than re-introducing globals. The view-mode toggle, the detail view, the
+ * per-row spawn/delete/worktree controls, and drag-and-drop deps are deliberately
+ * NOT here yet — each is its own follow-on child; the seams are marked below.
  *
  * Class names are kept byte-equivalent to the DOM builders (`dex-row`, `dex-id`,
  * `dex-landable`, `dex-agent`, `dex-chevron`, the chip tones) so `renderer.css`
@@ -58,12 +58,15 @@ interface DexDragState {
 
 /**
  * The Dex pane's interaction state, shared with the children the sub-epic adds.
- * It owns the collapsed-epic set, the selected task, the in-flight
- * dependency-edit drag, and the optimistic in-flight sets for the spawn /
- * spawn-all / delete actions (the `spawningDexIds` / `spawningAllDex` /
- * `deletingDexIds` module globals from {@link ./dex.ts}, now component state).
- * `selectedId` is the `selectedDexId` replacement — clicking a row sets it; the
- * detail view reads it.
+ * It owns the collapsed-epic set, the selected task, whether the New-task composer
+ * is armed, the in-flight dependency-edit drag, and the optimistic in-flight sets
+ * for the spawn / spawn-all / delete actions (the `spawningDexIds` /
+ * `spawningAllDex` / `deletingDexIds` module globals from {@link ./dex.ts}, now
+ * component state). `selectedId` is the `selectedDexId` replacement — clicking a
+ * row sets it; the detail view reads it. `composing` is the `composingNewTask`
+ * replacement — the header's "+" arms it; the composer below the header reads it
+ * (its own draft is local state, so a background push can't wipe a half-typed
+ * description).
  */
 interface DexContextValue {
   /** Ids of collapsed epics (their descendants are hidden). */
@@ -74,6 +77,10 @@ interface DexContextValue {
   selectedId: string | undefined;
   /** Open a task's detail (or clear with `undefined`). */
   setSelectedId(id: string | undefined): void;
+  /** Whether the New-task composer is armed (the `composingNewTask` replacement). */
+  composing: boolean;
+  /** Arm/disarm the New-task composer. */
+  setComposing(armed: boolean): void;
   /** The dependency-edit drag in flight, or `undefined` when nothing is dragging. */
   drag: DexDragState | undefined;
   /** Begin dragging a row (passing the blocker edge it's nested on, for graph nodes). */
@@ -113,6 +120,7 @@ export function DexProvider({ children }: { children: React.ReactNode }): JSX.El
   const actions = useActions();
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
+  const [composing, setComposing] = useState(false);
   const [drag, setDrag] = useState<DexDragState | undefined>(undefined);
   // The optimistic in-flight sets (the `spawningDexIds` / `deletingDexIds` module
   // globals from dex.ts) + the spawn-all flag — now component state, so a fresh
@@ -134,6 +142,8 @@ export function DexProvider({ children }: { children: React.ReactNode }): JSX.El
       },
       selectedId,
       setSelectedId,
+      composing,
+      setComposing,
       drag,
       beginDrag(row, blockerId) {
         setDrag({ id: row.id, project: row.project, blockerId });
@@ -197,7 +207,7 @@ export function DexProvider({ children }: { children: React.ReactNode }): JSX.El
         })();
       },
     }),
-    [actions, collapsed, selectedId, drag, spawning, spawningAll, deleting],
+    [actions, collapsed, selectedId, composing, drag, spawning, spawningAll, deleting],
   );
 
   return <DexContext.Provider value={value}>{children}</DexContext.Provider>;
@@ -532,6 +542,179 @@ export function DexUnblockZone(): JSX.Element {
 }
 
 // ---------------------------------------------------------------------------
+// New-task-from-description composer
+// ---------------------------------------------------------------------------
+
+/**
+ * The distinct project labels present on the board, in first-seen order — the
+ * targets the New-task composer offers when more than one dex repo has tasks (so
+ * the author agent's `dex create` lands in an unambiguous store). Tasks from the
+ * daemon's own cwd store carry no project, so a single-store board yields `[]`
+ * (the composer then needs no selector — the daemon resolves the sole repo). A
+ * 1:1 port of `dex.ts`'s `dexProjects`.
+ */
+function dexProjects(section: DexSection): string[] {
+  const seen = new Set<string>();
+  for (const row of section.rows) {
+    if (row.project) seen.add(row.project);
+  }
+  return [...seen];
+}
+
+/**
+ * The project the composer submits, given the board's distinct projects and the
+ * user's pick: none when there are zero (single store — the daemon resolves the
+ * sole repo), the lone project when there's exactly one (unambiguous, so no
+ * selector is shown), or the pick (defaulting to the first) when several repos
+ * have tasks. A 1:1 port of `dex.ts`'s `newTaskTargetProject`.
+ */
+function newTaskTargetProject(projects: string[], picked: string | undefined): string | undefined {
+  if (projects.length === 0) return undefined;
+  if (projects.length === 1) return projects[0];
+  return picked ?? projects[0];
+}
+
+/**
+ * The "New task from a description" control: a "+" button that arms the inline
+ * composer (toggling it closed if already open). The create-a-task counterpart to
+ * the per-row spawn play button — that spawns an agent FOR a task; this spawns one
+ * to AUTHOR a task. The click is stopped from bubbling to the section/row
+ * open-detail handler.
+ */
+function DexNewButton(): JSX.Element {
+  const { composing, setComposing } = useDexContext();
+  return (
+    <button
+      className={`icon-btn dex-new${composing ? " dex-new-active" : ""}`}
+      title="New task from a description"
+      aria-label="New task from a description"
+      onClick={(e) => {
+        e.stopPropagation();
+        setComposing(!composing);
+      }}
+    >
+      <i className="fa-solid fa-plus" />
+    </button>
+  );
+}
+
+/**
+ * The armed New-task composer: an inline textarea (an affordance the non-activating
+ * panel can rely on, unlike `window.prompt`), an optional project selector (only
+ * when several repos have tasks, so the target store is unambiguous), and submit
+ * (✓) / cancel (✗) controls. Enter submits, Shift+Enter inserts a newline, Esc
+ * cancels; an empty/whitespace description disables submit; an in-flight launch
+ * shows a spinner and disables the controls.
+ *
+ * The HEADLINE guard the old `dex.ts` reached for `data-focus-key` to satisfy is
+ * free here: draft + in-flight are component state and the textarea is a stable,
+ * controlled node, so a background board push re-renders WITHOUT remounting it —
+ * focus, caret, and the half-typed draft all survive untouched. The mount effect
+ * focuses the textarea ONCE when the composer arms (not per render), so the same
+ * push can't steal focus mid-type either.
+ */
+function DexNewComposer({ projects }: { projects: string[] }): JSX.Element {
+  const actions = useActions();
+  const { setComposing } = useDexContext();
+  const [draft, setDraft] = useState("");
+  const [project, setProject] = useState<string | undefined>(undefined);
+  const [inFlight, setInFlight] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Grab focus once, when the composer is freshly armed (this runs on mount only —
+  // the composer mounts when armed and unmounts when closed). Not on every render,
+  // so a background board poll mid-type can't steal focus or reset the caret.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.focus();
+    const end = el.value.length;
+    el.setSelectionRange(end, end);
+  }, []);
+
+  const canSubmit = !inFlight && draft.trim().length > 0;
+
+  // Launch the author agent for the trimmed draft (with the resolved target
+  // project), marking it in flight so the controls disable + the submit shows a
+  // spinner. On success close the composer — its unmount drops the local draft, so
+  // there's nothing to reset; on failure re-enable so the user can retry (the
+  // success/error notice itself is pushed from main via panel state). Guards
+  // against a second launch in flight and against an empty description.
+  async function submit(): Promise<void> {
+    const description = draft.trim();
+    if (!description || inFlight) return;
+    setInFlight(true);
+    try {
+      await actions.dexNew({ description, project: newTaskTargetProject(projects, project) });
+      setComposing(false);
+    } catch {
+      setInFlight(false);
+    }
+  }
+
+  return (
+    // Clicks inside the composer must never bubble to a row/section open-detail.
+    <div className="dex-new-composer" onClick={(e) => e.stopPropagation()}>
+      <textarea
+        ref={textareaRef}
+        className="dex-new-input"
+        placeholder="Describe the task you want — an agent will read the code and author it."
+        rows={3}
+        value={draft}
+        disabled={inFlight}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault(); // Enter submits; Shift+Enter falls through to a newline.
+            void submit();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            setComposing(false);
+          }
+        }}
+      />
+      <div className="dex-new-controls">
+        {/* A project selector only when several repos' tasks share the board, so the
+            target store is unambiguous; one (or zero) project needs no choice. */}
+        {projects.length > 1 && (
+          <select
+            className="dex-new-project"
+            disabled={inFlight}
+            title="Target repository"
+            value={project ?? projects[0]}
+            onChange={(e) => setProject(e.target.value)}
+          >
+            {projects.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+        )}
+        <button
+          className="icon-btn dex-new-submit"
+          disabled={!canSubmit}
+          title={inFlight ? "Spawning the author agent…" : "Create task (Enter)"}
+          aria-label={inFlight ? "Spawning the author agent…" : "Create task (Enter)"}
+          onClick={() => void submit()}
+        >
+          <i className={inFlight ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-check"} />
+        </button>
+        <button
+          className="icon-btn dex-new-cancel"
+          disabled={inFlight}
+          title="Cancel (Esc)"
+          aria-label="Cancel (Esc)"
+          onClick={() => setComposing(false)}
+        >
+          <i className="fa-solid fa-xmark" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Actions (spawn / spawn-all / delete) — the optimistic, in-flight controls
 // ---------------------------------------------------------------------------
 
@@ -758,11 +941,11 @@ function visibleTreeRows(rows: readonly DexRow[], collapsed: ReadonlySet<string>
 }
 
 /**
- * The Dex section header — the top-level "spawn all ready" button (when any task
- * is ready) plus, in tree mode, the expand/collapse-all toggle over the tree's
- * epics (when there are epics to fold). The view-mode toggle (T8b) and the
- * New-task composer control (T8f) land alongside these in their own children. The
- * caller renders the header only when at least one of these controls applies.
+ * The Dex section header: the New-task composer's "+" control (always present, so
+ * the first task can be authored even from an empty board), the top-level "spawn
+ * all ready" button (when any task is ready), and the expand/collapse-all toggle
+ * over the tree's epics (only when there are epics to fold). The view-mode toggle
+ * (T8b) lands alongside these in its own child.
  */
 function DexHeader({
   epicIds,
@@ -775,10 +958,10 @@ function DexHeader({
   const allCollapsed = epicIds.every((id) => collapsed.has(id));
   return (
     <div className="repo-header dex-header">
+      <DexNewButton />
       {/* Fleet launch: spawn an agent for every ready task at once. Hidden when
           nothing is ready (a no-op that would just toast "no ready tasks"). */}
       {readyCount > 0 && <DexSpawnAllButton count={readyCount} />}
-
       {epicIds.length > 0 && (
         <button
           className="icon-btn dex-toggle-all"
@@ -1045,7 +1228,7 @@ function DexDetail({ row }: { row: DexRow }): JSX.Element {
  * empty state rather than a blank pane.
  */
 function DexSectionBody({ section }: { section: DexSection }): JSX.Element {
-  const { collapsed, selectedId, setSelectedId } = useDexContext();
+  const { collapsed, selectedId, setSelectedId, composing } = useDexContext();
 
   // Detail view takes over the pane when a (still-present) task is selected. A
   // selection whose task went away (completed/removed) falls back to the tree.
@@ -1056,23 +1239,23 @@ function DexSectionBody({ section }: { section: DexSection }): JSX.Element {
   }, [selectedId, selected, setSelectedId]);
   if (selected) return <DexDetail row={selected} />;
 
-  // Plugin present but nothing open — an empty state, so the tab still reads as
-  // "Dex". (The header's New-task composer that authors the first task is T8f.)
-  if (section.rows.length === 0) {
-    return <div className="message">No open tasks</div>;
-  }
-
+  // The header (+ its armed New-task composer) and the body render at stable
+  // positions whether the board is empty or has rows, so a background push that
+  // flips between them never remounts the composer's textarea mid-type. An
+  // installed-but-empty board still shows the header, so the first task can be
+  // authored from it; below it an empty state keeps the tab reading as "Dex".
   const epicIds = section.rows.filter((r) => r.isEpic).map((r) => r.id);
   const readyCount = section.rows.filter(canSpawnDex).length;
   const rows = visibleTreeRows(section.rows, collapsed);
   return (
     <>
-      {(epicIds.length > 0 || readyCount > 0) && (
-        <DexHeader epicIds={epicIds} readyCount={readyCount} />
+      <DexHeader epicIds={epicIds} readyCount={readyCount} />
+      {composing && <DexNewComposer projects={dexProjects(section)} />}
+      {section.rows.length === 0 ? (
+        <div className="message">No open tasks</div>
+      ) : (
+        rows.map((row) => <DexTaskRow key={row.id} row={row} />)
       )}
-      {rows.map((row) => (
-        <DexTaskRow key={row.id} row={row} />
-      ))}
     </>
   );
 }
