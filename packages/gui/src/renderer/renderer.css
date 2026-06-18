@@ -614,6 +614,71 @@ body {
   color: var(--accent);
 }
 
+/* Collapsible per-repo header on a multi-repo Dex board: a clickable name/chevron
+   toggle (.dex-repo-header-btn, adapted from .worktree-repo-header-btn) plus the
+   per-repo action cluster (New / spawn-all / collapse-all) beside it. Modeled on
+   the Worktrees pane's repo headers so the two panes read alike. */
+.dex-repo-header {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  /* A little top space separates each repo group from the one above. */
+  margin-top: 10px;
+}
+.dex-repo-header-btn {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 3px 2px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  text-align: left;
+  -webkit-app-region: no-drag;
+}
+.dex-repo-header-btn:hover {
+  background: var(--hover-bg);
+  color: var(--fg);
+}
+/* Chevron icon on the repo header (down/right for collapsed state). */
+.dex-repo-header-btn > i:first-child {
+  flex: 0 0 auto;
+  width: 14px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.dex-repo-header-btn:hover > i:first-child {
+  color: var(--fg);
+}
+/* Repo name label (grows to push the count chip to the trailing edge). */
+.dex-repo-name {
+  flex: 1 1 auto;
+}
+.dex-repo-count {
+  flex: 0 0 auto;
+  font-size: 10px;
+}
+/* The per-repo action cluster hugs the trailing edge; neutralize .icon-btn's
+   margin-left:auto so the buttons sit together rather than being pushed apart. */
+.dex-repo-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.dex-repo-actions .icon-btn {
+  margin-left: 0;
+}
+
 /* The "New task from a description" composer: an inline textarea + project
    selector + submit/cancel cluster, sitting between the header and the task rows.
    A non-activating panel can't use window.prompt, so the description is typed here

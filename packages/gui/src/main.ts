@@ -648,12 +648,14 @@ async function spawnDex(id: string): Promise<void> {
 /**
  * Spawn an agent for every ready dex task at once via the dex plugin's
  * `spawn-all` action, then toast the rolled-up `{ spawned, failed }` summary
- * (the fleet launch is otherwise invisible until each terminal appears).
+ * (the fleet launch is otherwise invisible until each terminal appears). An
+ * optional `project` scopes the launch to one repo's store (the multi-repo
+ * board's per-repo launch); omitted launches every store's ready tasks.
  */
-async function spawnDexReady(): Promise<void> {
+async function spawnDexReady(project?: string): Promise<void> {
   if (!client) return;
   try {
-    const result = (await client.invoke({ id: "dex.spawn-all", input: {} })) as {
+    const result = (await client.invoke({ id: "dex.spawn-all", input: { project } })) as {
       spawned?: number;
       failed?: number;
       message?: string;
@@ -1514,7 +1516,7 @@ function registerIpc(): void {
   // Spawns use `handle` (not `send`) so the renderer can await completion and
   // clear the button's in-progress state when the worktree/terminal work finishes.
   ipcMain.handle(Channels.dexSpawn, (_event, id: string) => spawnDex(id));
-  ipcMain.handle(Channels.dexSpawnReady, () => spawnDexReady());
+  ipcMain.handle(Channels.dexSpawnReady, (_event, project?: string) => spawnDexReady(project));
   ipcMain.handle(Channels.dexDelete, (_event, request: DexDeleteRequest) => deleteDex(request));
   ipcMain.handle(Channels.dexEdit, (_event, request: DexEditRequest) => editDex(request));
   ipcMain.handle(Channels.dexAddBlocker, (_event, request: DexBlockerRequest) =>

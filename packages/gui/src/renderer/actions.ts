@@ -65,8 +65,8 @@ export function createActions(bridge: () => PerchActions): PerchActions {
     dexSpawn(id) {
       return bridge().dexSpawn(id);
     },
-    dexSpawnReady() {
-      return bridge().dexSpawnReady();
+    dexSpawnReady(project) {
+      return bridge().dexSpawnReady(project);
     },
     dexDelete(request) {
       return bridge().dexDelete(request);

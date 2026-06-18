@@ -108,9 +108,11 @@ export const Channels = {
    */
   dexSpawn: "perch:dex-spawn",
   /**
-   * Renderer → main `invoke`: spawn agents for every ready dex task at once (no
-   * payload). Main runs `dex.spawn-all` and resolves when the fleet launch
-   * finishes, so the button can clear its in-progress state.
+   * Renderer → main `invoke`: spawn agents for every ready dex task at once
+   * (payload: an optional `project` to scope the launch to one repo's store on a
+   * multi-repo board; omitted launches every store's ready tasks). Main runs
+   * `dex.spawn-all` and resolves when the fleet launch finishes, so the button
+   * can clear its in-progress state.
    */
   dexSpawnReady: "perch:dex-spawn-ready",
   /**
@@ -249,11 +251,14 @@ export interface PerchBridge {
    */
   dexSpawn(id: string): Promise<void>;
   /**
-   * Ask the main process to spawn agents for every ready dex task at once.
-   * Resolves when the fleet launch finishes (or fails), so the caller can clear
-   * its in-progress UI; the "Spawned N of M" notice is pushed via panel state.
+   * Ask the main process to spawn agents for every ready dex task at once,
+   * optionally scoped to one `project` (a repo basename) so a multi-repo board's
+   * per-repo launch only spawns that repo's ready tasks; omitted launches every
+   * store's ready tasks. Resolves when the fleet launch finishes (or fails), so
+   * the caller can clear its in-progress UI; the "Spawned N of M" notice is
+   * pushed via panel state.
    */
-  dexSpawnReady(): Promise<void>;
+  dexSpawnReady(project?: string): Promise<void>;
   /**
    * Ask the main process to delete a dex task (payload: a {@link DexDeleteRequest}
    * — the id plus the task name and any computed warning). Main confirms with a

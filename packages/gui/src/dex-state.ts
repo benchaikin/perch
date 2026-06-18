@@ -131,17 +131,30 @@ export interface DexCounts {
   total: number;
 }
 
+/** One repo's task rows, grouped under a per-repo header on a multi-repo board. */
+export interface DexRepoGroup {
+  /** Source project label (a repo basename) the rows belong to. */
+  project: string;
+  /** This project's rows, in the board's pre-order (tree-ordered, depth-tagged). */
+  rows: DexRow[];
+}
+
 /**
  * The rendered Dex section. `visible` tracks plugin *presence*, not task count:
  * it's false only when the dex plugin isn't installed — so users without the
  * plugin see the unchanged panel, while an installed-but-empty plugin still
  * shows an empty state. `rows` are pre-ordered (tree pre-order, depth-tagged);
- * `counts` drives the tab badge.
+ * `counts` drives the tab badge. `multiRepo` is true when the rows span more than
+ * one distinct `project`, so the renderer groups them under collapsible per-repo
+ * headers; when true, `repoGroups` holds the grouped rows (first-appearance
+ * order), and when false `repoGroups` is empty and rows render as a flat list.
  */
 export interface DexSection {
   visible: boolean;
   rows: DexRow[];
   counts: DexCounts;
+  multiRepo: boolean;
+  repoGroups: DexRepoGroup[];
 }
 
 /** Map a derived status to its marker color. */
@@ -159,6 +172,29 @@ export function dexHealth(status: DexStatus): DexHealth {
 }
 
 const ZERO_COUNTS: DexCounts = { ready: 0, blocked: 0, inProgress: 0, done: 0, total: 0 };
+
+/**
+ * Group a board's rows by `project`, preserving each project's first-appearance
+ * order (and the rows' pre-order within it). Mirrors `buildWorktreesSection`'s
+ * grouping loop. A row with no `project` buckets under `"(unknown)"`; in practice
+ * only a single-store board yields unprojected rows, and that board isn't
+ * multi-repo, so this branch never runs for it.
+ */
+function groupRowsByProject(rows: DexRow[]): DexRepoGroup[] {
+  const byProject = new Map<string, DexRow[]>();
+  const order: string[] = [];
+  for (const row of rows) {
+    const project = row.project ?? "(unknown)";
+    let group = byProject.get(project);
+    if (!group) {
+      group = [];
+      byProject.set(project, group);
+      order.push(project);
+    }
+    group.push(row);
+  }
+  return order.map((project) => ({ project, rows: byProject.get(project)! }));
+}
 
 /**
  * The worst (most attention-worthy) health for the Dex tab's badge: `bad` if
@@ -194,11 +230,19 @@ export function buildDexSection(
   agentByTaskId?: ReadonlyMap<string, AgentSummary>,
 ): DexSection {
   if (!board) {
-    return { visible: present, rows: [], counts: { ...ZERO_COUNTS } };
+    return {
+      visible: present,
+      rows: [],
+      counts: { ...ZERO_COUNTS },
+      multiRepo: false,
+      repoGroups: [],
+    };
   }
   const activeAncestors = ancestorsWithActiveDescendant(board.tasks);
   const counts: DexCounts = { ...ZERO_COUNTS, total: board.tasks.length };
+  const projects = new Set<string>();
   const rows: DexRow[] = board.tasks.map((t) => {
+    if (t.project) projects.add(t.project);
     switch (t.status) {
       case "ready":
         counts.ready += 1;
@@ -231,7 +275,9 @@ export function buildDexSection(
       agent: agentByTaskId?.get(t.id),
     };
   });
-  return { visible: present, rows, counts };
+  const multiRepo = projects.size > 1;
+  const repoGroups = multiRepo ? groupRowsByProject(rows) : [];
+  return { visible: present, rows, counts, multiRepo, repoGroups };
 }
 
 /**

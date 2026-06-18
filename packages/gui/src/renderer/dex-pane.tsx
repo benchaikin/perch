@@ -31,6 +31,7 @@ import {
   deriveDexGraph,
   isOpenDexTask,
   type DexGraphNode,
+  type DexRepoGroup,
   type DexRow,
   type DexSection,
   type DexStatus,
@@ -50,6 +51,20 @@ import { DEX_STATUS_LABEL, DexTaskDot } from "./dex-task-chip.js";
 // ---------------------------------------------------------------------------
 // Dex interaction state (replaces dex.ts's module globals)
 // ---------------------------------------------------------------------------
+
+/**
+ * The composer/launch scope for the single-repo (pane-level) board, which has no
+ * specific `project` to key on. The leading-space prefix keeps it from colliding
+ * with any real repo basename, so the same identifier can key the armed composer
+ * and the in-flight fleet launch in both the single- and multi-repo paths.
+ */
+const PANE_SCOPE = " :pane";
+
+/** The repo-group collapse key for a project, namespaced so it never collides
+ *  with a bare epic id in the shared collapse set. */
+function repoCollapseKey(project: string): string {
+  return `repo:${project}`;
+}
 
 /**
  * A dependency-edit drag in flight (the `draggingDex*` module globals of `dex.ts`,
@@ -89,10 +104,16 @@ interface DexContextValue {
   selectedId: string | undefined;
   /** Open a task's detail (or clear with `undefined`). */
   setSelectedId(id: string | undefined): void;
-  /** Whether the New-task composer is armed (the `composingNewTask` replacement). */
-  composing: boolean;
-  /** Arm/disarm the New-task composer. */
-  setComposing(armed: boolean): void;
+  /**
+   * The scope the New-task composer is armed for (the `composingNewTask`
+   * replacement, now per-repo): a repo `project` on a multi-repo board, the
+   * {@link PANE_SCOPE} sentinel on a single-repo board, or `undefined` when no
+   * composer is open. Per-scope so arming one repo's composer leaves the others
+   * (and their half-typed drafts) untouched.
+   */
+  composing: string | undefined;
+  /** Arm the New-task composer for a scope, or close it with `undefined`. */
+  setComposing(scope: string | undefined): void;
   /** The dependency-edit drag in flight, or `undefined` when nothing is dragging. */
   drag: DexDragState | undefined;
   /** Begin dragging a row (passing the blocker edge it's nested on, for graph nodes). */
@@ -103,10 +124,19 @@ interface DexContextValue {
   spawning: ReadonlySet<string>;
   /** Optimistically spawn an agent for a task (the `dex.spawn` bridge call). */
   spawnDex(id: string): void;
-  /** True while the top-level "spawn all ready" launch is in flight. */
-  spawningAll: boolean;
-  /** Optimistically spawn an agent for every ready task (`dex.spawn-all`). */
-  spawnAllReady(): void;
+  /**
+   * The scopes whose "spawn all ready" launch is in flight (optimistic spinner +
+   * disabled): a repo `project` per multi-repo launch, or {@link PANE_SCOPE} for
+   * the single-repo board's launch. Per-scope so each repo's launch button spins
+   * independently (and a repo can't double-launch while one is in flight).
+   */
+  spawningAll: ReadonlySet<string>;
+  /**
+   * Optimistically spawn an agent for every ready task (`dex.spawn-all`),
+   * optionally scoped to one repo's `project` (the per-repo launch). Omitted (the
+   * single-repo board) launches the sole store's ready tasks, as before.
+   */
+  spawnAllReady(project?: string): void;
   /** Ids whose delete is in flight (optimistic spinner + disabled). */
   deleting: ReadonlySet<string>;
   /** Optimistically delete a task (main raises the confirm dialog first). */
@@ -147,13 +177,13 @@ export function DexProvider({
   const actions = useActions();
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
-  const [composing, setComposing] = useState(false);
+  const [composing, setComposing] = useState<string | undefined>(undefined);
   const [drag, setDrag] = useState<DexDragState | undefined>(undefined);
   // The optimistic in-flight sets (the `spawningDexIds` / `deletingDexIds` module
-  // globals from dex.ts) + the spawn-all flag — now component state, so a fresh
-  // reference per change re-renders the affected button.
+  // globals from dex.ts) + the per-scope spawn-all set — now component state, so a
+  // fresh reference per change re-renders the affected button.
   const [spawning, setSpawning] = useState<ReadonlySet<string>>(() => new Set());
-  const [spawningAll, setSpawningAll] = useState(false);
+  const [spawningAll, setSpawningAll] = useState<ReadonlySet<string>>(() => new Set());
   const [deleting, setDeleting] = useState<ReadonlySet<string>>(() => new Set());
   const [ownedViewMode, setViewMode] = useState<DexViewMode | undefined>(undefined);
   // `"tree"` is `DEFAULT_DEX_VIEW_MODE` — inlined to keep `window-state.ts` (and its
@@ -203,17 +233,24 @@ export function DexProvider({
         })();
       },
       spawningAll,
-      // The fleet launch: optimistically disable + spin, run dex.spawn-all, clear
-      // when it resolves. Guarded so a second launch can't start while one is in
-      // flight (what made spawn-all reliable — keep it).
-      spawnAllReady() {
-        if (spawningAll) return;
-        setSpawningAll(true);
+      // The fleet launch: optimistically mark the scope in flight (disable + spin),
+      // run dex.spawn-all (scoped to the project, or unscoped for the single-repo
+      // board), clear when it resolves. Guarded per scope so a repo can't
+      // double-launch while its own launch is in flight — but two different repos
+      // can launch concurrently (separate stores, no shared state to race).
+      spawnAllReady(project) {
+        const scope = project ?? PANE_SCOPE;
+        if (spawningAll.has(scope)) return;
+        setSpawningAll((prev) => new Set(prev).add(scope));
         void (async () => {
           try {
-            await actions.dexSpawnReady();
+            await actions.dexSpawnReady(project);
           } finally {
-            setSpawningAll(false);
+            setSpawningAll((prev) => {
+              const next = new Set(prev);
+              next.delete(scope);
+              return next;
+            });
           }
         })();
       },
@@ -609,21 +646,24 @@ function newTaskTargetProject(projects: string[], picked: string | undefined): s
 
 /**
  * The "New task from a description" control: a "+" button that arms the inline
- * composer (toggling it closed if already open). The create-a-task counterpart to
- * the per-row spawn play button — that spawns an agent FOR a task; this spawns one
- * to AUTHOR a task. The click is stopped from bubbling to the section/row
- * open-detail handler.
+ * composer for `scope` (toggling it closed if already armed for that scope). The
+ * create-a-task counterpart to the per-row spawn play button — that spawns an
+ * agent FOR a task; this spawns one to AUTHOR a task. `scope` is the repo
+ * `project` on a multi-repo board (so the new task lands in that repo's store) or
+ * {@link PANE_SCOPE} on a single-repo board. The click is stopped from bubbling
+ * to the section/row open-detail handler.
  */
-function DexNewButton(): JSX.Element {
+function DexNewButton({ scope }: { scope: string }): JSX.Element {
   const { composing, setComposing } = useDexContext();
+  const active = composing === scope;
   return (
     <button
-      className={`icon-btn dex-new${composing ? " dex-new-active" : ""}`}
+      className={`icon-btn dex-new${active ? " dex-new-active" : ""}`}
       title="New task from a description"
       aria-label="New task from a description"
       onClick={(e) => {
         e.stopPropagation();
-        setComposing(!composing);
+        setComposing(active ? undefined : scope);
       }}
     >
       <i className="fa-solid fa-plus" />
@@ -679,7 +719,7 @@ function DexNewComposer({ projects }: { projects: string[] }): JSX.Element {
     setInFlight(true);
     try {
       await actions.dexNew({ description, project: newTaskTargetProject(projects, project) });
-      setComposing(false);
+      setComposing(undefined);
     } catch {
       setInFlight(false);
     }
@@ -702,7 +742,7 @@ function DexNewComposer({ projects }: { projects: string[] }): JSX.Element {
             void submit();
           } else if (e.key === "Escape") {
             e.preventDefault();
-            setComposing(false);
+            setComposing(undefined);
           }
         }}
       />
@@ -738,7 +778,7 @@ function DexNewComposer({ projects }: { projects: string[] }): JSX.Element {
           disabled={inFlight}
           title="Cancel (Esc)"
           aria-label="Cancel (Esc)"
-          onClick={() => setComposing(false)}
+          onClick={() => setComposing(undefined)}
         >
           <i className="fa-solid fa-xmark" />
         </button>
@@ -804,34 +844,37 @@ function DexSpawnButton({ id, detail = false }: { id: string; detail?: boolean }
 }
 
 /**
- * The top-level "spawn all ready" control: one click runs `dex.spawn-all` to
- * create a worktree + seeded agent for every ready task at once — the fleet
- * counterpart of the per-row {@link DexSpawnButton}. The label carries the ready
- * `count`; optimistically disables + spins ("Spawning…") while in flight. Rendered
- * only when `count > 0` (the caller gates this).
+ * The "spawn all ready" control: one click runs `dex.spawn-all` to create a
+ * worktree + seeded agent for every ready task at once — the fleet counterpart of
+ * the per-row {@link DexSpawnButton}. `project` scopes the launch to one repo's
+ * store on a multi-repo board (undefined launches the single-repo board's sole
+ * store). The label carries the ready `count`; optimistically disables + spins
+ * ("Spawning…") while THIS scope's launch is in flight. Rendered only when
+ * `count > 0` (the caller gates this).
  */
-function DexSpawnAllButton({ count }: { count: number }): JSX.Element {
+function DexSpawnAllButton({ count, project }: { count: number; project?: string }): JSX.Element {
   const { spawningAll, spawnAllReady } = useDexContext();
+  const inFlight = spawningAll.has(project ?? PANE_SCOPE);
   const plural = count === 1 ? "" : "s";
-  const label = spawningAll
+  const label = inFlight
     ? `Spawning ${count} ready task${plural}…`
     : `Spawn agents for ${count} ready task${plural}`;
   return (
     <button
       className="icon-btn dex-spawn-all"
-      disabled={spawningAll}
+      disabled={inFlight}
       title={label}
       aria-label={label}
       onClick={
-        spawningAll
+        inFlight
           ? undefined
           : (e) => {
               e.stopPropagation();
-              spawnAllReady();
+              spawnAllReady(project);
             }
       }
     >
-      <i className={spawningAll ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-rocket"} />
+      <i className={inFlight ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-rocket"} />
     </button>
   );
 }
@@ -1077,8 +1120,8 @@ function DexGraphRow({
  * walks its output and lays out the node rows. The "drop here to unblock" zone
  * sits above the rows so a dragged-out node lands on it naturally.
  */
-function DexGraph({ section }: { section: DexSection }): JSX.Element {
-  const items = useMemo(() => flattenDexGraph(deriveDexGraph(section.rows)), [section.rows]);
+function DexGraph({ rows }: { rows: readonly DexRow[] }): JSX.Element {
+  const items = useMemo(() => flattenDexGraph(deriveDexGraph(rows)), [rows]);
   return (
     <>
       <DexUnblockZone />
@@ -1141,11 +1184,43 @@ function DexViewToggle(): JSX.Element {
 }
 
 /**
- * The Dex section header: the tree/graph view-mode toggle (always present), the
- * New-task composer's "+" control (so the first task can be authored even from an
- * empty board), the top-level "spawn all ready" button (when any task is ready),
- * and — in tree mode, when there are epics to fold — the expand/collapse-all toggle
- * over them.
+ * The expand/collapse-all toggle over a set of epics — pane-wide on a single-repo
+ * board, or scoped to one repo group's epics on a multi-repo board. Collapse-all
+ * collapses any still-open epic; expand-all (when every one is already collapsed)
+ * reopens them. A tree-only affordance, so the caller renders it only in tree mode
+ * with epics to fold. Each toggle creates a fresh collapse Set (the shared
+ * `toggleCollapsed`) so React re-renders.
+ */
+function DexCollapseAllButton({ epicIds }: { epicIds: string[] }): JSX.Element {
+  const { collapsed, toggleCollapsed } = useDexContext();
+  const allCollapsed = epicIds.every((id) => collapsed.has(id));
+  return (
+    <button
+      className="icon-btn dex-toggle-all"
+      title={allCollapsed ? "Expand all" : "Collapse all"}
+      aria-label={allCollapsed ? "Expand all" : "Collapse all"}
+      onClick={(e) => {
+        e.stopPropagation();
+        // Toggle only the epics whose state needs flipping so the result is
+        // uniform either way (collapse the open ones; expand the closed ones).
+        for (const id of epicIds) {
+          if (allCollapsed === collapsed.has(id)) toggleCollapsed(id);
+        }
+      }}
+    >
+      <i className={`fa-solid fa-${allCollapsed ? "angles-down" : "angles-up"}`} />
+    </button>
+  );
+}
+
+/**
+ * The Dex section header for a single-repo board: the tree/graph view-mode toggle,
+ * the New-task composer's "+" control (so the first task can be authored even from
+ * an empty board), the "spawn all ready" button (when any task is ready), and — in
+ * tree mode, when there are epics to fold — the expand/collapse-all toggle. On a
+ * multi-repo board the New/spawn-all/collapse-all controls move into each repo
+ * header (see {@link DexRepoHeader}); only {@link DexPaneHeader}'s view toggle
+ * stays pane-level.
  */
 function DexHeader({
   epicIds,
@@ -1154,36 +1229,117 @@ function DexHeader({
   epicIds: string[];
   readyCount: number;
 }): JSX.Element {
-  const { collapsed, toggleCollapsed, viewMode } = useDexContext();
-  const allCollapsed = epicIds.every((id) => collapsed.has(id));
+  const { viewMode } = useDexContext();
   // Collapse-all only applies to the tree's epics — skip it in graph mode and
   // when there are no epics to fold.
   const showCollapseAll = viewMode === "tree" && epicIds.length > 0;
   return (
     <div className="repo-header dex-header">
       <DexViewToggle />
-      <DexNewButton />
+      <DexNewButton scope={PANE_SCOPE} />
       {/* Fleet launch: spawn an agent for every ready task at once. Hidden when
           nothing is ready (a no-op that would just toast "no ready tasks"). */}
       {readyCount > 0 && <DexSpawnAllButton count={readyCount} />}
-      {showCollapseAll && (
-        <button
-          className="icon-btn dex-toggle-all"
-          title={allCollapsed ? "Expand all" : "Collapse all"}
-          aria-label={allCollapsed ? "Expand all" : "Collapse all"}
-          onClick={() => {
-            // Collapse-all collapses any still-open epic; expand-all (when every
-            // epic is already collapsed) reopens them. Toggle only the epics whose
-            // state needs flipping so the result is uniform either way.
-            for (const id of epicIds) {
-              if (allCollapsed === collapsed.has(id)) toggleCollapsed(id);
-            }
-          }}
-        >
-          <i className={`fa-solid fa-${allCollapsed ? "angles-down" : "angles-up"}`} />
-        </button>
-      )}
+      {showCollapseAll && <DexCollapseAllButton epicIds={epicIds} />}
     </div>
+  );
+}
+
+/**
+ * The pane-level header on a multi-repo board: just the tree/graph view-mode
+ * toggle, the one genuinely pane-global control (the New "+", spawn-all, and
+ * collapse-all are per-repo, in each {@link DexRepoHeader}). A "launch/add
+ * everything everywhere" control would be ambiguous on a multi-repo board (which
+ * store does a new task land in? which repos fleet-launch?), so it's dropped.
+ */
+function DexPaneHeader(): JSX.Element {
+  return (
+    <div className="repo-header dex-header">
+      <DexViewToggle />
+    </div>
+  );
+}
+
+/**
+ * A collapsible per-repo header on a multi-repo board, modeled on
+ * {@link ../worktrees.js}'s `WorktreeRepoHeader`: a chevron + repo name + task-count
+ * chip whose click toggles the whole group's rows, alongside the per-repo action
+ * cluster the pane-level toolbar used to carry — the New "+" (scoped so a new task
+ * lands in THIS repo's store), the "spawn all ready" launch (only when this repo
+ * has ready tasks), and — in tree mode with epics to fold — the collapse-all toggle
+ * over just this group's epics. The chevron toggle is a `<button>` so it stays
+ * keyboard-reachable; the action cluster sits beside it (not nested) since buttons
+ * can't nest. Click is stopped from bubbling so toggling never opens a task.
+ */
+function DexRepoHeader({
+  group,
+  collapsed,
+  epicIds,
+  readyCount,
+}: {
+  group: DexRepoGroup;
+  collapsed: boolean;
+  epicIds: string[];
+  readyCount: number;
+}): JSX.Element {
+  const { toggleCollapsed, viewMode } = useDexContext();
+  const count = group.rows.length;
+  const showCollapseAll = viewMode === "tree" && epicIds.length > 0;
+  return (
+    <div className="dex-repo-header">
+      <button
+        className="dex-repo-header-btn"
+        title={`${group.project} — ${count} task${count === 1 ? "" : "s"}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          toggleCollapsed(repoCollapseKey(group.project));
+        }}
+      >
+        <i className={`fa-solid fa-chevron-${collapsed ? "right" : "down"}`} />
+        <span className="branch dex-repo-name">{group.project}</span>
+        <span className="chip muted dex-repo-count">{count}</span>
+      </button>
+      <span className="dex-repo-actions">
+        <DexNewButton scope={group.project} />
+        {readyCount > 0 && <DexSpawnAllButton count={readyCount} project={group.project} />}
+        {showCollapseAll && <DexCollapseAllButton epicIds={epicIds} />}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * One repo group on a multi-repo board: its {@link DexRepoHeader} (with the
+ * per-repo New / spawn-all / collapse-all controls), the group-scoped New-task
+ * composer when armed for this repo, and — unless the group is collapsed — the
+ * group's rows in the active view (the tree's visible rows, or the dependency
+ * graph over just this repo's rows; blocker edges never span repos, so a per-repo
+ * graph is the whole forest for that repo). The composer renders even while the
+ * group is collapsed, so arming "+" on a folded repo still reveals it.
+ */
+function DexRepoGroupView({ group }: { group: DexRepoGroup }): JSX.Element {
+  const { collapsed, viewMode, composing } = useDexContext();
+  const isCollapsed = collapsed.has(repoCollapseKey(group.project));
+  const epicIds = group.rows.filter((r) => r.isEpic).map((r) => r.id);
+  const readyCount = group.rows.filter(canSpawnDex).length;
+  return (
+    <>
+      <DexRepoHeader
+        group={group}
+        collapsed={isCollapsed}
+        epicIds={epicIds}
+        readyCount={readyCount}
+      />
+      {/* A one-element projects list pre-binds the composer to this repo (no
+          selector shown) and submits its `project`, so the task lands here. */}
+      {composing === group.project && <DexNewComposer projects={[group.project]} />}
+      {!isCollapsed &&
+        (viewMode === "graph" ? (
+          <DexGraph rows={group.rows} />
+        ) : (
+          visibleTreeRows(group.rows, collapsed).map((row) => <DexTaskRow key={row.id} row={row} />)
+        ))}
+    </>
   );
 }
 
@@ -1426,11 +1582,13 @@ function DexDetail({ row }: { row: DexRow }): JSX.Element {
 /**
  * The Dex section body, inside the {@link DexProvider} (so it can read the
  * collapse + selection + view-mode state). With a still-present task selected it
- * shows that task's detail ({@link DexDetail}); otherwise the header (the view
- * toggle, the New-task control, spawn-all, plus collapse-all in tree mode) over the
- * active view — the tree's visible rows or the dependency graph. An
- * installed-but-empty board still shows the header (so the toggle + New-task control
- * are reachable) above the empty state, rather than a blank pane.
+ * shows that task's detail ({@link DexDetail}), regardless of grouping. Otherwise:
+ * on a multi-repo board, the pane-level view toggle over one collapsible
+ * {@link DexRepoGroupView} per repo (each carrying its own New / spawn-all /
+ * collapse-all); on a single-repo board, the unchanged flat path — the
+ * {@link DexHeader} (view toggle, New, spawn-all, collapse-all) over the active
+ * view. An installed-but-empty board still shows the single-repo header (so the
+ * toggle + New control are reachable) above the empty state.
  */
 function DexSectionBody({ section }: { section: DexSection }): JSX.Element {
   const { collapsed, viewMode, selectedId, setSelectedId, composing } = useDexContext();
@@ -1444,22 +1602,35 @@ function DexSectionBody({ section }: { section: DexSection }): JSX.Element {
   }, [selectedId, selected, setSelectedId]);
   if (selected) return <DexDetail row={selected} />;
 
-  // The header (+ its armed New-task composer) and the body render at stable
-  // positions whether the board is empty or has rows, so a background push that
-  // flips between them never remounts the composer's textarea mid-type. An
-  // installed-but-empty board still shows the header, so the first task can be
-  // authored from it; below it an empty state keeps the tab reading as "Dex".
+  // Multi-repo board: a per-repo collapsible group, each with its own header +
+  // controls. The pane-level header keeps only the view toggle.
+  if (section.multiRepo && section.repoGroups.length > 0) {
+    return (
+      <>
+        <DexPaneHeader />
+        {section.repoGroups.map((group) => (
+          <DexRepoGroupView key={group.project} group={group} />
+        ))}
+      </>
+    );
+  }
+
+  // Single-repo board: the header (+ its armed New-task composer) and the body
+  // render at stable positions whether the board is empty or has rows, so a
+  // background push that flips between them never remounts the composer's textarea
+  // mid-type. An installed-but-empty board still shows the header, so the first
+  // task can be authored from it; below it an empty state keeps the tab as "Dex".
   const epicIds = section.rows.filter((r) => r.isEpic).map((r) => r.id);
   const readyCount = section.rows.filter(canSpawnDex).length;
   return (
     <>
       <DexHeader epicIds={epicIds} readyCount={readyCount} />
-      {composing && <DexNewComposer projects={dexProjects(section)} />}
+      {composing === PANE_SCOPE && <DexNewComposer projects={dexProjects(section)} />}
       {section.rows.length === 0 ? (
         <div className="message">No open tasks</div>
       ) : viewMode === "graph" ? (
         // Graph mode walks the blocker edges; tree mode is the pre-ordered render.
-        <DexGraph section={section} />
+        <DexGraph rows={section.rows} />
       ) : (
         visibleTreeRows(section.rows, collapsed).map((row) => <DexTaskRow key={row.id} row={row} />)
       )}
