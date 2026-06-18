@@ -18,10 +18,19 @@
  * `dex-landable`, `dex-agent`, `dex-chevron`, the chip tones) so `renderer.css`
  * keeps applying unchanged.
  */
-import { createContext, useContext, useEffect, useMemo, useState, type CSSProperties } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { isOpenDexTask, type DexRow, type DexSection, type DexStatus } from "../dex-state.js";
 import type { LandableState } from "../landable.js";
 import type { AgentState, AgentSummary } from "../agents-state.js";
+import type { DexEditRequest } from "../ipc.js";
 import { dexTaskColor } from "@perch/sdk/dex-color";
 import { useActions } from "./actions.js";
 import { DEX_STATUS_LABEL, DexTaskDot } from "./dex-task-chip.js";
@@ -387,24 +396,261 @@ function DexHeader({ epicIds }: { epicIds: string[] }): JSX.Element {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Task detail view + inline editor
+// ---------------------------------------------------------------------------
+
 /**
- * The task detail seam. T8c replaces this with the real detail view + inline
- * name/description editor; for T8a it's the minimal placeholder that proves row
- * selection navigates — a back affordance (clears the selection) and the task's
- * marker + name — reusing the detail classes so `renderer.css` already styles it.
+ * Whether a task is ready to hand to a fresh agent: an unblocked `ready` row with
+ * no live worktree or agent (so a started task shows its status instead of a
+ * start button). A 1:1 port of the old `dex.ts#canSpawnDex`; the per-row spawn
+ * controls T8d adds reuse it.
  */
-function DexDetailSeam({ row }: { row: DexRow }): JSX.Element {
+function canSpawnDex(row: DexRow): boolean {
+  return (
+    row.status === "ready" &&
+    row.blockedByCount === 0 &&
+    row.worktree === undefined &&
+    row.agent === undefined
+  );
+}
+
+/** A pre-formatted, wrapping text block for the detail view (description / result). */
+function DexBody({ text }: { text: string }): JSX.Element {
+  return <pre className="dex-detail-body">{text}</pre>;
+}
+
+/**
+ * The detail view's meta row: the click-to-copy id chip, the status chip, the
+ * project chip (multi-repo only), and the blocker / landable / live-agent
+ * markers. Shared by the read-only detail and the inline editor so the two read
+ * identically while editing.
+ */
+function DexMeta({ row }: { row: DexRow }): JSX.Element {
+  return (
+    <div className="dex-detail-meta">
+      <DexIdChip id={row.id} />
+      <span className={`chip ${row.health}`}>{DEX_STATUS_LABEL[row.status]}</span>
+      {row.project && <span className="chip muted">{row.project}</span>}
+      {row.blockedByCount > 0 && <DexBlockedChip count={row.blockedByCount} />}
+      {row.landable && <LandableChip state={row.landable} />}
+      {row.agent && <AgentMarker agent={row.agent} />}
+    </div>
+  );
+}
+
+/**
+ * The detail-page launch control: a labeled button that starts an agent for a
+ * ready task via `dex.spawn`. The detail-page twin of the per-row spawn button,
+ * carrying the shared `dex-spawn` hook plus the detail-specific `dex-detail-spawn`
+ * class. Only rendered for {@link canSpawnDex} rows. (T8d folds spawn into the
+ * shared optimistic in-flight state alongside the per-row buttons; here it fires
+ * the bridge action directly.)
+ */
+function DexDetailSpawnButton({ id }: { id: string }): JSX.Element {
+  const actions = useActions();
+  return (
+    <button
+      className="btn btn-sm dex-spawn dex-detail-spawn"
+      title="Start an agent for this task"
+      aria-label="Start an agent for this task"
+      onClick={() => void actions.dexSpawn(id)}
+    >
+      <i className="fa-solid fa-play" />
+      {" Start agent"}
+    </button>
+  );
+}
+
+/**
+ * The inline name/description editor behind the detail view's Edit button: a name
+ * input, a description textarea, and Save / Cancel. Save persists the changed
+ * fields via `window.perch.dexEdit` (only the fields that actually differ from the
+ * row are sent; an empty description is a deliberate clear, a blank name is
+ * rejected with an inline invalid flag).
+ *
+ * The draft (name + description) is local component state, seeded ONCE from the
+ * row on mount and deliberately never resynced from `row` — so a background
+ * PanelState push that re-renders the detail with a fresh `row` can't clobber what
+ * the user has typed (the draft is the source of truth until Save).
+ *
+ * HEADLINE: the inputs keep focus + caret while typing across a background push.
+ * Achieved the React way — this component stays mounted with stable identity while
+ * editing, so its `<input>`/`<textarea>` are reconciled in place rather than
+ * rebuilt, preserving focus + selection. No `data-focus-key` hack (that imperative
+ * focus-restore path is deleted wholesale in T10).
+ */
+function DexEditor({ row, onClose }: { row: DexRow; onClose: () => void }): JSX.Element {
+  const actions = useActions();
+  const [name, setName] = useState(row.name);
+  const [description, setDescription] = useState(row.description);
+  const [nameInvalid, setNameInvalid] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const nameRef = useRef<HTMLInputElement>(null);
+
+  // Focus + select the name field once, when the editor opens.
+  useEffect(() => {
+    nameRef.current?.focus();
+    nameRef.current?.select();
+  }, []);
+
+  async function save(): Promise<void> {
+    if (saving) return;
+    const trimmed = name.trim();
+    if (trimmed === "") {
+      // A task must keep a name — flag the field and stay in edit mode.
+      setNameInvalid(true);
+      nameRef.current?.focus();
+      return;
+    }
+
+    // Only send the fields that actually changed (description compared verbatim so
+    // a whitespace-only edit still counts; an empty description is a valid clear).
+    const request: DexEditRequest = { id: row.id };
+    if (trimmed !== row.name) request.name = trimmed;
+    if (description !== row.description) request.description = description;
+
+    if (request.name === undefined && request.description === undefined) {
+      onClose(); // no-op: nothing changed, leave edit mode without a daemon round-trip
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await actions.dexEdit(request);
+    } finally {
+      // Leave edit mode on completion; the board refresh from main updates the row.
+      onClose();
+    }
+  }
+
+  return (
+    <>
+      <div className="dex-detail-head">
+        <i className={dexMarkerClass(row)} title={DEX_STATUS_LABEL[row.displayStatus]} />
+        <input
+          ref={nameRef}
+          type="text"
+          className={`dex-edit-name${nameInvalid ? " invalid" : ""}`}
+          value={name}
+          placeholder="Task name"
+          aria-label="Task name"
+          aria-invalid={nameInvalid ? true : undefined}
+          onChange={(e) => {
+            setName(e.target.value);
+            if (nameInvalid && e.target.value.trim() !== "") setNameInvalid(false);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.preventDefault();
+              onClose();
+            } else if (e.key === "Enter") {
+              // Single-line name field: Enter commits (the textarea keeps Enter for newlines).
+              e.preventDefault();
+              void save();
+            }
+          }}
+        />
+      </div>
+
+      <DexMeta row={row} />
+
+      <div className="dex-detail-actions">
+        <button
+          className="btn btn-sm dex-edit-save"
+          disabled={saving}
+          title={saving ? "Saving…" : "Save changes"}
+          aria-label={saving ? "Saving…" : "Save changes"}
+          onClick={() => void save()}
+        >
+          <i className={saving ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-check"} />
+          {saving ? " Saving…" : " Save"}
+        </button>
+        <button
+          className="btn btn-sm dex-edit-cancel"
+          title="Cancel"
+          aria-label="Cancel"
+          onClick={onClose}
+        >
+          <i className="fa-solid fa-xmark" />
+          {" Cancel"}
+        </button>
+      </div>
+
+      <textarea
+        className="dex-edit-description"
+        value={description}
+        placeholder="Description (optional)"
+        aria-label="Task description"
+        rows={8}
+        onChange={(e) => setDescription(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onClose();
+          }
+        }}
+      />
+    </>
+  );
+}
+
+/**
+ * The task detail view (the `selectedDexId` detail screen): a back affordance, the
+ * task header + meta, the read-only description / result, and the actions row (a
+ * spawn launch for a ready task, plus the Edit button). The Edit button flips the
+ * view into the inline {@link DexEditor}.
+ *
+ * Edit mode is component state here — NOT a module global like the old
+ * `editingDexId`. Navigating back clears the selection, which unmounts this
+ * component and so drops any in-progress edit (matching the old
+ * `dexExitEdit`-on-back); a background push that re-renders the detail while
+ * editing keeps the editor mounted, so the draft + focus survive.
+ */
+function DexDetail({ row }: { row: DexRow }): JSX.Element {
   const { setSelectedId } = useDexContext();
+  const [editing, setEditing] = useState(false);
+
   return (
     <div className="dex-detail">
       <button className="btn btn-sm dex-back" onClick={() => setSelectedId(undefined)}>
         <i className="fa-solid fa-arrow-left" />
         {" Tasks"}
       </button>
-      <div className="dex-detail-head">
-        <i className={dexMarkerClass(row)} title={DEX_STATUS_LABEL[row.displayStatus]} />
-        <span className="dex-detail-title">{row.name}</span>
-      </div>
+
+      {editing ? (
+        <DexEditor row={row} onClose={() => setEditing(false)} />
+      ) : (
+        <>
+          <div className="dex-detail-head">
+            <i className={dexMarkerClass(row)} title={DEX_STATUS_LABEL[row.displayStatus]} />
+            <span className="dex-detail-title">{row.name}</span>
+          </div>
+
+          <DexMeta row={row} />
+
+          <div className="dex-detail-actions">
+            {canSpawnDex(row) && <DexDetailSpawnButton id={row.id} />}
+            <button
+              className="btn btn-sm dex-edit-btn"
+              title="Edit this task's name and description"
+              aria-label="Edit this task's name and description"
+              onClick={() => setEditing(true)}
+            >
+              <i className="fa-solid fa-pen" />
+              {" Edit"}
+            </button>
+          </div>
+
+          {row.description && <DexBody text={row.description} />}
+          {row.result && (
+            <>
+              <div className="dex-detail-label">Result</div>
+              <DexBody text={row.result} />
+            </>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -412,7 +658,7 @@ function DexDetailSeam({ row }: { row: DexRow }): JSX.Element {
 /**
  * The Dex section body, inside the {@link DexProvider} (so it can read the
  * collapse + selection state). With a still-present task selected it shows that
- * task's detail (the T8c seam); otherwise the tree: the collapse-all header (when
+ * task's detail ({@link DexDetail}); otherwise the tree: the collapse-all header (when
  * there are epics) and the visible rows. An installed-but-empty board shows an
  * empty state rather than a blank pane.
  */
@@ -426,7 +672,7 @@ function DexSectionBody({ section }: { section: DexSection }): JSX.Element {
   useEffect(() => {
     if (selectedId !== undefined && !selected) setSelectedId(undefined);
   }, [selectedId, selected, setSelectedId]);
-  if (selected) return <DexDetailSeam row={selected} />;
+  if (selected) return <DexDetail row={selected} />;
 
   // Plugin present but nothing open — an empty state, so the tab still reads as
   // "Dex". (The header's New-task composer that authors the first task is T8f.)

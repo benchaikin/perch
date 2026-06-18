@@ -11,22 +11,34 @@
 import "./test-dom.js";
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { DexPane } from "./dex-pane.js";
 import { dexHealth, type DexRow, type DexSection } from "../dex-state.js";
-import type { PerchBridge } from "../ipc.js";
+import type { DexEditRequest, PerchBridge } from "../ipc.js";
 
-/** Bridge spies the pane drives (only copyText is reachable from the tree). */
+/** Bridge spies the pane drives (copyText from the tree; dexEdit/dexSpawn from the detail). */
 let copyTextCalls: string[];
+let dexEditCalls: DexEditRequest[];
+let dexSpawnCalls: string[];
 
 const bridge = {
   copyText(text: string) {
     copyTextCalls.push(text);
   },
+  dexEdit(request: DexEditRequest) {
+    dexEditCalls.push(request);
+    return Promise.resolve();
+  },
+  dexSpawn(id: string) {
+    dexSpawnCalls.push(id);
+    return Promise.resolve();
+  },
 } as unknown as PerchBridge;
 
 beforeEach(() => {
   copyTextCalls = [];
+  dexEditCalls = [];
+  dexSpawnCalls = [];
   (globalThis as unknown as { window: { perch: PerchBridge } }).window.perch = bridge;
 });
 
@@ -254,4 +266,153 @@ test("a selection whose task disappears falls back to the tree", () => {
   rerender(<DexPane section={section([row({ id: "other", name: "Other" })])} />);
   assert.equal(container.querySelector(".dex-detail"), null, "the stale selection is dropped");
   assert.match(container.querySelector(".dex-row")!.textContent ?? "", /Other/);
+});
+
+// ---------------------------------------------------------------------------
+// Task detail view + inline editor
+// ---------------------------------------------------------------------------
+
+/** Render the pane and open the given task's detail (click its row). */
+function openDetail(...rows: DexRow[]): HTMLElement {
+  const { container } = render(<DexPane section={section(rows)} />);
+  fireEvent.click(container.querySelector(".dex-row")!);
+  return container;
+}
+
+test("the detail view renders the task's meta, description, and result", () => {
+  const c = openDetail(
+    row({
+      id: "det1",
+      name: "Detailed",
+      description: "The full ticket body.",
+      status: "done",
+      result: "Shipped it.",
+      project: "perch",
+    }),
+  );
+  // Meta row: the click-to-copy id chip, the status chip, and the project chip.
+  const meta = c.querySelector(".dex-detail-meta")!;
+  assert.ok(meta, "expected a meta row");
+  assert.equal(meta.querySelector(".dex-id")!.textContent, "det1");
+  assert.match(meta.textContent ?? "", /Done/);
+  assert.match(meta.textContent ?? "", /perch/);
+  // Body + result blocks.
+  const bodies = c.querySelectorAll(".dex-detail-body");
+  assert.equal(bodies.length, 2, "description + result each render a body block");
+  assert.equal(bodies[0]!.textContent, "The full ticket body.");
+  assert.match(c.querySelector(".dex-detail-label")!.textContent ?? "", /Result/);
+  assert.equal(bodies[1]!.textContent, "Shipped it.");
+});
+
+test("a ready, unworked task shows the detail-page spawn button; it spawns", () => {
+  const c = openDetail(row({ id: "rdy", name: "Ready one", status: "ready" }));
+  const spawn = c.querySelector(".dex-detail-spawn") as HTMLButtonElement;
+  assert.ok(spawn, "a ready task shows the detail spawn button");
+  fireEvent.click(spawn);
+  assert.deepEqual(dexSpawnCalls, ["rdy"]);
+});
+
+test("a blocked task shows no spawn button on the detail page", () => {
+  const c = openDetail(row({ id: "blk", name: "Blocked", status: "blocked", blockedByCount: 1 }));
+  assert.equal(c.querySelector(".dex-detail-spawn"), null);
+});
+
+test("the Edit button opens the inline editor seeded from the row", () => {
+  const c = openDetail(row({ id: "e1", name: "Edit me", description: "old body" }));
+  // Read mode: no inputs yet.
+  assert.equal(c.querySelector(".dex-edit-name"), null);
+  fireEvent.click(c.querySelector(".dex-edit-btn")!);
+  const name = c.querySelector(".dex-edit-name") as HTMLInputElement;
+  const desc = c.querySelector(".dex-edit-description") as HTMLTextAreaElement;
+  assert.ok(name && desc, "the editor shows a name input and description textarea");
+  assert.equal(name.value, "Edit me", "name seeded from the row");
+  assert.equal(desc.value, "old body", "description seeded from the row");
+  // The read-only title is gone; Save/Cancel replace the Edit button.
+  assert.equal(c.querySelector(".dex-detail-title"), null);
+  assert.ok(c.querySelector(".dex-edit-save"), "Save control present");
+  assert.equal(c.querySelector(".dex-edit-btn"), null, "Edit button hidden in edit mode");
+});
+
+test("Save sends only the changed fields via dexEdit and leaves edit mode", async () => {
+  const c = openDetail(row({ id: "e2", name: "Before", description: "before body" }));
+  fireEvent.click(c.querySelector(".dex-edit-btn")!);
+  fireEvent.change(c.querySelector(".dex-edit-name")!, { target: { value: "After" } });
+  // Description left untouched, so only the name is sent.
+  await act(async () => {
+    fireEvent.click(c.querySelector(".dex-edit-save")!);
+  });
+  assert.deepEqual(dexEditCalls, [{ id: "e2", name: "After" }]);
+  // Edit mode closes back to the read-only view.
+  assert.equal(c.querySelector(".dex-edit-name"), null, "editor closed after save");
+  assert.ok(c.querySelector(".dex-detail-title"), "back to the read-only detail");
+});
+
+test("an empty description is sent as a deliberate clear", async () => {
+  const c = openDetail(row({ id: "e3", name: "Keep", description: "wipe me" }));
+  fireEvent.click(c.querySelector(".dex-edit-btn")!);
+  fireEvent.change(c.querySelector(".dex-edit-description")!, { target: { value: "" } });
+  await act(async () => {
+    fireEvent.click(c.querySelector(".dex-edit-save")!);
+  });
+  assert.deepEqual(dexEditCalls, [{ id: "e3", description: "" }]);
+});
+
+test("a no-op save (nothing changed) closes edit mode without calling dexEdit", () => {
+  const c = openDetail(row({ id: "e4", name: "Same", description: "same" }));
+  fireEvent.click(c.querySelector(".dex-edit-btn")!);
+  fireEvent.click(c.querySelector(".dex-edit-save")!);
+  assert.deepEqual(dexEditCalls, [], "nothing changed → no daemon round-trip");
+  assert.equal(c.querySelector(".dex-edit-name"), null, "still leaves edit mode");
+});
+
+test("a blank name flags the field invalid and does not save", () => {
+  const c = openDetail(row({ id: "e5", name: "Has name" }));
+  fireEvent.click(c.querySelector(".dex-edit-btn")!);
+  fireEvent.change(c.querySelector(".dex-edit-name")!, { target: { value: "   " } });
+  fireEvent.click(c.querySelector(".dex-edit-save")!);
+  assert.deepEqual(dexEditCalls, [], "a blank name is not persisted");
+  const name = c.querySelector(".dex-edit-name") as HTMLInputElement;
+  assert.ok(name, "stays in edit mode");
+  assert.ok(name.classList.contains("invalid"), "the name field is flagged invalid");
+});
+
+test("Cancel discards the draft and returns to the read-only detail", () => {
+  const c = openDetail(row({ id: "e6", name: "Original", description: "orig" }));
+  fireEvent.click(c.querySelector(".dex-edit-btn")!);
+  fireEvent.change(c.querySelector(".dex-edit-name")!, { target: { value: "Edited away" } });
+  fireEvent.click(c.querySelector(".dex-edit-cancel")!);
+  assert.deepEqual(dexEditCalls, [], "cancel never saves");
+  // Re-opening shows the original, not the discarded draft.
+  fireEvent.click(c.querySelector(".dex-edit-btn")!);
+  assert.equal((c.querySelector(".dex-edit-name") as HTMLInputElement).value, "Original");
+});
+
+test("the description keeps focus + caret + draft across a background state push", () => {
+  // HEADLINE: typing in the editor survives a board poll's re-render with NO
+  // data-focus-key hack — the editor stays mounted, so the textarea isn't rebuilt.
+  const initial = row({ id: "focus", name: "Focus task", description: "" });
+  const { container, rerender } = render(<DexPane section={section([initial])} />);
+  fireEvent.click(container.querySelector(".dex-row")!);
+  fireEvent.click(container.querySelector(".dex-edit-btn")!);
+
+  const desc = container.querySelector(".dex-edit-description") as HTMLTextAreaElement;
+  desc.focus();
+  fireEvent.change(desc, { target: { value: "half-typed thought" } });
+  // Put the caret mid-string, as if still typing.
+  desc.setSelectionRange(4, 4);
+  assert.equal(document.activeElement, desc, "the textarea is focused before the push");
+
+  // A background board poll lands a fresh PanelState — same task, but a NEW row
+  // object (and an unrelated field changed) to mimic a real push.
+  rerender(
+    <DexPane
+      section={section([{ ...initial, displayStatus: "in-progress", health: "warn" }])} />,
+  );
+
+  const after = container.querySelector(".dex-edit-description") as HTMLTextAreaElement;
+  assert.equal(after, desc, "the same textarea node survives the re-render (not rebuilt)");
+  assert.equal(document.activeElement, after, "focus survives the background push");
+  assert.equal(after.value, "half-typed thought", "the in-progress draft is not clobbered");
+  assert.equal(after.selectionStart, 4, "the caret position survives");
+  assert.equal(after.selectionEnd, 4, "the caret position survives");
 });
