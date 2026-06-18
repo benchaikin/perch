@@ -22,7 +22,7 @@ import { useActions } from "./actions.js";
 import { usePanelState } from "./store.js";
 import { captureFieldFocus, restoreFieldFocus } from "./panel-focus.js";
 import { setLastState, setRenderer } from "./rerender.js";
-import { renderPrsPane } from "./prs.js";
+import { PrsPane } from "./prs.js";
 import { servicesSectionEl } from "./services.js";
 import { dexSectionEl } from "./dex.js";
 import { worktreesSectionEl } from "./worktrees.js";
@@ -120,40 +120,84 @@ function Notice({ notice }: { notice: PanelState["notice"] }): JSX.Element {
   );
 }
 
-/**
- * Mount the active plugin's pane into `rows`, preserving any focused in-panel
- * field across the rebuild. A direct lift of the old `renderer.ts` render body —
- * Services/Dex/Worktrees get their self-contained section, everything else falls
- * through to PRs. Interim: replaced pane-by-pane as T5–T8 land.
- */
-function mountPane(rows: HTMLElement, activeId: string | undefined, state: PanelState): void {
-  // A periodic board poll re-renders mid-type; capture the focused field before
-  // replaceChildren throws it away, restore it after (no-op unless the panel
-  // already owns focus). Removed in T10 — React panes keep the input mounted.
-  const preservedFocus = captureFieldFocus(document.activeElement, rows);
-  rows.replaceChildren();
-  if (activeId === SERVICES_TAB_ID) {
-    const services = servicesSectionEl(state.services, false);
-    if (services) rows.append(services);
-  } else if (activeId === DEX_TASKS_ID) {
-    const dex = dexSectionEl(state.dex, state.savedDexViewMode);
-    if (dex) rows.append(dex);
-  } else if (activeId === WORKTREES_LIST_ID) {
-    const worktrees = worktreesSectionEl(state.worktrees);
-    if (worktrees) rows.append(worktrees);
-  } else {
-    renderPrsPane(rows, state);
-  }
-  restoreFieldFocus(preservedFocus, rows);
+/** Whether `activeId` is a pane still rendered by the pre-React DOM builders. */
+function isLegacyPane(activeId: string | undefined): boolean {
+  return (
+    activeId === SERVICES_TAB_ID || activeId === DEX_TASKS_ID || activeId === WORKTREES_LIST_ID
+  );
 }
 
 /**
- * The panel body slot. React owns the `<main id="rows">` element but not its
- * children: an effect mounts the active legacy pane into it on every state push
- * or tab switch, and registers a replay so a pane's own `requestRender()` (a
- * chevron toggle, an optimistic spawn) re-mounts the current pane. This is the
- * sole bridge to the pre-React DOM builders; T5–T8 swap each pane for a real
- * React subtree and T10 deletes the bridge.
+ * Mount one not-yet-ported pane's legacy DOM into `host`, preserving any focused
+ * in-panel field across the rebuild. A trimmed lift of the old `renderer.ts`
+ * render body — only Services/Dex/Worktrees, since the PRs pane is now a real
+ * React component (see {@link PrsPane}). Interim: each pane drops out of here as
+ * T6–T8 land, and T10 deletes the bridge entirely.
+ */
+function mountLegacyPane(host: HTMLElement, activeId: string | undefined, state: PanelState): void {
+  // A periodic board poll re-renders mid-type; capture the focused field before
+  // replaceChildren throws it away, restore it after (no-op unless the panel
+  // already owns focus). Removed in T10 — React panes keep the input mounted.
+  const preservedFocus = captureFieldFocus(document.activeElement, host);
+  host.replaceChildren();
+  if (activeId === SERVICES_TAB_ID) {
+    const services = servicesSectionEl(state.services, false);
+    if (services) host.append(services);
+  } else if (activeId === DEX_TASKS_ID) {
+    const dex = dexSectionEl(state.dex, state.savedDexViewMode);
+    if (dex) host.append(dex);
+  } else if (activeId === WORKTREES_LIST_ID) {
+    const worktrees = worktreesSectionEl(state.worktrees);
+    if (worktrees) host.append(worktrees);
+  }
+  restoreFieldFocus(preservedFocus, host);
+}
+
+/**
+ * The bridge to the pre-React DOM builders for the not-yet-ported panes. React
+ * owns this `display: contents` host element (so its imperative children lay out
+ * as direct flex items of `#rows`) but not its children: an effect mounts the
+ * active legacy pane into it on every state push, and registers a replay so a
+ * pane's own `requestRender()` (a chevron toggle, an optimistic spawn) re-mounts
+ * it. Rendered only while a legacy pane is active — the PRs pane is real React —
+ * so React cleanly tears the host (and its legacy DOM) down on a switch to PRs.
+ * T6–T8 swap each remaining pane for a React subtree; T10 deletes this.
+ */
+function LegacyPaneHost({
+  activeId,
+  state,
+}: {
+  activeId: string | undefined;
+  state: PanelState;
+}): JSX.Element {
+  const ref = useRef<HTMLDivElement>(null);
+  // Keep the latest activeId for the requestRender replay closure below, which
+  // must re-mount whichever legacy pane is currently active.
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
+
+  useEffect(() => {
+    const host = ref.current;
+    if (!host) return;
+    // Record the state + how to replay it, so a legacy pane's requestRender()
+    // re-mounts the active pane.
+    setLastState(state);
+    setRenderer((replayed) => {
+      if (ref.current) mountLegacyPane(ref.current, activeIdRef.current, replayed);
+    });
+    mountLegacyPane(host, activeId, state);
+  }, [activeId, state]);
+
+  // `display: contents` keeps the legacy sections as direct flex children of
+  // `.rows` (the host box vanishes), so the layout matches the pre-React DOM.
+  return <div ref={ref} style={{ display: "contents" }} />;
+}
+
+/**
+ * The panel body slot: React's `<main id="rows">`, holding the active pane. The
+ * PRs pane is a real React subtree ({@link PrsPane}); the not-yet-ported panes
+ * still render through the {@link LegacyPaneHost} bridge. React swaps between the
+ * two on a tab switch, so a switch into PRs tears the legacy DOM down cleanly.
  */
 function PaneBody({
   activeId,
@@ -162,26 +206,16 @@ function PaneBody({
   activeId: string | undefined;
   state: PanelState | undefined;
 }): JSX.Element {
-  const ref = useRef<HTMLElement>(null);
-  // Keep the latest activeId for the requestRender replay closure below, which
-  // must re-mount whichever pane is currently active (not the one captured when
-  // it was registered).
-  const activeIdRef = useRef(activeId);
-  activeIdRef.current = activeId;
-
-  useEffect(() => {
-    const rows = ref.current;
-    if (!rows || !state) return;
-    // Record the state + how to replay it, so a legacy pane's requestRender()
-    // (still used by the not-yet-ported panes) re-mounts the active pane.
-    setLastState(state);
-    setRenderer((replayed) => {
-      if (ref.current) mountPane(ref.current, activeIdRef.current, replayed);
-    });
-    mountPane(rows, activeId, state);
-  }, [activeId, state]);
-
-  return <main id="rows" className="rows" ref={ref} />;
+  return (
+    <main id="rows" className="rows">
+      {state &&
+        (isLegacyPane(activeId) ? (
+          <LegacyPaneHost activeId={activeId} state={state} />
+        ) : (
+          <PrsPane state={state} />
+        ))}
+    </main>
+  );
 }
 
 /**
