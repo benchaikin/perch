@@ -27,10 +27,18 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import { isOpenDexTask, type DexRow, type DexSection, type DexStatus } from "../dex-state.js";
+import {
+  deriveDexGraph,
+  isOpenDexTask,
+  type DexGraphNode,
+  type DexRow,
+  type DexSection,
+  type DexStatus,
+} from "../dex-state.js";
 import type { LandableState } from "../landable.js";
 import type { AgentState, AgentSummary } from "../agents-state.js";
 import type { DexEditRequest } from "../ipc.js";
+import { DEFAULT_DEX_VIEW_MODE, type DexViewMode } from "../window-state.js";
 import { dexTaskColor } from "@perch/sdk/dex-color";
 import { useActions } from "./actions.js";
 import { DEX_STATUS_LABEL, DexTaskDot } from "./dex-task-chip.js";
@@ -57,10 +65,10 @@ interface DexDragState {
 }
 
 /**
- * The Dex pane's interaction state, shared with the children the sub-epic adds.
- * It owns the collapsed-epic set, the selected task, whether the New-task composer
- * is armed, the in-flight dependency-edit drag, and the optimistic in-flight sets
- * for the spawn / spawn-all / delete actions (the `spawningDexIds` /
+ * The Dex pane's interaction state, shared across the pane's children. It owns the
+ * collapsed-epic set, the selected task, the tree/graph view mode, whether the
+ * New-task composer is armed, the in-flight dependency-edit drag, and the optimistic
+ * in-flight sets for the spawn / spawn-all / delete actions (the `spawningDexIds` /
  * `spawningAllDex` / `deletingDexIds` module globals from {@link ./dex.ts}, now
  * component state). `selectedId` is the `selectedDexId` replacement — clicking a
  * row sets it; the detail view reads it. `composing` is the `composingNewTask`
@@ -99,6 +107,10 @@ interface DexContextValue {
   deleting: ReadonlySet<string>;
   /** Optimistically delete a task (main raises the confirm dialog first). */
   deleteDex(row: DexRow): void;
+  /** How the pane renders: the `tree` list or the dependency `graph`. */
+  viewMode: DexViewMode;
+  /** Switch the view mode (the renderer-owned half of seed-then-own). */
+  setViewMode(mode: DexViewMode): void;
 }
 
 const DexContext = createContext<DexContextValue | undefined>(undefined);
@@ -115,8 +127,20 @@ function useDexContext(): DexContextValue {
  * Collapse is a fresh `Set` per toggle so React sees a new reference and
  * re-renders (the old `dex.ts` mutated a module-global `Set` + called
  * `requestRender()`; this is just component state).
+ *
+ * The view mode seeds-then-owns like the active tab (T4): component state starts
+ * undefined and falls back to the pushed `savedViewMode` (then the persisted
+ * default), so the saved mode shows immediately on open; the first toggle sets
+ * the component state, and from then on this owns the selection. Persistence is
+ * the toggle's job (it calls `setDexViewMode`), mirroring `tabs.ts`'s split.
  */
-export function DexProvider({ children }: { children: React.ReactNode }): JSX.Element {
+export function DexProvider({
+  savedViewMode,
+  children,
+}: {
+  savedViewMode?: DexViewMode;
+  children: React.ReactNode;
+}): JSX.Element {
   const actions = useActions();
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
@@ -128,6 +152,8 @@ export function DexProvider({ children }: { children: React.ReactNode }): JSX.El
   const [spawning, setSpawning] = useState<ReadonlySet<string>>(() => new Set());
   const [spawningAll, setSpawningAll] = useState(false);
   const [deleting, setDeleting] = useState<ReadonlySet<string>>(() => new Set());
+  const [ownedViewMode, setViewMode] = useState<DexViewMode | undefined>(undefined);
+  const viewMode = ownedViewMode ?? savedViewMode ?? DEFAULT_DEX_VIEW_MODE;
 
   const value = useMemo<DexContextValue>(
     () => ({
@@ -206,8 +232,10 @@ export function DexProvider({ children }: { children: React.ReactNode }): JSX.El
           }
         })();
       },
+      viewMode,
+      setViewMode,
     }),
-    [actions, collapsed, selectedId, composing, drag, spawning, spawningAll, deleting],
+    [actions, collapsed, selectedId, composing, drag, spawning, spawningAll, deleting, viewMode],
   );
 
   return <DexContext.Provider value={value}>{children}</DexContext.Provider>;
@@ -856,12 +884,40 @@ function DexDeleteControl({
 // ---------------------------------------------------------------------------
 
 /**
+ * The shared body of a dex row — the status marker, the name, the identity dot +
+ * click-to-copy id chip, and the optional blocker / landable / live-agent chips.
+ * Sits after the leading chevron/spacer column, so the tree row and the graph
+ * node row draw an identical row vocabulary (only their leading column and
+ * indentation differ).
+ */
+function DexRowBody({ row }: { row: DexRow }): JSX.Element {
+  const open = isOpenDexTask(row);
+  return (
+    <>
+      <i className={dexMarkerClass(row)} title={DEX_STATUS_LABEL[row.displayStatus]} />
+
+      <span className="branch">{row.name}</span>
+
+      {/* An open (unblocked, unfinished) task leads with a solid identity-color
+          dot, then the id chip (which carries the same color as a faint tint). */}
+      {open && <DexTaskDot id={row.id} />}
+      <DexIdChip id={row.id} open={open} />
+
+      {row.blockedByCount > 0 && <DexBlockedChip count={row.blockedByCount} />}
+      {row.landable && <LandableChip state={row.landable} />}
+      {row.agent && <AgentMarker agent={row.agent} />}
+    </>
+  );
+}
+
+/**
  * One dex task row: an expand/collapse chevron (epics) or aligning spacer
- * (leaves), the status marker, the name, the identity dot + click-to-copy id
- * chip, the optional blocker / landable / live-agent chips, and the trailing
- * spawn (ready rows) + delete controls. Clicking the row body opens the task's
- * detail (sets the selection); clicking an epic's chevron toggles its children
- * without opening detail; the action buttons stop propagation so they don't.
+ * (leaves) followed by the shared {@link DexRowBody} (status marker, name,
+ * identity dot + click-to-copy id chip, and the optional blocker / landable /
+ * live-agent chips), plus the trailing spawn (ready rows) + delete controls.
+ * Clicking the row body opens the task's detail (sets the selection); clicking an
+ * epic's chevron toggles its children without opening detail; the action buttons
+ * stop propagation so they don't.
  *
  * The row is a drag source + drop target for dependency editing (drop A onto B ⇒
  * B blocked-by A), via {@link useDexRowDrag}. The linked-worktree indicator is
@@ -869,7 +925,6 @@ function DexDeleteControl({
  */
 function DexTaskRow({ row }: { row: DexRow }): JSX.Element {
   const { collapsed, toggleCollapsed, setSelectedId } = useDexContext();
-  const open = isOpenDexTask(row);
   const isCollapsed = collapsed.has(row.id);
   const blockedHint = row.blockedByCount > 0 ? ` (blocked by ${row.blockedByCount})` : "";
   // Drag this row onto another to wire a dependency (drop A onto B ⇒ B blocked-by A).
@@ -901,18 +956,7 @@ function DexTaskRow({ row }: { row: DexRow }): JSX.Element {
         <span className="dex-chevron-spacer" />
       )}
 
-      <i className={dexMarkerClass(row)} title={DEX_STATUS_LABEL[row.displayStatus]} />
-
-      <span className="branch">{row.name}</span>
-
-      {/* An open (unblocked, unfinished) task leads with a solid identity-color
-          dot, then the id chip (which carries the same color as a faint tint). */}
-      {open && <DexTaskDot id={row.id} />}
-      <DexIdChip id={row.id} open={open} />
-
-      {row.blockedByCount > 0 && <DexBlockedChip count={row.blockedByCount} />}
-      {row.landable && <LandableChip state={row.landable} />}
-      {row.agent && <AgentMarker agent={row.agent} />}
+      <DexRowBody row={row} />
 
       {/* A ready, unblocked, unworked task trails a spawn play button; every row
           trails a delete control (both stop propagation so the row stays closed). */}
@@ -940,12 +984,130 @@ function visibleTreeRows(rows: readonly DexRow[], collapsed: ReadonlySet<string>
   return visible;
 }
 
+// ---------------------------------------------------------------------------
+// Graph view (the dependency-graph branch)
+// ---------------------------------------------------------------------------
+
+/** One graph node flattened to a render row: the task plus its blocker-nesting depth. */
+interface DexGraphRowItem {
+  row: DexRow;
+  depth: number;
+}
+
 /**
- * The Dex section header: the New-task composer's "+" control (always present, so
- * the first task can be authored even from an empty board), the top-level "spawn
- * all ready" button (when any task is ready), and the expand/collapse-all toggle
- * over the tree's epics (only when there are epics to fold). The view-mode toggle
- * (T8b) lands alongside these in its own child.
+ * Flatten the dependency forest depth-first into render rows, carrying each
+ * node's blocker-nesting depth. A blocked task nests under *every* blocker it
+ * waits on, so the same row can appear more than once — the index is what makes a
+ * render key unique. A 1:1 port of `dex.ts`'s `dexGraphRows` walk (minus the
+ * drag-to-unblock zone, which lands with the drag-and-drop child, T8e).
+ */
+function flattenDexGraph(roots: readonly DexGraphNode[]): DexGraphRowItem[] {
+  const items: DexGraphRowItem[] = [];
+  const walk = (node: DexGraphNode, depth: number): void => {
+    items.push({ row: node.row, depth });
+    for (const child of node.children) walk(child, depth + 1);
+  };
+  for (const root of roots) walk(root, 0);
+  return items;
+}
+
+/**
+ * One dependency-graph node row. Mirrors {@link DexTaskRow} (the shared
+ * {@link DexRowBody} — status marker, name, identity dot + id chip, blocker /
+ * landable / agent chips, click-to-open-detail) but indents by *graph* depth
+ * rather than tree depth, and carries an aligning spacer where the tree's chevron
+ * sits (the graph has no collapsible epics). The `dex-graph-row` class tags it for
+ * the bundle test + any graph-specific styling; `dex-graph-nested` marks a
+ * dependent drawn under one of its blockers.
+ */
+function DexGraphRow({ row, depth }: { row: DexRow; depth: number }): JSX.Element {
+  const { setSelectedId } = useDexContext();
+  const blockedHint = row.blockedByCount > 0 ? ` (blocked by ${row.blockedByCount})` : "";
+  return (
+    <div
+      className={`row dex-row dex-graph-row${depth > 0 ? " dex-graph-nested" : ""}`}
+      // Indent by blocker-nesting depth so dependents read as nested under blockers.
+      style={{ paddingLeft: `${depth * 14}px` }}
+      title={`${row.name} — ${DEX_STATUS_LABEL[row.status]}${blockedHint}`}
+      onClick={() => setSelectedId(row.id)}
+    >
+      {/* Aligning spacer where the tree's chevron sits, so markers line up with
+          the tree view's columns. */}
+      <span className="dex-chevron-spacer" />
+      <DexRowBody row={row} />
+    </div>
+  );
+}
+
+/**
+ * The dependency-graph forest: the unblocked tasks as roots, each blocked task
+ * nested under every blocker it waits on. Derivation lives in the pure, tested
+ * {@link deriveDexGraph} (main-process vocabulary, no recompute here); this just
+ * walks its output and lays out the node rows.
+ */
+function DexGraph({ section }: { section: DexSection }): JSX.Element {
+  const items = useMemo(() => flattenDexGraph(deriveDexGraph(section.rows)), [section.rows]);
+  return (
+    <>
+      {items.map((item, i) => (
+        <DexGraphRow key={`${item.row.id}-${i}`} row={item.row} depth={item.depth} />
+      ))}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// View-mode toggle (tree ↔ graph)
+// ---------------------------------------------------------------------------
+
+/** The mode shown after toggling away from `mode` — the two-state flip. */
+function nextDexViewMode(mode: DexViewMode): DexViewMode {
+  return mode === "tree" ? "graph" : "tree";
+}
+
+/**
+ * Per-mode affordance for the view-mode toggle: the Font Awesome glyph for the
+ * CURRENT mode and a label naming what a click switches TO, so the button reads
+ * as "you're in tree view; click to see the graph" (and vice versa).
+ */
+const DEX_VIEW_MODE_BTN: Record<DexViewMode, { icon: string; switchLabel: string }> = {
+  tree: { icon: "sitemap", switchLabel: "Switch to graph view" },
+  graph: { icon: "diagram-project", switchLabel: "Switch to tree view" },
+};
+
+/**
+ * The tree/graph view-mode toggle: an icon-only button reflecting the CURRENT
+ * mode (tree → sitemap, graph → diagram). Clicking flips the mode — owning it in
+ * component state (the renderer-owned half of seed-then-own) AND persisting it via
+ * `setDexViewMode`, so it's restored on the next open (mirroring tab selection).
+ */
+function DexViewToggle(): JSX.Element {
+  const { viewMode, setViewMode } = useDexContext();
+  const actions = useActions();
+  const { icon, switchLabel } = DEX_VIEW_MODE_BTN[viewMode];
+  return (
+    <button
+      // Same subtle borderless icon-button style as the collapse-all control.
+      className="icon-btn dex-view-toggle"
+      title={switchLabel}
+      aria-label={switchLabel}
+      onClick={() => {
+        const next = nextDexViewMode(viewMode);
+        setViewMode(next);
+        actions.setDexViewMode(next); // persist so it's restored next open
+      }}
+    >
+      <i className={`fa-solid fa-${icon}`} />
+    </button>
+  );
+}
+
+/**
+ * The Dex section header: the tree/graph view-mode toggle (always present), the
+ * New-task composer's "+" control (so the first task can be authored even from an
+ * empty board), the top-level "spawn all ready" button (when any task is ready),
+ * and — in tree mode, when there are epics to fold — the expand/collapse-all toggle
+ * over them.
  */
 function DexHeader({
   epicIds,
@@ -954,15 +1116,19 @@ function DexHeader({
   epicIds: string[];
   readyCount: number;
 }): JSX.Element {
-  const { collapsed, toggleCollapsed } = useDexContext();
+  const { collapsed, toggleCollapsed, viewMode } = useDexContext();
   const allCollapsed = epicIds.every((id) => collapsed.has(id));
+  // Collapse-all only applies to the tree's epics — skip it in graph mode and
+  // when there are no epics to fold.
+  const showCollapseAll = viewMode === "tree" && epicIds.length > 0;
   return (
     <div className="repo-header dex-header">
+      <DexViewToggle />
       <DexNewButton />
       {/* Fleet launch: spawn an agent for every ready task at once. Hidden when
           nothing is ready (a no-op that would just toast "no ready tasks"). */}
       {readyCount > 0 && <DexSpawnAllButton count={readyCount} />}
-      {epicIds.length > 0 && (
+      {showCollapseAll && (
         <button
           className="icon-btn dex-toggle-all"
           title={allCollapsed ? "Expand all" : "Collapse all"}
@@ -1222,16 +1388,18 @@ function DexDetail({ row }: { row: DexRow }): JSX.Element {
 
 /**
  * The Dex section body, inside the {@link DexProvider} (so it can read the
- * collapse + selection state). With a still-present task selected it shows that
- * task's detail ({@link DexDetail}); otherwise the tree: the collapse-all header (when
- * there are epics) and the visible rows. An installed-but-empty board shows an
- * empty state rather than a blank pane.
+ * collapse + selection + view-mode state). With a still-present task selected it
+ * shows that task's detail ({@link DexDetail}); otherwise the header (the view
+ * toggle, the New-task control, spawn-all, plus collapse-all in tree mode) over the
+ * active view — the tree's visible rows or the dependency graph. An
+ * installed-but-empty board still shows the header (so the toggle + New-task control
+ * are reachable) above the empty state, rather than a blank pane.
  */
 function DexSectionBody({ section }: { section: DexSection }): JSX.Element {
-  const { collapsed, selectedId, setSelectedId, composing } = useDexContext();
+  const { collapsed, viewMode, selectedId, setSelectedId, composing } = useDexContext();
 
   // Detail view takes over the pane when a (still-present) task is selected. A
-  // selection whose task went away (completed/removed) falls back to the tree.
+  // selection whose task went away (completed/removed) falls back to the list.
   const selected =
     selectedId !== undefined ? section.rows.find((r) => r.id === selectedId) : undefined;
   useEffect(() => {
@@ -1246,31 +1414,41 @@ function DexSectionBody({ section }: { section: DexSection }): JSX.Element {
   // authored from it; below it an empty state keeps the tab reading as "Dex".
   const epicIds = section.rows.filter((r) => r.isEpic).map((r) => r.id);
   const readyCount = section.rows.filter(canSpawnDex).length;
-  const rows = visibleTreeRows(section.rows, collapsed);
   return (
     <>
       <DexHeader epicIds={epicIds} readyCount={readyCount} />
       {composing && <DexNewComposer projects={dexProjects(section)} />}
       {section.rows.length === 0 ? (
         <div className="message">No open tasks</div>
+      ) : viewMode === "graph" ? (
+        // Graph mode walks the blocker edges; tree mode is the pre-ordered render.
+        <DexGraph section={section} />
       ) : (
-        rows.map((row) => <DexTaskRow key={row.id} row={row} />)
+        visibleTreeRows(section.rows, collapsed).map((row) => <DexTaskRow key={row.id} row={row} />)
       )}
     </>
   );
 }
 
 /**
- * The Dex pane: the section shell wrapping the {@link DexProvider} + tree. Hidden
- * (renders nothing) when the dex plugin is absent, matching `dexSectionEl`'s null
- * return. The pane reads the main-process-derived {@link DexSection} as a prop —
- * no derivation here, same data-down contract as the rest of the renderer port.
+ * The Dex pane: the section shell wrapping the {@link DexProvider} + active view.
+ * Hidden (renders nothing) when the dex plugin is absent, matching `dexSectionEl`'s
+ * null return. The pane reads the main-process-derived {@link DexSection} as a prop
+ * — no derivation here, same data-down contract as the rest of the renderer port.
+ * `savedViewMode` is the persisted tree/graph mode the view seeds from on first
+ * render (then this pane owns it — see {@link DexProvider}).
  */
-export function DexPane({ section }: { section: DexSection }): JSX.Element | null {
+export function DexPane({
+  section,
+  savedViewMode,
+}: {
+  section: DexSection;
+  savedViewMode?: DexViewMode;
+}): JSX.Element | null {
   if (!section.visible) return null;
   return (
     <section className="repo-section dex-section">
-      <DexProvider>
+      <DexProvider savedViewMode={savedViewMode}>
         <DexSectionBody section={section} />
       </DexProvider>
     </section>
