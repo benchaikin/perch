@@ -140,6 +140,13 @@ export const Channels = {
    */
   dexEdit: "perch:dex-edit",
   /**
+   * Renderer → main `invoke`: mark a dex task complete (payload: a
+   * {@link DexCompleteRequest} — the id plus an optional completion result). Main
+   * runs `dex.complete`, refreshes the board, and resolves when the work finishes,
+   * so the renderer can leave its confirm UI; the outcome is toasted from main.
+   */
+  dexComplete: "perch:dex-complete",
+  /**
    * Renderer → main `invoke`: wire a dependency edge between two dex tasks (payload:
    * a {@link DexBlockerRequest}). Main runs `dex.add-blocker`, refreshes the board,
    * and resolves when the edit finishes, so the renderer can clear its drop state;
@@ -174,6 +181,16 @@ export interface DexEditRequest {
   name?: string;
   description?: string;
   priority?: number;
+}
+
+/**
+ * Renderer → main payload to mark a dex task complete. `id` identifies the task;
+ * `result` is the optional completion note the user typed (blank/omitted is
+ * defaulted daemon-side, since `dex complete` requires a non-empty `--result`).
+ */
+export interface DexCompleteRequest {
+  id: string;
+  result?: string;
 }
 
 /**
@@ -327,6 +344,14 @@ export interface PerchBridge {
    * success/error notice is pushed via panel state.
    */
   dexEdit(request: DexEditRequest): Promise<void>;
+  /**
+   * Ask the main process to mark a dex task complete (payload: a
+   * {@link DexCompleteRequest} — the id plus an optional completion result).
+   * Resolves when the completion finishes (or fails) and the board has refreshed,
+   * so the caller can leave its confirm UI; the success/error notice is pushed via
+   * panel state. A completion blocked by incomplete subtasks surfaces dex's error.
+   */
+  dexComplete(request: DexCompleteRequest): Promise<void>;
   /**
    * Ask the main process to add a dependency (blocker) edge between two dex tasks
    * — `blockedId` becomes blocked by `blockerId`. Resolves when the edit finishes

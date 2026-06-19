@@ -39,6 +39,7 @@ import { shouldShowNotification, toNotifyOptions } from "./notify.js";
 import {
   Channels,
   type DexBlockerRequest,
+  type DexCompleteRequest,
   type DexDeleteRequest,
   type DexEditRequest,
   type DexNewRequest,
@@ -838,6 +839,37 @@ async function editDex(request: DexEditRequest): Promise<void> {
 }
 
 /**
+ * Mark a dex task complete via the dex plugin's `complete` action, then refresh the
+ * board and toast the outcome. Driven by the detail screen's inline confirm; the
+ * request carries the id plus an optional completion result (blank/omitted is
+ * defaulted daemon-side). Awaited by the renderer (via `ipcMain.handle`) so the
+ * confirm UI clears its in-flight state when the work finishes. On success the board
+ * is re-fetched immediately so the task flips to done (and, with showCompleted off,
+ * leaves the board) without waiting for the next poll. A completion blocked by
+ * incomplete subtasks surfaces dex's own error as a `{ ok:false, message }`, toasted
+ * here — never a silent force-complete.
+ */
+async function completeDex(request: DexCompleteRequest): Promise<void> {
+  if (!client) return;
+  try {
+    const result = (await client.invoke({ id: "dex.complete", input: request })) as {
+      ok?: boolean;
+      message?: string;
+    } | null;
+    if (result && result.ok === false) {
+      showNotice({ tone: "bad", text: result.message ?? `Complete task ${request.id} failed.` });
+    } else {
+      showNotice({ tone: "ok", text: result?.message ?? `Completed task ${request.id}.` });
+      await refreshDexBoard();
+    }
+  } catch (err) {
+    showNotice({ tone: "bad", text: `Complete task ${request.id} failed: ${errorMessage(err)}` });
+  } finally {
+    pushState();
+  }
+}
+
+/**
  * Add a dependency (blocker) edge between two dex tasks via the dex plugin's
  * `add-blocker` action — `blockedId` becomes blocked by `blockerId` — then refresh
  * the board and toast the outcome. Driven by the renderer's drag-and-drop (drop A
@@ -1606,6 +1638,9 @@ function registerIpc(): void {
   ipcMain.handle(Channels.dexSpawnReady, (_event, project?: string) => spawnDexReady(project));
   ipcMain.handle(Channels.dexDelete, (_event, request: DexDeleteRequest) => deleteDex(request));
   ipcMain.handle(Channels.dexEdit, (_event, request: DexEditRequest) => editDex(request));
+  ipcMain.handle(Channels.dexComplete, (_event, request: DexCompleteRequest) =>
+    completeDex(request),
+  );
   ipcMain.handle(Channels.dexAddBlocker, (_event, request: DexBlockerRequest) =>
     addDexBlocker(request),
   );

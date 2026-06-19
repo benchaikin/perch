@@ -38,7 +38,7 @@ import {
 } from "../dex-state.js";
 import type { LandableState } from "../landable.js";
 import type { AgentState, AgentSummary } from "../agents-state.js";
-import type { DexEditRequest } from "../ipc.js";
+import type { DexCompleteRequest, DexEditRequest } from "../ipc.js";
 // Type-only: `window-state.ts` reads/writes files (`node:fs`), so it must never
 // reach the browser bundle. The default mode is the `"tree"` literal below,
 // mirroring `dex.ts` — pulling in `DEFAULT_DEX_VIEW_MODE` as a value would bundle
@@ -1720,10 +1720,102 @@ function DexEditor({ row, onClose }: { row: DexRow; onClose: () => void }): JSX.
 }
 
 /**
+ * The inline confirm behind the detail view's Complete button: a textarea for an
+ * optional completion result (seeded empty), with Confirm (✓) / Cancel (✗). Confirm
+ * marks the task done via `window.perch.dexComplete`, passing the result the user
+ * typed (blank is fine — the daemon defaults a non-empty `--result`, which `dex
+ * complete` requires). Esc cancels. The non-activating panel can't use a
+ * `window.prompt`/`window.confirm`, so this mirrors {@link DexEditor}'s in-place
+ * editing feel — letting the user record WHY the task is done.
+ *
+ * In-flight `saving` is local boolean state (the detail screen completes one task
+ * at a time, so a context-level set like spawn/delete isn't needed): Confirm
+ * disables + spins while the call is in flight, and the editor stays mounted so the
+ * draft survives a background push.
+ */
+function DexCompleter({ row, onClose }: { row: DexRow; onClose: () => void }): JSX.Element {
+  const actions = useActions();
+  const [result, setResult] = useState("");
+  const [saving, setSaving] = useState(false);
+  const resultRef = useRef<HTMLTextAreaElement>(null);
+
+  // Focus the result field once, when the confirm opens.
+  useEffect(() => {
+    resultRef.current?.focus();
+  }, []);
+
+  async function complete(): Promise<void> {
+    if (saving) return;
+    setSaving(true);
+    try {
+      // Send only a non-empty result; a blank note lets the daemon default one.
+      const request: DexCompleteRequest = { id: row.id };
+      if (result.trim() !== "") request.result = result;
+      await actions.dexComplete(request);
+    } finally {
+      // Leave confirm mode on completion; the board refresh from main updates the
+      // detail (the task flips to done, and with showCompleted off leaves the list).
+      onClose();
+    }
+  }
+
+  return (
+    <>
+      <div className="dex-detail-head">
+        <i className={dexMarkerClass(row)} title={DEX_STATUS_LABEL[row.displayStatus]} />
+        <span className="dex-detail-title">{row.name}</span>
+      </div>
+
+      <DexMeta row={row} />
+
+      <div className="dex-detail-actions">
+        <button
+          className="btn btn-sm dex-complete-confirm"
+          disabled={saving}
+          title={saving ? "Completing…" : "Mark this task complete"}
+          aria-label={saving ? "Completing…" : "Mark this task complete"}
+          onClick={() => void complete()}
+        >
+          <i className={saving ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-check"} />
+          {saving ? " Completing…" : " Complete"}
+        </button>
+        <button
+          className="btn btn-sm dex-complete-cancel"
+          title="Cancel"
+          aria-label="Cancel"
+          onClick={onClose}
+        >
+          <i className="fa-solid fa-xmark" />
+          {" Cancel"}
+        </button>
+      </div>
+
+      <div className="dex-detail-label">Result (optional)</div>
+      <textarea
+        ref={resultRef}
+        className="dex-complete-result"
+        value={result}
+        placeholder="What was done? (optional)"
+        aria-label="Completion result"
+        rows={4}
+        onChange={(e) => setResult(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onClose();
+          }
+        }}
+      />
+    </>
+  );
+}
+
+/**
  * The task detail view (the `selectedDexId` detail screen): a back affordance, the
  * task header + meta, the read-only description / result, and the actions row (a
- * spawn launch for a ready task, plus the Edit button). The Edit button flips the
- * view into the inline {@link DexEditor}.
+ * spawn launch for a ready task, plus the Complete + Edit buttons). Edit flips the
+ * view into the inline {@link DexEditor}; Complete (hidden once the task is done)
+ * flips it into the inline {@link DexCompleter}.
  *
  * Edit mode is component state here — NOT a module global like the old
  * `editingDexId`. Navigating back clears the selection, which unmounts this
@@ -1734,6 +1826,10 @@ function DexEditor({ row, onClose }: { row: DexRow; onClose: () => void }): JSX.
 function DexDetail({ row }: { row: DexRow }): JSX.Element {
   const { setSelectedId } = useDexContext();
   const [editing, setEditing] = useState(false);
+  const [completing, setCompleting] = useState(false);
+
+  // A done task can't be re-completed; the Complete control is hidden for it.
+  const completable = row.displayStatus !== "done";
 
   return (
     <div className="dex-detail">
@@ -1744,6 +1840,8 @@ function DexDetail({ row }: { row: DexRow }): JSX.Element {
 
       {editing ? (
         <DexEditor row={row} onClose={() => setEditing(false)} />
+      ) : completing ? (
+        <DexCompleter row={row} onClose={() => setCompleting(false)} />
       ) : (
         <>
           <div className="dex-detail-head">
@@ -1755,6 +1853,17 @@ function DexDetail({ row }: { row: DexRow }): JSX.Element {
 
           <div className="dex-detail-actions">
             {canSpawnDex(row) && <DexSpawnButton id={row.id} detail />}
+            {completable && (
+              <button
+                className="btn btn-sm dex-complete-btn"
+                title="Mark this task complete"
+                aria-label="Mark this task complete"
+                onClick={() => setCompleting(true)}
+              >
+                <i className="fa-solid fa-circle-check" />
+                {" Complete"}
+              </button>
+            )}
             <button
               className="btn btn-sm dex-edit-btn"
               title="Edit this task's name and description"

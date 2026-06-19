@@ -1008,7 +1008,8 @@ body {
    body). Both adopt the panel's surface + rule so they read as native editors,
    not browser-chrome inputs; focus brightens the border to the accent. */
 .dex-edit-name,
-.dex-edit-description {
+.dex-edit-description,
+.dex-complete-result {
   width: 100%;
   color: var(--fg);
   background: var(--chip-bg);
@@ -1020,7 +1021,8 @@ body {
   font-weight: 600;
   font-size: 13px;
 }
-.dex-edit-description {
+.dex-edit-description,
+.dex-complete-result {
   margin-top: 6px;
   resize: vertical;
   font-family: ui-monospace, "SF Mono", Menlo, Monaco, "Courier New", monospace;
@@ -1029,7 +1031,8 @@ body {
   line-height: 1.5;
 }
 .dex-edit-name:focus,
-.dex-edit-description:focus {
+.dex-edit-description:focus,
+.dex-complete-result:focus {
   outline: none;
   border-color: var(--accent);
 }
@@ -1040,7 +1043,8 @@ body {
 }
 /* The Save control carries the affirmative accent border, mirroring how the
    labeled delete-confirm carries the destructive one. */
-.dex-detail .dex-detail-actions .btn.btn-sm.dex-edit-save {
+.dex-detail .dex-detail-actions .btn.btn-sm.dex-edit-save,
+.dex-detail .dex-detail-actions .btn.btn-sm.dex-complete-confirm {
   color: var(--accent);
   border-color: var(--accent);
 }

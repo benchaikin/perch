@@ -77,6 +77,9 @@ export function createActions(bridge: () => PerchActions): PerchActions {
     dexEdit(request) {
       return bridge().dexEdit(request);
     },
+    dexComplete(request) {
+      return bridge().dexComplete(request);
+    },
     dexAddBlocker(request) {
       return bridge().dexAddBlocker(request);
     },

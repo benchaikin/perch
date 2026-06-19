@@ -48,6 +48,7 @@ const CASES: Array<[keyof PerchActions, unknown, boolean]> = [
   ["dexSpawnReady", undefined, true],
   ["dexDelete", { id: "t", name: "n" }, true],
   ["dexEdit", { id: "t", name: "n" }, true],
+  ["dexComplete", { id: "t", result: "done" }, true],
   ["dexAddBlocker", { blockedId: "a", blockerId: "b" }, true],
   ["dexRemoveBlocker", { blockedId: "a", blockerId: "b" }, true],
   ["dexNew", { description: "do a thing" }, true],

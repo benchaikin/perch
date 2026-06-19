@@ -33,6 +33,7 @@ import {
   runAddBlocker,
   runRemoveBlocker,
 } from "./blocker.js";
+import { type CompleteInput, type CompleteResult, runComplete } from "./complete.js";
 import { type DeleteInput, type DeleteResult, runDelete } from "./delete.js";
 import { type EditInput, type EditResult, runEdit } from "./edit.js";
 import { type NewInput, type NewResult, runNew } from "./new.js";
@@ -58,6 +59,8 @@ export {
 export type { DexGroup } from "./normalize.js";
 export { resolveBlockerStore, runAddBlocker, runRemoveBlocker } from "./blocker.js";
 export type { BlockerDeps, BlockerInput, BlockerResult } from "./blocker.js";
+export { DEFAULT_COMPLETE_RESULT, runComplete } from "./complete.js";
+export type { CompleteDeps, CompleteInput, CompleteResult } from "./complete.js";
 export { locateTaskStore, runDelete } from "./delete.js";
 export type { DeleteDeps, DeleteInput, DeleteResult } from "./delete.js";
 export { runEdit } from "./edit.js";
@@ -169,6 +172,17 @@ const SpawnInputSchema = z.object({
 const DeleteInputSchema = z.object({
   id: z.string(),
   repo: z.string().optional(),
+});
+
+/**
+ * The `dex.complete` action input: a task id, an optional explicit repo override,
+ * and an optional completion result. A blank/omitted result is defaulted daemon-side
+ * so the CLI's required `--result` is never empty.
+ */
+const CompleteInputSchema = z.object({
+  id: z.string(),
+  repo: z.string().optional(),
+  result: z.string().optional(),
 });
 
 /**
@@ -525,6 +539,38 @@ export default definePlugin({
         // Same repo precedence as `dex.tasks`/`dex.spawn`/`dex.delete`.
         const repos = effectiveDirs(cfg.dirs ?? [], ctx.global);
         return runEdit(input, {
+          exec: execOverride ?? defaultExec,
+          dexBin: cfg.dexBin ?? "dex",
+          repos,
+          log: ctx.log,
+        });
+      },
+    }),
+
+    /**
+     * Mark a dex task complete in whichever monitored repo's store holds it — the
+     * board's "close the loop by hand" counterpart to `edit`, projecting the `dex`
+     * CLI's `complete` onto perch's surfaces so work finished outside the
+     * worktree/PR flow (a task done by hand, an obsolete-but-finished item, an epic
+     * whose children all landed) can be closed without dropping to the CLI. The
+     * store is `input.repo`'s when given, else found by probing the configured
+     * stores (same precedence as `spawn`/`delete`/`edit`). Runs `dex complete <id>
+     * --result "..." --no-commit` — `--no-commit` because a manual completion has no
+     * merge commit to link (the auto-land path links `--commit`), and NO `--force`,
+     * so dex's incomplete-subtask validation surfaces as a toast rather than
+     * silently force-completing an epic with open children. An empty result is
+     * defaulted daemon-side. Daemon-side; MCP-exposed (yielding `perch dex complete
+     * <id>` + a typed tool). Never throws: any failure returns `{ ok:false, message }`.
+     */
+    complete: action<CompleteInput, DexConfig, CompleteResult>({
+      summary: "Mark a dex task complete in the store that holds it",
+      input: CompleteInputSchema,
+      expose: { mcp: true },
+      run: ({ input, ctx }): Promise<CompleteResult> => {
+        const cfg = configOf(ctx.config);
+        // Same repo precedence as `dex.tasks`/`dex.spawn`/`dex.delete`/`dex.edit`.
+        const repos = effectiveDirs(cfg.dirs ?? [], ctx.global);
+        return runComplete(input, {
           exec: execOverride ?? defaultExec,
           dexBin: cfg.dexBin ?? "dex",
           repos,
