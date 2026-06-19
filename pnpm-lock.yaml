@@ -180,6 +180,9 @@ importers:
 
   plugins/stack:
     dependencies:
+      '@perch/plugin-worktrees':
+        specifier: workspace:*
+        version: link:../worktrees
       '@perch/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk

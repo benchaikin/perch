@@ -5,5 +5,5 @@
     "rootDir": "src"
   },
   "include": ["src"],
-  "references": [{ "path": "../../packages/sdk" }]
+  "references": [{ "path": "../../packages/sdk" }, { "path": "../worktrees" }]
 }
