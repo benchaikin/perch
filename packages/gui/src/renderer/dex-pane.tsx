@@ -46,6 +46,7 @@ import type { DexEditRequest } from "../ipc.js";
 import type { DexViewMode } from "../window-state.js";
 import { dexTaskColor } from "@perch/sdk/dex-color";
 import { useActions } from "./actions.js";
+import { CopyChip } from "./copy-chip.js";
 import { DEX_STATUS_LABEL, DexTaskDot } from "./dex-task-chip.js";
 
 // ---------------------------------------------------------------------------
@@ -363,24 +364,12 @@ function dexMarkerClass(row: DexRow): string {
 // ---------------------------------------------------------------------------
 
 /**
- * The task id as a monospace reference chip. Click to copy it to the clipboard
- * with a brief inline confirmation; `stopPropagation` so copying never opens the
- * row's detail. When `open` (unblocked + unfinished), the chip carries the task's
- * stable identity color as a faint backing tint via the `dex-open` class + the
- * `--task-color`/`--task-color-rgb` custom properties the CSS reads.
+ * The task id as a monospace, click-to-copy reference chip (the shared
+ * {@link CopyChip}). When `open` (unblocked + unfinished), the chip carries the
+ * task's stable identity color as a faint backing tint via the `dex-open` class
+ * + the `--task-color`/`--task-color-rgb` custom properties the CSS reads.
  */
 function DexIdChip({ id, open = false }: { id: string; open?: boolean }): JSX.Element {
-  const actions = useActions();
-  const [copied, setCopied] = useState(false);
-
-  // Revert the inline "copied ✓" confirmation after a moment; the cleanup clears
-  // the timer if the chip unmounts (or is re-clicked) first, so no stray update.
-  useEffect(() => {
-    if (!copied) return;
-    const t = setTimeout(() => setCopied(false), 1000);
-    return () => clearTimeout(t);
-  }, [copied]);
-
   let style: CSSProperties | undefined;
   if (open) {
     const color = dexTaskColor(id);
@@ -391,18 +380,12 @@ function DexIdChip({ id, open = false }: { id: string; open?: boolean }): JSX.El
   }
 
   return (
-    <span
-      className={`chip muted dex-id${open ? " dex-open" : ""}${copied ? " copied" : ""}`}
+    <CopyChip
+      value={id}
+      className={`dex-id${open ? " dex-open" : ""}`}
       title="Copy task id"
       style={style}
-      onClick={(e) => {
-        e.stopPropagation();
-        actions.copyText(id);
-        setCopied(true);
-      }}
-    >
-      {copied ? "copied ✓" : id}
-    </span>
+    />
   );
 }
 

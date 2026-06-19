@@ -34,12 +34,14 @@ const calls = {
   serviceAction: [] as ServiceActionRequest[],
   servicesBulk: [] as { action: ServicesBulkAction; project?: string }[],
   serviceLogs: [] as string[],
+  copyText: [] as string[],
 };
 (win as unknown as { perch: unknown }).perch = {
   serviceAction: (request: ServiceActionRequest) => calls.serviceAction.push(request),
   servicesBulk: (action: ServicesBulkAction, project?: string) =>
     calls.servicesBulk.push({ action, project }),
   serviceLogs: (name: string) => calls.serviceLogs.push(name),
+  copyText: (text: string) => calls.copyText.push(text),
 };
 
 // Imported after the DOM + bridge globals are in place (react-dom reads them at
@@ -55,7 +57,7 @@ function runningRow(name: string, overrides: Partial<ServiceRow> = {}): ServiceR
     status: "running",
     statusLabel: "running",
     health: "ok",
-    detail: "pid 4242",
+    pid: 4242,
     buttons: [
       { action: "restart", label: "Restart" },
       { action: "stop", label: "Stop" },
@@ -135,6 +137,7 @@ test("renders one row per service with its name, status detail, and health dot",
         health: "bad",
         status: "crashed",
         statusLabel: "crashed",
+        pid: undefined,
         detail: "exit 1",
       }),
     ],
@@ -145,9 +148,13 @@ test("renders one row per service with its name, status detail, and health dot",
   assert.equal(rows.length, 2);
   const names = [...c.querySelectorAll(".service-row .branch")].map((n) => n.textContent);
   assert.deepEqual(names, ["api", "worker"]);
-  // Status text folds in the detail suffix.
+  // The running row badges the bare pid (no "pid" label); the crashed row keeps
+  // its exit code as plain text.
   const statuses = [...c.querySelectorAll(".service-status")].map((n) => n.textContent);
-  assert.deepEqual(statuses, ["running · pid 4242", "crashed · exit 1"]);
+  assert.deepEqual(statuses, ["running · 4242", "crashed · exit 1"]);
+  // The pid renders as a click-to-copy badge; the exit code does not.
+  assert.equal(c.querySelector(".service-status .service-pid")?.textContent, "4242");
+  assert.equal(rows[1]?.querySelector(".service-pid"), null);
   // The health dot carries the health class (color) the row was given.
   assert.ok(c.querySelector(".service-row .dot.ok"));
   assert.ok(c.querySelector(".service-row .dot.bad"));
@@ -174,6 +181,47 @@ test("the Logs button calls serviceLogs with the service name", () => {
   assert.ok(logs);
   click(logs);
   assert.deepEqual(calls.serviceLogs, ["api"]);
+});
+
+test("clicking the PID badge copies the bare pid and confirms inline", () => {
+  calls.copyText.length = 0;
+  const c = render({ visible: true, rows: [runningRow("api")], controls: [] });
+
+  const badge = c.querySelector<HTMLElement>(".service-status .service-pid");
+  assert.ok(badge, "a running service renders a pid badge");
+  assert.equal(badge.textContent, "4242");
+  flushSync(() => click(badge));
+  // The bare pid (as a string) is copied — no "pid" prefix.
+  assert.deepEqual(calls.copyText, ["4242"]);
+  // The chip flips to its confirmation, marked with the shared `copied` class.
+  assert.equal(badge.textContent, "copied ✓");
+  assert.ok(badge.classList.contains("copied"));
+});
+
+test("clicking the PID badge does not trigger the row (stopPropagation)", () => {
+  // A React onClick on an ancestor stands in for the row's own behavior; the
+  // badge's stopPropagation must keep React from dispatching to it. (A React
+  // ancestor, not a native listener: React delegates at the root, so a native
+  // handler would fire before the synthetic stopPropagation runs.)
+  let ancestorClicks = 0;
+  const container = win.document.createElement("div");
+  win.document.body.append(container);
+  const root = createRoot(container);
+  flushSync(() =>
+    root.render(
+      <div onClick={() => ancestorClicks++}>
+        <ServicesPane
+          section={asSection({ visible: true, rows: [runningRow("api")], controls: [] })}
+          showTitle={false}
+        />
+      </div>,
+    ),
+  );
+
+  const badge = container.querySelector<HTMLElement>(".service-status .service-pid");
+  assert.ok(badge);
+  flushSync(() => click(badge));
+  assert.equal(ancestorClicks, 0, "the click never reaches the row's handler");
 });
 
 test("a flat-fallback bulk control calls servicesBulk unscoped (no project)", () => {

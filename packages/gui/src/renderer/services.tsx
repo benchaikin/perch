@@ -23,6 +23,7 @@ import type {
   ServicesSection,
 } from "../services-state.js";
 import { HEALTH_ICON } from "./common.js";
+import { CopyChip } from "./copy-chip.js";
 
 /**
  * Service markers carry a fourth state — `muted` (stopped) — on top of the
@@ -114,12 +115,20 @@ function ServiceActions({ svc }: { svc: ServiceRow }): JSX.Element {
   );
 }
 
+/** The bare process id of a running/starting service as a click-to-copy badge. */
+function ServicePidBadge({ pid }: { pid: number }): JSX.Element {
+  return <CopyChip value={String(pid)} className="service-pid" title="Copy pid" />;
+}
+
 /** One service row: a health-colored dot, the name, a status detail, and actions. */
 function ServiceRowEl({ svc }: { svc: ServiceRow }): JSX.Element {
+  // The pid rides its own badge, but still belongs in the hover tooltip so the
+  // row's full status reads on hover like it did when pid was plain text.
+  const tooltipDetail = svc.pid !== undefined ? `pid ${svc.pid}` : svc.detail;
   return (
     <div
       className="row service-row"
-      title={`${svc.name} — ${svc.statusLabel}${svc.detail ? ` (${svc.detail})` : ""}`}
+      title={`${svc.name} — ${svc.statusLabel}${tooltipDetail ? ` (${tooltipDetail})` : ""}`}
     >
       <i
         className={`dot ${svc.health} fa-solid fa-${SERVICE_HEALTH_ICON[svc.health]}`}
@@ -127,7 +136,15 @@ function ServiceRowEl({ svc }: { svc: ServiceRow }): JSX.Element {
       />
       <span className="branch">{svc.name}</span>
       <span className="service-status">
-        {svc.detail ? `${svc.statusLabel} · ${svc.detail}` : svc.statusLabel}
+        {svc.statusLabel}
+        {svc.pid !== undefined ? (
+          <>
+            {" · "}
+            <ServicePidBadge pid={svc.pid} />
+          </>
+        ) : svc.detail ? (
+          ` · ${svc.detail}`
+        ) : null}
       </span>
       <ServiceActions svc={svc} />
     </div>
