@@ -50,6 +50,9 @@ const bridge: PerchBridge = {
   setDexViewMode(mode) {
     ipcRenderer.send(Channels.setDexViewMode, mode);
   },
+  setNewTaskDialogSize(size) {
+    ipcRenderer.send(Channels.setNewTaskDialogSize, size);
+  },
   worktreeOpen(path) {
     ipcRenderer.send(Channels.worktreeOpen, path);
   },

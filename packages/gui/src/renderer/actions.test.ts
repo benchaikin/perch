@@ -42,6 +42,7 @@ const CASES: Array<[keyof PerchActions, unknown, boolean]> = [
   ["copyText", "some text", false],
   ["setActiveTab", "tab-id", false],
   ["setDexViewMode", "graph", false],
+  ["setNewTaskDialogSize", { width: 600, height: 480 }, false],
   ["worktreeOpen", "/path/to/wt", false],
   ["worktreeRemove", { path: "/path/to/wt", name: "wt" }, true],
   ["dexSpawn", "task-1", true],

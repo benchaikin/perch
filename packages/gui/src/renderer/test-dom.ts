@@ -32,6 +32,17 @@ for (const key of [
 ]) {
   if (g[key] === undefined) g[key] = win[key];
 }
+// jsdom doesn't implement ResizeObserver (the New-task dialog observes its own
+// size to persist resizes). A no-op stub is enough — the resize-persistence
+// behavior is exercised by manual launch, not these DOM tests.
+if (g.ResizeObserver === undefined) {
+  g.ResizeObserver = class {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  };
+}
+
 // React Testing Library reads this to know it's in an `act()`-aware
 // environment and stay quiet about un-wrapped updates.
 g.IS_REACT_ACT_ENVIRONMENT = true;

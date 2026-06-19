@@ -810,8 +810,20 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  width: 100%;
-  max-width: 420px;
+  /* Resizable as a whole (not just the textarea): the user drags the corner
+     grabber to make the composer as large as the draft needs. An explicit default
+     width keeps first-open identical to the old fixed box; min-width/min-height keep
+     the header + footer controls from clipping or wrapping at the smallest size; the
+     max bounds it to the viewport so it can't be dragged off-screen (the backdrop
+     pads 16px each side → 32px). `overflow: auto` is what makes the `resize` grabber
+     appear on a block element. */
+  width: 420px;
+  min-width: 320px;
+  min-height: 200px;
+  max-width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  resize: both;
+  overflow: auto;
   box-sizing: border-box;
   padding: 14px;
   color: var(--fg);
@@ -843,7 +855,11 @@ body {
 .dex-new-input {
   width: 100%;
   box-sizing: border-box;
-  resize: vertical;
+  /* Fill the dialog rather than carry its own resizer: the dialog is the resize
+     surface now, so dragging its corner grows the textarea via flex. Two stacked
+     grabbers (textarea + dialog) would read as a bug. */
+  flex: 1;
+  resize: none;
   font: inherit;
   font-size: 12px;
   line-height: 1.4;

@@ -122,6 +122,37 @@ export function writeDexViewMode(file: string, mode: DexViewMode): void {
   writeFileSync(file, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
 }
 
+/** The user-chosen size of the New-task composer dialog, in logical pixels. */
+export interface DialogSize {
+  width: number;
+  height: number;
+}
+
+/**
+ * Read the saved New-task dialog size from `file`, or `undefined` when absent,
+ * unreadable, or missing two positive numeric dimensions. Unlike the panel size
+ * there's no default to fall back to — when none is saved the renderer keeps the
+ * dialog's CSS default size, so absence is reported as `undefined` rather than a
+ * substitute. The restored size is clamped to the viewport renderer-side (the
+ * window may be smaller now), so no clamp is applied here.
+ */
+export function readNewTaskDialogSize(file: string): DialogSize | undefined {
+  const value = readObject(file).newTaskDialogSize;
+  if (typeof value !== "object" || value === null) return undefined;
+  const { width, height } = value as Record<string, unknown>;
+  if (!isValidDimension(width) || !isValidDimension(height)) return undefined;
+  return { width, height };
+}
+
+/** Persist the New-task dialog `size` to `file`, preserving any other saved keys. */
+export function writeNewTaskDialogSize(file: string, size: DialogSize): void {
+  const merged = {
+    ...readObject(file),
+    newTaskDialogSize: { width: size.width, height: size.height },
+  };
+  writeFileSync(file, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
+}
+
 /** A display work area (logical pixels), matching Electron's `Display.workArea`. */
 export interface WorkArea {
   x: number;

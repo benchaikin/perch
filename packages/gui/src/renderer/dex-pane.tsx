@@ -43,7 +43,7 @@ import type { DexCompleteRequest, DexEditRequest } from "../ipc.js";
 // reach the browser bundle. The default mode is the `"tree"` literal below,
 // mirroring `dex.ts` — pulling in `DEFAULT_DEX_VIEW_MODE` as a value would bundle
 // the whole module (and its `node:fs` import) into the renderer.
-import type { DexViewMode } from "../window-state.js";
+import type { DexViewMode, DialogSize } from "../window-state.js";
 import { dexTaskColor } from "@perch/sdk/dex-color";
 import { useActions } from "./actions.js";
 import { CopyChip } from "./copy-chip.js";
@@ -178,6 +178,13 @@ interface DexContextValue {
   viewMode: DexViewMode;
   /** Switch the view mode (the renderer-owned half of seed-then-own). */
   setViewMode(mode: DexViewMode): void;
+  /**
+   * The persisted New-task dialog size to seed from on open, or `undefined` when
+   * none is saved (the dialog keeps its CSS default). The dialog clamps it to the
+   * viewport on mount; the resize grabber owns the size thereafter (it persists via
+   * {@link useActions}'s `setNewTaskDialogSize`).
+   */
+  savedDialogSize: DialogSize | undefined;
 }
 
 const DexContext = createContext<DexContextValue | undefined>(undefined);
@@ -202,9 +209,11 @@ function useDexContext(): DexContextValue {
  */
 export function DexProvider({
   savedViewMode,
+  savedDialogSize,
   children,
 }: {
   savedViewMode?: DexViewMode;
+  savedDialogSize?: DialogSize;
   children: React.ReactNode;
 }): JSX.Element {
   const actions = useActions();
@@ -312,6 +321,7 @@ export function DexProvider({
       },
       viewMode,
       setViewMode,
+      savedDialogSize,
     }),
     [
       actions,
@@ -324,6 +334,7 @@ export function DexProvider({
       spawningAll,
       deleting,
       viewMode,
+      savedDialogSize,
     ],
   );
 
@@ -742,6 +753,19 @@ interface DexNewParent {
 }
 
 /**
+ * Clamp a restored dialog size down to what fits the current viewport, leaving the
+ * backdrop's 16px padding on each side (32px total) so the box can't sit off-screen
+ * when the window is now smaller than when the size was saved. Only the maximum is
+ * enforced here — the CSS `min-width`/`min-height` keep the floor.
+ */
+function clampDialogSizeToViewport(size: DialogSize): DialogSize {
+  return {
+    width: Math.min(size.width, window.innerWidth - 32),
+    height: Math.min(size.height, window.innerHeight - 32),
+  };
+}
+
+/**
  * The armed New-task dialog: a centered modal (backdrop + panel) holding a corner
  * close (✗) in the header, a textarea (an affordance the non-activating panel can
  * rely on, unlike `window.prompt`), an optional project selector (only when several
@@ -775,13 +799,14 @@ function DexNewDialog({
   parent?: DexNewParent;
 }): JSX.Element {
   const actions = useActions();
-  const { setComposing } = useDexContext();
+  const { setComposing, savedDialogSize } = useDexContext();
   const [draft, setDraft] = useState("");
   const [project, setProject] = useState<string | undefined>(undefined);
   // Which action is launching (so only that button spins), or undefined when idle.
   const [pending, setPending] = useState<"add" | "start" | undefined>(undefined);
   const inFlight = pending !== undefined;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   // Grab focus once, when the dialog opens (this runs on mount only — the dialog
   // mounts when armed and unmounts when closed). Not on every render, so a
@@ -793,6 +818,52 @@ function DexNewDialog({
     const end = el.value.length;
     el.setSelectionRange(end, end);
   }, []);
+
+  // Restore the persisted size on open, clamped to the current viewport (the window
+  // may now be smaller than when the size was saved). Applied imperatively rather
+  // than via a React `style` prop so the browser's own resize-grabber writes (which
+  // mutate the node's inline width/height directly) aren't reconciled away by a
+  // background board re-render — the dialog is keyed only by armed-ness, so it
+  // re-renders in place. When nothing's saved the CSS default (~420px) stands.
+  // Mount-only: seed once, then the user (via the grabber) owns the size.
+  useEffect(() => {
+    const el = dialogRef.current;
+    if (!el || !savedDialogSize) return;
+    const { width, height } = clampDialogSizeToViewport(savedDialogSize);
+    el.style.width = `${width}px`;
+    el.style.height = `${height}px`;
+  }, []);
+
+  // Persist the size as the user drags the corner grabber. A ResizeObserver is the
+  // only signal CSS `resize` emits; debounced (300ms, mirroring the window resize
+  // handler) so one drag yields one write when it settles. The observer's initial
+  // synchronous fire (the mount/restored size) is skipped so restoring a
+  // viewport-clamped size never overwrites the larger saved value.
+  useEffect(() => {
+    const el = dialogRef.current;
+    if (!el) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let primed = false;
+    const observer = new ResizeObserver(() => {
+      if (!primed) {
+        primed = true;
+        return;
+      }
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const rect = el.getBoundingClientRect();
+        actions.setNewTaskDialogSize({
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        });
+      }, 300);
+    });
+    observer.observe(el);
+    return () => {
+      if (timer) clearTimeout(timer);
+      observer.disconnect();
+    };
+  }, [actions]);
 
   const canSubmit = !inFlight && draft.trim().length > 0;
 
@@ -854,6 +925,7 @@ function DexNewDialog({
       {/* Clicks inside the dialog must neither close it (don't reach the backdrop)
           nor bubble to a row/section open-detail handler. */}
       <div
+        ref={dialogRef}
         className="dex-new-dialog"
         role="dialog"
         aria-modal="true"
@@ -1977,19 +2049,22 @@ function DexSectionBody({ section }: { section: DexSection }): JSX.Element {
  * null return. The pane reads the main-process-derived {@link DexSection} as a prop
  * — no derivation here, same data-down contract as the rest of the renderer port.
  * `savedViewMode` is the persisted tree/graph mode the view seeds from on first
- * render (then this pane owns it — see {@link DexProvider}).
+ * render (then this pane owns it — see {@link DexProvider}); `savedDialogSize` is
+ * the persisted New-task dialog size the composer seeds from on open.
  */
 export function DexPane({
   section,
   savedViewMode,
+  savedDialogSize,
 }: {
   section: DexSection;
   savedViewMode?: DexViewMode;
+  savedDialogSize?: DialogSize;
 }): JSX.Element | null {
   if (!section.visible) return null;
   return (
     <section className="repo-section dex-section">
-      <DexProvider savedViewMode={savedViewMode}>
+      <DexProvider savedViewMode={savedViewMode} savedDialogSize={savedDialogSize}>
         <DexSectionBody section={section} />
       </DexProvider>
     </section>
