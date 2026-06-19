@@ -139,7 +139,11 @@ function PaneBody({
         ) : activeId === WORKTREES_LIST_ID ? (
           <WorktreesPane section={state.worktrees} />
         ) : activeId === DEX_TASKS_ID ? (
-          <DexPane section={state.dex} savedViewMode={state.savedDexViewMode} />
+          <DexPane
+            section={state.dex}
+            savedViewMode={state.savedDexViewMode}
+            savedDialogSize={state.savedNewTaskDialogSize}
+          />
         ) : (
           <PrsPane state={state} />
         ))}

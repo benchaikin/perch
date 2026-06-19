@@ -37,7 +37,7 @@ import {
 import { linkWorktreesAndTasks } from "./worktree-task-link.js";
 import { deriveLandableByTaskId, type LandableState } from "./landable.js";
 import { deriveAgentByTaskId, type AgentFleet, type AgentSummary } from "./agents-state.js";
-import type { DexViewMode } from "./window-state.js";
+import type { DexViewMode, DialogSize } from "./window-state.js";
 
 /** Canonical capability id of the cross-repo "My PRs" read the panel renders. */
 export const STACK_PRS_ID = "stack.prs";
@@ -319,6 +319,13 @@ export interface PanelState {
    * the Dex view on first render, then owns the selection. Undefined when none is saved.
    */
   savedDexViewMode?: DexViewMode;
+  /**
+   * The persisted New-task dialog size, restored across panel opens/restarts.
+   * Attached by the main process (not derived here); the renderer seeds the
+   * dialog's size from it on mount (clamped to the viewport), then the resize
+   * grabber owns it. Undefined when none is saved (the dialog keeps its CSS default).
+   */
+  savedNewTaskDialogSize?: DialogSize;
   /**
    * Each work-item's "landable" signal, keyed by dex task id — derived by
    * joining the worktree↔task link to the PR overview by head branch (see

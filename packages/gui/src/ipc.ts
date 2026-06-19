@@ -5,7 +5,7 @@
  */
 import type { PanelState } from "./panel-state.js";
 import type { ServiceAction, ServicesBulkAction } from "./services-state.js";
-import type { DexViewMode } from "./window-state.js";
+import type { DexViewMode, DialogSize } from "./window-state.js";
 
 /** Renderer → main payload for a service lifecycle action (M2). */
 export interface ServiceActionRequest {
@@ -101,6 +101,8 @@ export const Channels = {
   setActiveTab: "perch:set-active-tab",
   /** Renderer → main: persist the Dex view mode (payload: a {@link DexViewMode}). */
   setDexViewMode: "perch:set-dex-view-mode",
+  /** Renderer → main: persist the New-task dialog size (payload: a {@link DialogSize}). */
+  setNewTaskDialogSize: "perch:set-new-task-dialog-size",
   /** Renderer → main: open a worktree dir (payload: the path). Main runs `worktrees.open`. */
   worktreeOpen: "perch:worktree-open",
   /**
@@ -285,6 +287,8 @@ export interface PerchBridge {
   setActiveTab(id: string): void;
   /** Tell the main process the Dex view mode, so it persists across opens. */
   setDexViewMode(mode: DexViewMode): void;
+  /** Tell the main process the New-task dialog size, so it persists across opens. */
+  setNewTaskDialogSize(size: DialogSize): void;
   /** Ask the main process to open a worktree directory (by path). */
   worktreeOpen(path: string): void;
   /**

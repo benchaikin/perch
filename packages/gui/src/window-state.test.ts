@@ -16,9 +16,11 @@ import {
   MIN_WINDOW_SIZE,
   readActiveTab,
   readDexViewMode,
+  readNewTaskDialogSize,
   readWindowSize,
   writeActiveTab,
   writeDexViewMode,
+  writeNewTaskDialogSize,
   writeWindowSize,
 } from "./window-state.js";
 
@@ -132,6 +134,43 @@ test("readDexViewMode returns the default when absent / invalid, else the saved 
     assert.equal(readDexViewMode(file), "tree"); // unrecognized value → default
     writeDexViewMode(file, "graph");
     assert.equal(readDexViewMode(file), "graph");
+  });
+});
+
+test("readNewTaskDialogSize returns undefined when absent / invalid, else the saved size", () => {
+  withTempDir((dir) => {
+    const file = join(dir, "window-state.json");
+    assert.equal(readNewTaskDialogSize(join(dir, "absent.json")), undefined);
+    writeFileSync(file, JSON.stringify({ width: 320, height: 320 }), "utf8");
+    assert.equal(readNewTaskDialogSize(file), undefined); // no newTaskDialogSize key
+    writeFileSync(
+      file,
+      JSON.stringify({ newTaskDialogSize: { width: "wide", height: 5 } }),
+      "utf8",
+    );
+    assert.equal(readNewTaskDialogSize(file), undefined); // non-numeric dimension
+    writeFileSync(file, JSON.stringify({ newTaskDialogSize: { width: 600, height: -1 } }), "utf8");
+    assert.equal(readNewTaskDialogSize(file), undefined); // non-positive dimension
+    writeNewTaskDialogSize(file, { width: 600, height: 480 });
+    assert.deepEqual(readNewTaskDialogSize(file), { width: 600, height: 480 });
+  });
+});
+
+test("new-task-dialog-size writer preserves the panel size + active tab (no clobbering)", () => {
+  withTempDir((dir) => {
+    const file = join(dir, "window-state.json");
+    writeWindowSize(file, { width: 480, height: 360 });
+    writeActiveTab(file, "dex.tasks");
+    writeNewTaskDialogSize(file, { width: 600, height: 480 });
+    // Writing the dialog size kept the panel size + tab (and is itself nested, so it
+    // can't be mistaken for the root-level panel `width`/`height`)...
+    assert.deepEqual(readWindowSize(file), { width: 480, height: 360 });
+    assert.equal(readActiveTab(file), "dex.tasks");
+    assert.deepEqual(readNewTaskDialogSize(file), { width: 600, height: 480 });
+    // ...and writing a new panel size keeps the dialog size.
+    writeWindowSize(file, { width: 500, height: 400 });
+    assert.deepEqual(readNewTaskDialogSize(file), { width: 600, height: 480 });
+    assert.deepEqual(readWindowSize(file), { width: 500, height: 400 });
   });
 });
 

@@ -59,6 +59,9 @@ export function createActions(bridge: () => PerchActions): PerchActions {
     setDexViewMode(mode) {
       bridge().setDexViewMode(mode);
     },
+    setNewTaskDialogSize(size) {
+      bridge().setNewTaskDialogSize(size);
+    },
     worktreeOpen(path) {
       bridge().worktreeOpen(path);
     },

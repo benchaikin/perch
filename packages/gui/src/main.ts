@@ -85,11 +85,14 @@ import {
   MIN_WINDOW_SIZE,
   readActiveTab,
   readDexViewMode,
+  readNewTaskDialogSize,
   readWindowSize,
   writeActiveTab,
   writeDexViewMode,
+  writeNewTaskDialogSize,
   writeWindowSize,
   type DexViewMode,
+  type DialogSize,
 } from "./window-state.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -138,10 +141,22 @@ let savedActiveTab: string | undefined;
  * opens + restarts). Loaded lazily (not at module init) since it reads userData.
  */
 let savedDexViewMode: DexViewMode | undefined;
+/**
+ * The persisted New-task dialog size, loaded from GUI-local state when the panel
+ * is created and updated when the renderer reports a resize. Attached to every
+ * pushed state so the renderer can seed the dialog's size on mount (sticky across
+ * panel opens + restarts). Loaded lazily (not at module init) since it reads userData.
+ */
+let savedNewTaskDialogSize: DialogSize | undefined;
 
 /** Recompute the panel state from current inputs and push it to the renderer. */
 function pushState(): void {
-  const state: PanelState = { ...buildPanelState(buildInput), savedActiveTab, savedDexViewMode };
+  const state: PanelState = {
+    ...buildPanelState(buildInput),
+    savedActiveTab,
+    savedDexViewMode,
+    savedNewTaskDialogSize,
+  };
   panel?.webContents.send(Channels.stateFromMain, state);
   updateTrayBadge(state);
 }
@@ -1172,6 +1187,7 @@ function createPanel(): BrowserWindow {
   const { width, height } = readWindowSize(windowStatePath());
   savedActiveTab = readActiveTab(windowStatePath());
   savedDexViewMode = readDexViewMode(windowStatePath());
+  savedNewTaskDialogSize = readNewTaskDialogSize(windowStatePath());
   const win = new BrowserWindow({
     width,
     height,
@@ -1641,6 +1657,32 @@ function registerIpc(): void {
       writeDexViewMode(windowStatePath(), mode);
     } catch (err) {
       console.error(`[window-state] save dex view mode failed: ${errorMessage(err)}`);
+    }
+  });
+  // Persist the renderer's New-task dialog size so it's restored on the next open.
+  ipcMain.on(Channels.setNewTaskDialogSize, (_event, size: DialogSize) => {
+    if (
+      typeof size !== "object" ||
+      size === null ||
+      !Number.isFinite(size.width) ||
+      !Number.isFinite(size.height) ||
+      size.width <= 0 ||
+      size.height <= 0
+    ) {
+      return;
+    }
+    const next = { width: size.width, height: size.height };
+    if (
+      savedNewTaskDialogSize?.width === next.width &&
+      savedNewTaskDialogSize?.height === next.height
+    ) {
+      return;
+    }
+    savedNewTaskDialogSize = next;
+    try {
+      writeNewTaskDialogSize(windowStatePath(), next);
+    } catch (err) {
+      console.error(`[window-state] save new-task dialog size failed: ${errorMessage(err)}`);
     }
   });
 
