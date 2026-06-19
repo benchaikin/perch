@@ -297,10 +297,29 @@ body {
 /* The remove (trash) control on a non-main worktree row. Keeps .icon-btn's
    margin-left:auto so it hugs the trailing edge, and is sized to match the other
    in-row controls (e.g. the dex row's spawn/delete buttons). The confirmation is
-   a native dialog raised from main, so there's no inline confirm/cancel to style. */
+   a native dialog raised from main, so there's no inline confirm/cancel to style.
+
+   Destructive, rarely used: tinted red (--bad, beating .icon-btn:hover's --fg)
+   and hidden at rest, revealed only on row hover/keyboard focus. opacity (not
+   display) keeps it in layout so the row height and trailing chips don't shift. */
 .worktree-row .worktree-remove-btn {
   padding: 1px 4px;
   font-size: 11px;
+  color: var(--bad);
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+.worktree-row:hover .worktree-remove-btn,
+.worktree-row .worktree-remove-btn:focus-visible {
+  opacity: 1;
+}
+.worktree-row .worktree-remove-btn:hover {
+  color: var(--bad);
+}
+/* An in-flight removal stays visible (disabled spinner) even if the pointer
+   leaves the row, keeping .icon-btn:disabled's dim instead of the resting 0. */
+.worktree-row .worktree-remove-btn:disabled {
+  opacity: 0.5;
 }
 
 /* Chip annotating a worktree row with its linked dex task's live status
