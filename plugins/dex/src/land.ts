@@ -172,12 +172,14 @@ export function evidenceFor(pr: LandPr): string {
  * be flagged forever over a link perch itself dropped. Anything else still counts.
  */
 export function meaningfulDirt(porcelain: string): string[] {
-  return porcelain
-    .split("\n")
-    .map((line) => line.trimEnd())
-    .filter((line) => line.length > 0)
-    // Porcelain v1: 2 status chars, a space, then the path (`.dex` needs no quoting).
-    .filter((line) => line.slice(3) !== ".dex");
+  return (
+    porcelain
+      .split("\n")
+      .map((line) => line.trimEnd())
+      .filter((line) => line.length > 0)
+      // Porcelain v1: 2 status chars, a space, then the path (`.dex` needs no quoting).
+      .filter((line) => line.slice(3) !== ".dex")
+  );
 }
 
 /** Dependencies for {@link runLand} — the seams the capability injects, tests stub. */
@@ -486,7 +488,10 @@ async function reap(deps: LandDeps, c: Candidate, pr: LandPr, evidence: string):
       completeArgs.push("--no-commit");
     }
     completeArgs.push("--result", evidence);
-    await deps.exec(deps.dexBin, completeArgs);
+    // Run from the repo so `dex complete --commit <sha>` validates the SHA
+    // against this repo, not the daemon's cwd (which is `/` for the packaged
+    // app and contains no git repo, making the lookup fail every pass).
+    await deps.exec(deps.dexBin, completeArgs, { cwd: c.repo });
   }
   await deps.exec(deps.gitBin, ["-C", c.repo, "worktree", "remove", c.path]);
   try {
@@ -514,13 +519,11 @@ async function commitExistsLocally(deps: LandDeps, repo: string, sha: string): P
  */
 async function isTaskCompleted(deps: LandDeps, c: Candidate): Promise<boolean> {
   try {
-    const out = await deps.exec(deps.dexBin, [
-      "--storage-path",
-      storagePathOf(c.repo),
-      "show",
-      c.taskId,
-      "--json",
-    ]);
+    const out = await deps.exec(
+      deps.dexBin,
+      ["--storage-path", storagePathOf(c.repo), "show", c.taskId, "--json"],
+      { cwd: c.repo },
+    );
     const parsed: unknown = JSON.parse(out);
     const task = Array.isArray(parsed) ? parsed[0] : parsed;
     return Boolean(task && typeof task === "object" && (task as { completed?: unknown }).completed);
@@ -554,13 +557,11 @@ async function showRollupView(
 ): Promise<RollupView | undefined> {
   let out: string;
   try {
-    out = await deps.exec(deps.dexBin, [
-      "--storage-path",
-      storagePathOf(repo),
-      "show",
-      id,
-      "--json",
-    ]);
+    out = await deps.exec(
+      deps.dexBin,
+      ["--storage-path", storagePathOf(repo), "show", id, "--json"],
+      { cwd: repo },
+    );
   } catch {
     return undefined;
   }
@@ -623,15 +624,19 @@ async function rollupContainers(
       if (parent.completed || parent.isBlocked) break; // already done, or blocked → leave it
       if (parent.pending !== 0) break; // still has live work (or its subtasks are unreadable)
       const result = `Auto-completed: all ${parent.completedSubtasks} subtasks completed`;
-      await deps.exec(deps.dexBin, [
-        "--storage-path",
-        storagePathOf(repo),
-        "complete",
-        parentId,
-        "--no-commit",
-        "--result",
-        result,
-      ]);
+      await deps.exec(
+        deps.dexBin,
+        [
+          "--storage-path",
+          storagePathOf(repo),
+          "complete",
+          parentId,
+          "--no-commit",
+          "--result",
+          result,
+        ],
+        { cwd: repo },
+      );
       deps.log?.(`dex.land: rolled up container ${parentId} — ${result}`);
       current = parent;
     }
@@ -656,10 +661,7 @@ function prLabel(pr: LandPr | undefined): string {
  * items persist across polls until resolved, so they're diffed by task id
  * against `prev` to warn exactly once. `[]` on the first poll (no `prev`).
  */
-export function landNotifications(
-  prev: LandBoard | undefined,
-  next: LandBoard,
-): Notification[] {
+export function landNotifications(prev: LandBoard | undefined, next: LandBoard): Notification[] {
   const notes: Notification[] = [];
 
   // gh couldn't run this pass — auto-land can't see merge state, so nothing
