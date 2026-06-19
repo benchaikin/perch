@@ -66,6 +66,21 @@ test("newTaskPrompt: default authors only (no worker spawned)", () => {
   assert.doesNotMatch(prompt, /START WORKING/);
 });
 
+test("newTaskPrompt: reconciles the new work against existing tasks in both directions", () => {
+  const prompt = newTaskPrompt("Add a logout button", false);
+  // It reviews the existing open tasks and wires edges in BOTH directions.
+  assert.match(prompt, /reconcile/i);
+  assert.match(prompt, /NEW blocked by EXISTING/);
+  assert.match(prompt, /EXISTING blocked by NEW/);
+  // It names the real edge mechanisms (creation-time and after-the-fact).
+  assert.match(prompt, /--blocked-by/);
+  assert.match(prompt, /--add-blocker/);
+  // The merge-conflict judgment is grounded in real file overlap, biased against over-wiring.
+  assert.match(prompt, /file overlap/i);
+  assert.match(prompt, /merge/i);
+  assert.match(prompt, /Bias toward NOT wiring/i);
+});
+
 test("newTaskPrompt: start mode tells the agent to spawn a worker after authoring", () => {
   const prompt = newTaskPrompt("Add a logout button", true);
   // It overrides the author-only guidance and names the worktree/spawn mechanism.
@@ -78,6 +93,16 @@ test("newTaskPrompt: start mode tells the agent to spawn a worker after authorin
   assert.ok(prompt.includes("dex create"));
 });
 
+test("newTaskPrompt: start mode reconciles BEFORE handing off to the worker", () => {
+  const prompt = newTaskPrompt("Add a logout button", true);
+  // The reconciliation guidance is present even in start mode...
+  assert.match(prompt, /reconcile/i);
+  assert.match(prompt, /--add-blocker/);
+  // ...and precedes the worker handoff, so the worker never starts a task whose
+  // blocked status is about to change.
+  assert.ok(prompt.indexOf("reconcile") < prompt.indexOf("START WORKING"));
+});
+
 test("newTaskPrompt: a parentId authors a sub-task under the parent (no fresh epic)", () => {
   const prompt = newTaskPrompt("Add a logout endpoint", false, "abc123");
   // The description is embedded and the parent is threaded into `dex create --parent`.
@@ -88,6 +113,9 @@ test("newTaskPrompt: a parentId authors a sub-task under the parent (no fresh ep
   assert.match(prompt, /do NOT spin up a new epic/i);
   // Author-only by default still holds for a sub-task.
   assert.match(prompt, /Do NOT implement the work — only author it\./);
+  // The sub-task is also reconciled against the existing tasks in the store.
+  assert.match(prompt, /reconcile/i);
+  assert.match(prompt, /--add-blocker/);
 });
 
 test("newTaskPrompt: parentId composes with start mode (author the sub-task, then spawn a worker)", () => {

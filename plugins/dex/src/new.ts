@@ -111,6 +111,13 @@ export function resolveNewRepo(
  * embedded verbatim (the launcher shell-quotes the whole prompt, so
  * backticks/quotes inside it don't expand).
  *
+ * After authoring, the prompt has the agent RECONCILE the new work against the
+ * tasks already in the store — wiring blocker edges in both directions (`dex
+ * create --blocked-by` / `dex edit --add-blocker`) wherever a real ordering
+ * dependency or a likely merge conflict (file overlap) exists, biased toward not
+ * over-wiring. In `start` mode this runs BEFORE the worker handoff, so the worker
+ * never picks up a task whose blocked status is about to change.
+ *
  * When `start` is set the closing line is swapped: instead of the author-only "do
  * NOT implement" guidance, the agent is told to spawn a SEPARATE worker agent on
  * the new task (a `dex/<id>-<slug>` worktree, the spawn-dex/dex-worktree flow) right
@@ -132,6 +139,26 @@ export function newTaskPrompt(description: string, start = false, parentId?: str
       `the work yourself in this session — author it here, then spawn the worker that ` +
       `does the implementation.`
     : `Do NOT implement the work — only author it.`;
+  const reconcile =
+    `Then, BEFORE anything starts on the new work, reconcile it against the tasks ALREADY ` +
+    `in this store so its blocked status is correct: run \`dex list\` and \`dex show <id> ` +
+    `--full\` the plausibly-related open tasks to read what they actually touch. For each ` +
+    `direction, wire a blocker edge ONLY where a real ordering dependency or a likely merge ` +
+    `conflict exists:\n` +
+    `- NEW blocked by EXISTING — the new work needs an existing task's code, API, schema, or ` +
+    `migration to land first: wire it at creation with \`dex create ... --blocked-by ` +
+    `<existingIds>\`, or after the fact with \`dex edit <newId> --add-blocker <existingId>\`.\n` +
+    `- EXISTING blocked by NEW — the new task lays groundwork an in-flight task should build ` +
+    `on, OR the two edit the same files/regions and must be serialized so they aren't spawned ` +
+    `concurrently and collide at merge: wire it with \`dex edit <existingId> --add-blocker ` +
+    `<newId>\`.\n` +
+    `Base the merge-conflict judgment on REAL file overlap — compare the files each task names ` +
+    `(read them when unsure), not just topical similarity. Reconcile only against OPEN tasks in ` +
+    `THIS store (a done blocker is auto-satisfied; edges can't cross stores), and for an epic ` +
+    `reconcile the individual children/parent against the existing tasks, not the epic as a ` +
+    `blob. dex rejects self-blocks and cycles — surface its message rather than fighting it. ` +
+    `Bias toward NOT wiring an edge when unsure (a spurious blocker stalls the board), the same ` +
+    `way you bias against over-decomposing. `;
   if (parentId) {
     return (
       `Here is a rough description of work to create as a SUB-TASK of the existing dex ` +
@@ -150,7 +177,7 @@ export function newTaskPrompt(description: string, start = false, parentId?: str
       `existing task conventions: the WHY, the key design, reuse pointers, guards/edge cases, ` +
       `and acceptance criteria. After creating, run \`dex show <id> --full\` to verify each ` +
       `sub-task was created and reads well, and confirm it nests under \`${parentId}\` (e.g. ` +
-      `\`dex list ${parentId}\`). ${closing}`
+      `\`dex list ${parentId}\`).\n\n${reconcile}${closing}`
     );
   }
   return (
@@ -178,7 +205,7 @@ export function newTaskPrompt(description: string, start = false, parentId?: str
     `design, reuse pointers, guards/edge cases, and acceptance criteria. After creating, ` +
     `run \`dex show <id> --full\` to verify each task was created and reads well; for an ` +
     `epic, also confirm the parent/child tree and the blocked-by edges read correctly ` +
-    `(e.g. \`dex list <epic-id>\` or \`dex show <epic-id> --full\`). ${closing}`
+    `(e.g. \`dex list <epic-id>\` or \`dex show <epic-id> --full\`).\n\n${reconcile}${closing}`
   );
 }
 
