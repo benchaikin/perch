@@ -791,6 +791,17 @@ body {
   margin-left: 0;
 }
 
+/* Auto/Manual toggle: when Auto is on the icon reads accent-lit so the
+   self-driving repos stand out from the muted resting controls; Manual keeps the
+   default muted .icon-btn tone. The lit color survives hover (which would otherwise
+   pull it to --fg). */
+.dex-auto-spawn.on {
+  color: var(--accent);
+}
+.dex-auto-spawn.on:hover {
+  color: var(--accent);
+}
+
 /* The "New task from a description" dialog: a centered modal (backdrop + panel)
    holding a textarea + project selector + submit/cancel cluster, raised above the
    board instead of injected inline (so arming it never shifts the task list down).

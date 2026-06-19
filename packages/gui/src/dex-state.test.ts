@@ -189,6 +189,50 @@ test("buildDexSection: a single configured repo stays flat even with tasks", () 
   assert.deepEqual(section.repoGroups, []);
 });
 
+test("buildDexSection: per-repo autoSpawn flows onto each group; absent ⇒ Manual", () => {
+  const section = buildDexSection(
+    {
+      tasks: [
+        task({ id: "a1", status: "ready", project: "alpha" }),
+        task({ id: "b1", status: "ready", project: "beta" }),
+      ],
+      projects: ["alpha", "beta"],
+      autoSpawn: { alpha: true },
+    },
+    true,
+  );
+  assert.equal(section.multiRepo, true);
+  assert.deepEqual(
+    section.repoGroups.map((g) => [g.project, g.autoSpawn]),
+    [
+      ["alpha", true],
+      ["beta", false],
+    ],
+    "alpha reads Auto; beta (unset) reads Manual",
+  );
+  assert.deepEqual(section.autoSpawn, { alpha: true }, "the raw map is carried through");
+});
+
+test("buildDexSection: a single configured repo's autoSpawn surfaces as soleProject", () => {
+  const section = buildDexSection(
+    {
+      tasks: [task({ id: "a1", status: "ready", project: "alpha" })],
+      projects: ["alpha"],
+      autoSpawn: { alpha: true },
+    },
+    true,
+  );
+  assert.equal(section.multiRepo, false);
+  assert.equal(section.soleProject, "alpha");
+  assert.equal(section.autoSpawn.alpha, true);
+});
+
+test("buildDexSection: the cwd store (no project) has no soleProject and empty autoSpawn", () => {
+  const section = buildDexSection(board(task({ id: "x1", status: "ready" })), true);
+  assert.equal(section.soleProject, undefined);
+  assert.deepEqual(section.autoSpawn, {});
+});
+
 test("buildDexSection: groups follow config order, not first-task order", () => {
   // The first task is beta's, but config order (alpha, beta) wins.
   const section = buildDexSection(

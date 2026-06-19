@@ -89,6 +89,13 @@ export const DexBoard = z.object({
    * repos), in which case the GUI stays a flat list.
    */
   projects: z.array(z.string()),
+  /**
+   * Per-repo auto-spawn mode (`plugins.dex.autoSpawn`), keyed by project basename:
+   * `true` ⇒ the reap pass auto-spawns that repo's ready tasks (Auto), absent/false
+   * ⇒ Manual. Surfaced on the board so the GUI's per-repo header can render the
+   * Auto/Manual toggle and reflect the persisted mode. Optional/absent ⇒ all Manual.
+   */
+  autoSpawn: z.record(z.boolean()).optional(),
 });
 export type DexBoard = z.infer<typeof DexBoard>;
 

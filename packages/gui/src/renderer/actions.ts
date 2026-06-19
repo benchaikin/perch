@@ -74,6 +74,9 @@ export function createActions(bridge: () => PerchActions): PerchActions {
     dexSpawnReady(project) {
       return bridge().dexSpawnReady(project);
     },
+    dexSetAutoSpawn(request) {
+      return bridge().dexSetAutoSpawn(request);
+    },
     dexDelete(request) {
       return bridge().dexDelete(request);
     },
