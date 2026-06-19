@@ -34,7 +34,10 @@ function fsWith(files: string[], pkgText?: string): FsProbe {
 }
 
 test("inferBuild: pnpm-lock wins → pnpm -r build", () => {
-  const b = inferBuild("/r", fsWith(["/r/pnpm-lock.yaml", "/r/package.json"], '{"scripts":{"build":"x"}}'));
+  const b = inferBuild(
+    "/r",
+    fsWith(["/r/pnpm-lock.yaml", "/r/package.json"], '{"scripts":{"build":"x"}}'),
+  );
   assert.deepEqual(b, { cmd: "pnpm", args: ["-r", "build"] });
 });
 
@@ -44,18 +47,27 @@ test("inferBuild: package.json build script, no yarn → npm run build", () => {
 });
 
 test("inferBuild: package.json build script + yarn.lock → yarn build", () => {
-  const b = inferBuild("/r", fsWith(["/r/package.json", "/r/yarn.lock"], '{"scripts":{"build":"tsc"}}'));
+  const b = inferBuild(
+    "/r",
+    fsWith(["/r/package.json", "/r/yarn.lock"], '{"scripts":{"build":"tsc"}}'),
+  );
   assert.deepEqual(b, { cmd: "yarn", args: ["build"] });
 });
 
 test("inferBuild: package.json with NO build script falls through to make", () => {
-  const b = inferBuild("/r", fsWith(["/r/package.json", "/r/Makefile"], '{"scripts":{"test":"x"}}'));
+  const b = inferBuild(
+    "/r",
+    fsWith(["/r/package.json", "/r/Makefile"], '{"scripts":{"test":"x"}}'),
+  );
   assert.deepEqual(b, { cmd: "make", args: [] });
 });
 
 test("inferBuild: Cargo.toml → cargo build; go.mod → go build ./...", () => {
   assert.deepEqual(inferBuild("/r", fsWith(["/r/Cargo.toml"])), { cmd: "cargo", args: ["build"] });
-  assert.deepEqual(inferBuild("/r", fsWith(["/r/go.mod"])), { cmd: "go", args: ["build", "./..."] });
+  assert.deepEqual(inferBuild("/r", fsWith(["/r/go.mod"])), {
+    cmd: "go",
+    args: ["build", "./..."],
+  });
 });
 
 test("inferBuild: nothing inferable → undefined", () => {
@@ -123,7 +135,10 @@ interface StubOpts {
   failCompleteIds?: string[];
 }
 
-function stub(opts: StubOpts): { exec: Exec; calls: Array<{ cmd: string; args: string[]; cwd?: string }> } {
+function stub(opts: StubOpts): {
+  exec: Exec;
+  calls: Array<{ cmd: string; args: string[]; cwd?: string }>;
+} {
   const calls: Array<{ cmd: string; args: string[]; cwd?: string }> = [];
   const dirt = opts.dirtByPath ?? {};
   const overrides = opts.overrideByPath ?? {};
@@ -134,7 +149,8 @@ function stub(opts: StubOpts): { exec: Exec; calls: Array<{ cmd: string; args: s
       if (args.includes("fetch")) {
         return opts.failFetch ? Promise.reject(new Error("no origin")) : Promise.resolve("");
       }
-      if (args.includes("worktree") && args.includes("list")) return Promise.resolve(opts.worktrees);
+      if (args.includes("worktree") && args.includes("list"))
+        return Promise.resolve(opts.worktrees);
       if (args.includes("config") && args.includes("perch.dexTask")) {
         const path = args[args.indexOf("-C") + 1]!;
         const v = overrides[path];
@@ -188,7 +204,8 @@ function stub(opts: StubOpts): { exec: Exec; calls: Array<{ cmd: string; args: s
       }
       if (args.includes("complete")) {
         const id = args[args.indexOf("complete") + 1]!;
-        if ((opts.failCompleteIds ?? []).includes(id)) return Promise.reject(new Error("complete failed"));
+        if ((opts.failCompleteIds ?? []).includes(id))
+          return Promise.reject(new Error("complete failed"));
       }
       return Promise.resolve(""); // complete
     }
@@ -252,6 +269,10 @@ test("runLand: merged + clean + has CI → reaps (worktree remove, branch -d, de
     "--result",
     "Merged PR #7: Do the thing (http://x/7) — merge commit sha123",
   ]);
+  // `dex complete --commit <sha>` validates the SHA against the repo in cwd, so
+  // the reap must run it from the repo — not the daemon's cwd (`/`), which is no
+  // git repo and would fail the lookup every pass.
+  assert.equal(complete!.cwd, "/work/perch");
 });
 
 test("runLand: open (unmerged) PR is skipped entirely — not reaped, not flagged", async () => {
@@ -261,7 +282,10 @@ test("runLand: open (unmerged) PR is skipped entirely — not reaped, not flagge
   });
   const board = await runLand(deps(exec));
   assert.deepEqual(board, { reaped: [], flagged: [] });
-  assert.equal(calls.some((c) => c.args.includes("remove")), false);
+  assert.equal(
+    calls.some((c) => c.args.includes("remove")),
+    false,
+  );
 });
 
 test("runLand: no PR for the branch → skipped (in-progress, not actionable)", async () => {
@@ -284,7 +308,10 @@ test("runLand: gh not found (ENOENT) → diagnostic, no reap, NOT a silent no-PR
   // A gh failure must never be read as "no PR": nothing reaps, nothing flags…
   assert.equal(board.reaped.length, 0);
   assert.equal(board.flagged.length, 0);
-  assert.equal(calls.some((c) => c.args.includes("remove")), false);
+  assert.equal(
+    calls.some((c) => c.args.includes("remove")),
+    false,
+  );
   // …and it surfaces a single, gh-naming diagnostic instead of failing silently.
   assert.match(board.ghUnavailable ?? "", /gh CLI not found/);
   assert.ok(logs.some((m) => /gh unavailable/.test(m)));
@@ -299,7 +326,10 @@ test("runLand: gh auth/rate-limit failure → diagnostic carrying gh's stderr, n
   const board = await runLand(deps(exec));
   assert.equal(board.reaped.length, 0);
   assert.equal(board.flagged.length, 0);
-  assert.equal(calls.some((c) => c.args.includes("remove")), false);
+  assert.equal(
+    calls.some((c) => c.args.includes("remove")),
+    false,
+  );
   assert.match(board.ghUnavailable ?? "", /auth login required/);
 });
 
@@ -329,7 +359,10 @@ test("runLand: merged but DIRTY tree → flagged, never reaped", async () => {
   assert.equal(board.reaped.length, 0);
   assert.equal(board.flagged.length, 1);
   assert.match(board.flagged[0]!.reason, /uncommitted changes/);
-  assert.equal(calls.some((c) => c.args.includes("remove")), false);
+  assert.equal(
+    calls.some((c) => c.args.includes("remove")),
+    false,
+  );
 });
 
 test("meaningfulDirt: drops a lone perch-created `.dex` link, keeps real changes", () => {
@@ -402,7 +435,10 @@ test("runLand: no-CI repo — build FAILS → flagged, never reaped", async () =
   const board = await runLand(deps(exec, { fs: fsWith([`${wt}/go.mod`]) }));
   assert.equal(board.reaped.length, 0);
   assert.match(board.flagged[0]!.reason, /build failed/);
-  assert.equal(calls.some((c) => c.args.includes("remove")), false);
+  assert.equal(
+    calls.some((c) => c.args.includes("remove")),
+    false,
+  );
 });
 
 test("runLand: no-CI repo — no inferable build → flagged", async () => {
@@ -422,7 +458,10 @@ test("runLand: autoLand=false — merged+clean is flagged 'ready to land', NOT r
   const board = await runLand(deps(exec, { autoLand: false }));
   assert.equal(board.reaped.length, 0);
   assert.match(board.flagged[0]!.reason, /ready to land/);
-  assert.equal(calls.some((c) => c.args.includes("remove")), false);
+  assert.equal(
+    calls.some((c) => c.args.includes("remove")),
+    false,
+  );
 });
 
 test("runLand: perch.dexTask override resolves the id when the branch isn't dex/<id>", async () => {
@@ -459,7 +498,10 @@ test("runLand: an already-completed task is reaped but `dex complete` is skipped
   assert.ok(calls.some((c) => c.args.includes("remove")));
   assert.ok(calls.some((c) => c.cmd === "git" && c.args.includes("-d")));
   // …but `dex complete` was NOT called (the task is already done).
-  assert.equal(calls.some((c) => c.cmd === "dex" && c.args.includes("complete")), false);
+  assert.equal(
+    calls.some((c) => c.cmd === "dex" && c.args.includes("complete")),
+    false,
+  );
 });
 
 test("runLand: failed fetch leaves the merge commit absent → --no-commit, still reaps", async () => {
@@ -524,7 +566,10 @@ test("runLand: branch -d refusal falls back to -D (merge is gh-confirmed)", asyn
   });
   const board = await runLand(deps(exec));
   assert.equal(board.reaped.length, 1);
-  assert.ok(calls.some((c) => c.args.includes("-D")), "expected the -D fallback");
+  assert.ok(
+    calls.some((c) => c.args.includes("-D")),
+    "expected the -D fallback",
+  );
 });
 
 // --- ancestor rollup --------------------------------------------------------
@@ -633,7 +678,9 @@ test("runLand: a rollup `dex complete` failure doesn't fail the child reap or th
   assert.equal(board.reaped.length, 1);
   assert.equal(board.flagged.length, 0);
   // The rollup was attempted (and rejected) — the parent stays as-is.
-  assert.ok(calls.some((c) => c.cmd === "dex" && c.args[c.args.indexOf("complete") + 1] === "epic1"));
+  assert.ok(
+    calls.some((c) => c.cmd === "dex" && c.args[c.args.indexOf("complete") + 1] === "epic1"),
+  );
 });
 
 test("runLand: a blocked / already-completed ancestor stops the walk", async () => {
@@ -667,7 +714,15 @@ test("runLand: detection mode (autoLand=false) never rolls up a parent", async (
 
 const reapedBoard: LandBoard = {
   reaped: [
-    { taskId: "abc12", branch: "dex/abc12", path: "/wt/a", repo: "/r", action: "reaped", reason: "Merged PR #7", pr: { number: 7 } },
+    {
+      taskId: "abc12",
+      branch: "dex/abc12",
+      path: "/wt/a",
+      repo: "/r",
+      action: "reaped",
+      reason: "Merged PR #7",
+      pr: { number: 7 },
+    },
   ],
   flagged: [],
 };
@@ -700,7 +755,16 @@ test("landNotifications: gh-unavailable warns once (even on first poll), deduped
 test("landNotifications: a NEW flag warns; a persistent one does not re-warn", () => {
   const flagged: LandBoard = {
     reaped: [],
-    flagged: [{ taskId: "z9", branch: "dex/z9", path: "/wt/z", repo: "/r", action: "flagged", reason: "merged but dirty" }],
+    flagged: [
+      {
+        taskId: "z9",
+        branch: "dex/z9",
+        path: "/wt/z",
+        repo: "/r",
+        action: "flagged",
+        reason: "merged but dirty",
+      },
+    ],
   };
   // New flag (absent in prev) → one warning.
   const first = landNotifications({ reaped: [], flagged: [] }, flagged);
