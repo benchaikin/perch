@@ -1075,6 +1075,25 @@ body {
   color: var(--accent);
   border-color: var(--accent);
 }
+/* "Complete anyway" — the deliberate force-complete past open subtasks — wears the
+   warning accent so the override reads as a conscious step, not the plain Complete. */
+.dex-detail .dex-detail-actions .btn.btn-sm.dex-complete-force {
+  color: var(--bad);
+  border-color: var(--bad);
+}
+/* dex's incomplete-subtask refusal, surfaced inline above the result field so the
+   user sees WHY the plain Complete was refused before opting into the force. */
+.dex-complete-warning {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--bad);
+  background: var(--chip-bg);
+  color: var(--detail-fg);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
 
 /* The per-service status text (e.g. "running · pid 42", "crashed · exit 1"). */
 .service-status {

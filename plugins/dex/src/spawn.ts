@@ -333,18 +333,22 @@ export class DexRunner {
   }
 
   /**
-   * `dex [--storage-path P] complete <id> --result "<text>" --no-commit` — mark a
-   * task done. Resolves with the CLI's stdout; rejects (surfacing stderr) on
-   * failure. `dex complete` REQUIRES a non-empty `--result`, so the caller defaults
-   * one. `--no-commit` because a manual completion has no merge commit to link (the
-   * auto-land path is the one that passes `--commit <sha>`); and there is no
-   * `--force`, so dex's own incomplete-subtask validation surfaces verbatim rather
-   * than silently force-completing an epic with open children.
+   * `dex [--storage-path P] complete <id> --result "<text>" --no-commit [--force]`
+   * — mark a task done. Resolves with the CLI's stdout; rejects (surfacing stderr)
+   * on failure. `dex complete` REQUIRES a non-empty `--result`, so the caller
+   * defaults one. `--no-commit` because a manual completion has no merge commit to
+   * link (the auto-land path is the one that passes `--commit <sha>`).
+   *
+   * `--force` is OFF by default, so dex's own incomplete-subtask validation
+   * surfaces verbatim rather than silently force-completing an epic with open
+   * children. It's only ever set after a deliberate GUI opt-in ("Complete anyway"),
+   * never automatically — preserving the "never a silent force-complete" invariant.
    */
-  async complete(id: string, result: string, storagePath?: string): Promise<string> {
+  async complete(id: string, result: string, storagePath?: string, force = false): Promise<string> {
     const args: string[] = [];
     if (storagePath) args.push("--storage-path", storagePath);
     args.push("complete", id, "--result", result, "--no-commit");
+    if (force) args.push("--force");
     return this.exec(this.dexBin, args);
   }
 }

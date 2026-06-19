@@ -38,9 +38,11 @@ import { DaemonUnavailableError, PerchClient } from "@perch/cli";
 import { shouldShowNotification, toNotifyOptions } from "./notify.js";
 import {
   Channels,
+  isIncompleteSubtaskError,
   type DexAutoSpawnRequest,
   type DexBlockerRequest,
   type DexCompleteRequest,
+  type DexCompleteResult,
   type DexDeleteRequest,
   type DexEditRequest,
   type DexNewRequest,
@@ -882,32 +884,41 @@ async function editDex(request: DexEditRequest): Promise<void> {
 /**
  * Mark a dex task complete via the dex plugin's `complete` action, then refresh the
  * board and toast the outcome. Driven by the detail screen's inline confirm; the
- * request carries the id plus an optional completion result (blank/omitted is
- * defaulted daemon-side). Awaited by the renderer (via `ipcMain.handle`) so the
- * confirm UI clears its in-flight state when the work finishes. On success the board
- * is re-fetched immediately so the task flips to done (and, with showCompleted off,
- * leaves the board) without waiting for the next poll. A completion blocked by
- * incomplete subtasks surfaces dex's own error as a `{ ok:false, message }`, toasted
- * here — never a silent force-complete.
+ * request carries the id, an optional completion result (blank/omitted is defaulted
+ * daemon-side), and an optional `force` (the "Complete anyway" opt-in). Resolves with
+ * the {@link DexCompleteResult} so the renderer's completer can react — close on
+ * success, or stay open and offer "Complete anyway" when the task has open children.
+ * On success the board is re-fetched immediately so the task flips to done (and, with
+ * showCompleted off, leaves the board) without waiting for the next poll.
+ *
+ * The incomplete-subtask failure is NOT toasted here — the completer surfaces it
+ * inline with the recovery action, so a toast would just be the dead end this feature
+ * removes. Every other failure keeps its toast. We never force automatically: `force`
+ * only rides in after the user opts in.
  */
-async function completeDex(request: DexCompleteRequest): Promise<void> {
-  if (!client) return;
+async function completeDex(request: DexCompleteRequest): Promise<DexCompleteResult> {
+  if (!client) return { ok: false, message: "Not connected to the Perch daemon." };
+  let result: DexCompleteResult;
   try {
-    const result = (await client.invoke({ id: "dex.complete", input: request })) as {
+    const raw = (await client.invoke({ id: "dex.complete", input: request })) as {
       ok?: boolean;
       message?: string;
     } | null;
-    if (result && result.ok === false) {
-      showNotice({ tone: "bad", text: result.message ?? `Complete task ${request.id} failed.` });
-    } else {
-      showNotice({ tone: "ok", text: result?.message ?? `Completed task ${request.id}.` });
-      await refreshDexBoard();
-    }
+    result = {
+      ok: raw?.ok !== false,
+      message: raw?.message ?? `Completed task ${request.id}.`,
+    };
   } catch (err) {
-    showNotice({ tone: "bad", text: `Complete task ${request.id} failed: ${errorMessage(err)}` });
-  } finally {
-    pushState();
+    result = { ok: false, message: `Complete task ${request.id} failed: ${errorMessage(err)}` };
   }
+  if (result.ok) {
+    showNotice({ tone: "ok", text: result.message });
+    await refreshDexBoard();
+  } else if (!isIncompleteSubtaskError(result.message)) {
+    showNotice({ tone: "bad", text: result.message });
+  }
+  pushState();
+  return result;
 }
 
 /**

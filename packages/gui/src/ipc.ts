@@ -201,6 +201,35 @@ export interface DexEditRequest {
 export interface DexCompleteRequest {
   id: string;
   result?: string;
+  /**
+   * Set `--force` so dex completes a parent even with incomplete subtasks. Off by
+   * default; only ever sent after the user clicks "Complete anyway" in response to
+   * the incomplete-subtask warning — never automatically.
+   */
+  force?: boolean;
+}
+
+/**
+ * Main → renderer outcome of a {@link DexCompleteRequest}. The renderer's completer
+ * inspects this to decide what to do: close on `ok`, or — when the failure is dex's
+ * incomplete-subtask validation — stay open and offer a "Complete anyway" retry with
+ * `force: true`. `message` is the toast text / inline warning.
+ */
+export interface DexCompleteResult {
+  ok: boolean;
+  message: string;
+}
+
+/**
+ * Does a failed {@link DexCompleteResult} message carry dex's incomplete-subtask
+ * validation error (the one a parent/epic with open children hits)? That's the
+ * failure the GUI recovers from with a "Complete anyway" (force) retry; every other
+ * failure (bad id, store not found) is a plain toast. Shared by main (which suppresses
+ * the toast so it isn't a dead end) and the renderer's completer (which surfaces it
+ * inline). Matches dex's wording — "… incomplete subtask(s) …" — case-insensitively.
+ */
+export function isIncompleteSubtaskError(message: string): boolean {
+  return /incomplete subtask/i.test(message);
 }
 
 /**
@@ -374,12 +403,13 @@ export interface PerchBridge {
   dexEdit(request: DexEditRequest): Promise<void>;
   /**
    * Ask the main process to mark a dex task complete (payload: a
-   * {@link DexCompleteRequest} — the id plus an optional completion result).
-   * Resolves when the completion finishes (or fails) and the board has refreshed,
-   * so the caller can leave its confirm UI; the success/error notice is pushed via
-   * panel state. A completion blocked by incomplete subtasks surfaces dex's error.
+   * {@link DexCompleteRequest} — the id, an optional completion result, and an
+   * optional `force`). Resolves with the {@link DexCompleteResult} once the work
+   * finishes (and, on success, the board has refreshed) so the caller can react:
+   * close on success, or — when dex blocks on incomplete subtasks — stay open and
+   * offer "Complete anyway". The success/error notice is also pushed via panel state.
    */
-  dexComplete(request: DexCompleteRequest): Promise<void>;
+  dexComplete(request: DexCompleteRequest): Promise<DexCompleteResult>;
   /**
    * Ask the main process to add a dependency (blocker) edge between two dex tasks
    * — `blockedId` becomes blocked by `blockerId`. Resolves when the edit finishes

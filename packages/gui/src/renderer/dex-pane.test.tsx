@@ -17,6 +17,7 @@ import { dexHealth, type DexRow, type DexSection } from "../dex-state.js";
 import type {
   DexAutoSpawnRequest,
   DexCompleteRequest,
+  DexCompleteResult,
   DexDeleteRequest,
   DexEditRequest,
   DexNewRequest,
@@ -37,6 +38,9 @@ let dexSpawnReadyProjects: Array<string | undefined>;
 let dexSetAutoSpawnCalls: DexAutoSpawnRequest[];
 let dexDeleteCalls: DexDeleteRequest[];
 let dexCompleteCalls: DexCompleteRequest[];
+/** Queued results the fake `dexComplete` returns, one per call (FIFO); an empty
+ *  queue falls back to a generic success so the completer closes as it does live. */
+let dexCompleteResults: DexCompleteResult[];
 let dexNewCalls: DexNewRequest[];
 let setDexViewModeCalls: DexViewMode[];
 /**
@@ -90,7 +94,8 @@ const bridge = {
   },
   dexComplete(request: DexCompleteRequest) {
     dexCompleteCalls.push(request);
-    return Promise.resolve();
+    const next = dexCompleteResults.shift();
+    return Promise.resolve(next ?? { ok: true, message: `Completed task ${request.id}.` });
   },
   dexNew(request: DexNewRequest) {
     dexNewCalls.push(request);
@@ -112,6 +117,7 @@ beforeEach(() => {
   dexSetAutoSpawnCalls = [];
   dexDeleteCalls = [];
   dexCompleteCalls = [];
+  dexCompleteResults = [];
   actionResolvers = [];
   dexNewCalls = [];
   dexNewResolve = undefined;
@@ -547,6 +553,54 @@ test("a blank result completes with no result field (the daemon defaults it)", a
     fireEvent.click(c.querySelector(".dex-complete-confirm")!);
   });
   assert.deepEqual(dexCompleteCalls, [{ id: "c4" }], "no result sent → daemon defaults one");
+});
+
+test("an incomplete-subtask refusal stays open and offers a force 'Complete anyway'", async () => {
+  // First complete is refused by dex's incomplete-subtask validation; the completer
+  // must not dead-end — it stays open, warns, and re-issues with force:true on click.
+  dexCompleteResults = [
+    { ok: false, message: "Cannot complete task with 1 incomplete subtask(s): • 7e: …" },
+    { ok: true, message: "Completed task c6." },
+  ];
+  const c = openDetail(row({ id: "c6", name: "Epic", status: "in-progress", isEpic: true }));
+  fireEvent.click(c.querySelector(".dex-complete-btn")!);
+  await act(async () => {
+    fireEvent.click(c.querySelector(".dex-complete-confirm")!);
+  });
+  // Refused: still open, the plain confirm is replaced by the force button + a warning.
+  assert.ok(c.querySelector(".dex-complete-result"), "stays open after the refusal");
+  assert.equal(c.querySelector(".dex-complete-confirm"), null, "plain Complete swapped out");
+  const force = c.querySelector(".dex-complete-force");
+  assert.ok(force, "offers Complete anyway");
+  assert.ok(c.querySelector(".dex-complete-warning"), "surfaces dex's subtask warning inline");
+  assert.deepEqual(dexCompleteCalls, [{ id: "c6" }], "the first try carried no force");
+
+  await act(async () => {
+    fireEvent.click(force!);
+  });
+  assert.deepEqual(
+    dexCompleteCalls,
+    [{ id: "c6" }, { id: "c6", force: true }],
+    "Complete anyway re-issues the same request with force:true",
+  );
+  assert.equal(c.querySelector(".dex-complete-result"), null, "closes once the force succeeds");
+});
+
+test("a non-subtask failure stays open without offering a force override", async () => {
+  dexCompleteResults = [{ ok: false, message: 'dex task "c7" not found.' }];
+  const c = openDetail(row({ id: "c7", name: "Ghost", status: "ready" }));
+  fireEvent.click(c.querySelector(".dex-complete-btn")!);
+  await act(async () => {
+    fireEvent.click(c.querySelector(".dex-complete-confirm")!);
+  });
+  assert.ok(c.querySelector(".dex-complete-result"), "stays open so the user can retry/cancel");
+  assert.equal(
+    c.querySelector(".dex-complete-force"),
+    null,
+    "no force path for a non-subtask fail",
+  );
+  assert.equal(c.querySelector(".dex-complete-warning"), null, "no inline subtask warning");
+  assert.ok(c.querySelector(".dex-complete-confirm"), "the plain Complete remains");
 });
 
 test("Cancel discards the completion and returns to the read-only detail", () => {
