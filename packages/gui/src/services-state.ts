@@ -62,8 +62,13 @@ export interface ServiceRow {
   statusLabel: string;
   /** Marker color: running=green(ok), starting=amber(warn), crashed=red(bad). */
   health: ServiceHealth;
-  /** A short detail suffix (e.g. "exit 1", "pid 4242"), when relevant. */
+  /** A short plain-text detail suffix (e.g. "exit 1"), when relevant. */
   detail?: string;
+  /**
+   * The raw process id, for running/starting services — rendered as a
+   * click-to-copy badge (not folded into `detail`). Absent otherwise.
+   */
+  pid?: number;
   /** Repo (configured repo basename) this process belongs to, for grouping. */
   project?: string;
   /** Context-appropriate action buttons for this status (M2). */
@@ -160,11 +165,20 @@ export function serviceHealth(status: ServiceStatus): ServiceHealth {
   }
 }
 
-/** A short detail suffix for a row: the exit code if crashed, else the pid. */
+/**
+ * A short plain-text detail suffix for a row: the exit code if crashed. The pid
+ * of a running/starting service is NOT here — it rides its own {@link
+ * ServiceRow.pid} field so the renderer can badge it as click-to-copy.
+ */
 function detailOf(svc: Service): string | undefined {
   if (svc.status === "crashed" && svc.exitCode !== undefined) return `exit ${svc.exitCode}`;
+  return undefined;
+}
+
+/** The process id to badge: only present while a service is up (running/starting). */
+function pidOf(svc: Service): number | undefined {
   if (svc.pid !== undefined && (svc.status === "running" || svc.status === "starting")) {
-    return `pid ${svc.pid}`;
+    return svc.pid;
   }
   return undefined;
 }
@@ -203,6 +217,7 @@ export function toServiceRow(svc: Service, inFlight: ReadonlySet<string>): Servi
     statusLabel: svc.status,
     health: serviceHealth(svc.status),
     detail: detailOf(svc),
+    pid: pidOf(svc),
     project: svc.project,
     buttons: serviceButtons(svc.status),
     logs: true,

@@ -927,16 +927,20 @@ body {
   gap: 4px;
   flex-wrap: wrap;
 }
-/* The task id chip: monospace so it reads as a copyable identifier, and
+/* Click-to-copy reference chips (the shared CopyChip): the task id chip and the
+   service PID badge. Monospace so they read as copyable identifiers, and
    click-to-copy (pointer + brighten on hover, green on confirm). */
-.dex-id {
+.dex-id,
+.service-pid {
   font-family: ui-monospace, "SF Mono", Menlo, Monaco, "Courier New", monospace;
   cursor: pointer;
 }
-.dex-id:hover {
+.dex-id:hover,
+.service-pid:hover {
   color: var(--fg);
 }
-.dex-id.copied {
+.dex-id.copied,
+.service-pid.copied {
   color: var(--ok);
 }
 /* Solid identity dot for an OPEN (unblocked, unfinished) task: a small filled

@@ -22,15 +22,19 @@ test("serviceHealth maps each status to a marker color", () => {
   assert.equal(serviceHealth("stopped"), "muted");
 });
 
-test("toServiceRow surfaces exit code for crashed, pid for running", () => {
+test("toServiceRow puts the exit code in detail (crashed) and the pid on its own field (running)", () => {
   const empty = new Set<string>();
-  assert.equal(
-    toServiceRow({ name: "db", status: "crashed", exitCode: 1 }, empty).detail,
-    "exit 1",
-  );
-  assert.equal(toServiceRow({ name: "api", status: "running", pid: 42 }, empty).detail, "pid 42");
-  // A stopped service has no detail suffix.
-  assert.equal(toServiceRow({ name: "x", status: "stopped" }, empty).detail, undefined);
+  const crashed = toServiceRow({ name: "db", status: "crashed", exitCode: 1 }, empty);
+  assert.equal(crashed.detail, "exit 1");
+  assert.equal(crashed.pid, undefined);
+  // A running service's pid rides `row.pid` (badged), NOT the plain-text detail.
+  const running = toServiceRow({ name: "api", status: "running", pid: 42 }, empty);
+  assert.equal(running.pid, 42);
+  assert.equal(running.detail, undefined);
+  // A stopped service has neither a detail suffix nor a pid badge.
+  const stopped = toServiceRow({ name: "x", status: "stopped", pid: 7 }, empty);
+  assert.equal(stopped.detail, undefined);
+  assert.equal(stopped.pid, undefined);
 });
 
 test("serviceButtons: Restart always; Stop when up, Start when down", () => {
