@@ -26,6 +26,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
 } from "react";
 import {
   deriveDexGraph,
@@ -807,6 +808,167 @@ function clampDialogSizeToViewport(size: DialogSize): DialogSize {
   };
 }
 
+/** Join a base class with an optional caller-supplied modifier into one className. */
+function dialogClass(base: string, extra?: string): string {
+  return extra ? `${base} ${extra}` : base;
+}
+
+/**
+ * Opt-in resize behavior for {@link Dialog}: restore a persisted size on open and
+ * persist the user's drags. Wired by the New-task dialog (which wants a resizable,
+ * size-remembering box); omitted by dialogs that don't (the Complete confirm).
+ */
+interface DialogResize {
+  /** The persisted size to restore on open (clamped to the viewport), or undefined
+   *  to fall back to the CSS default width. */
+  saved: DialogSize | undefined;
+  /** Persist a new size as the user drags the corner grabber (already debounced). */
+  onPersist: (size: DialogSize) => void;
+}
+
+/**
+ * The shared modal dialog chrome: a dimming backdrop over a centered panel with a
+ * header row (the title + the corner ✗ close) above arbitrary body content. It owns
+ * the modal mechanics every dialog wants identical — backdrop click, Esc, and the ✗
+ * all close, each suppressed while `busy` so a stray click/keypress can't drop an
+ * in-flight submit; `role=dialog` / `aria-modal` / `aria-labelledby`; and a
+ * stopPropagation guard so a click inside neither closes the dialog nor bubbles to a
+ * row/section open-detail handler.
+ *
+ * Initial focus stays with the body: each caller focuses its own primary field on
+ * mount (the New-task textarea with caret-at-end, the Complete result field) — which
+ * field to focus is the body's call, not the chrome's, so the Dialog doesn't grab it.
+ *
+ * The drag-resizable, size-persisting box is opt-in via `size`: the New-task dialog
+ * wants it, the Complete confirm doesn't. When set, the panel restores `size.saved`
+ * on open (clamped to the current viewport, which may now be smaller than when the
+ * size was saved) and persists drags through `size.onPersist`; the resizable styling
+ * itself rides on the caller's `className` (the `.dex-new-dialog` rules from #84).
+ */
+export function Dialog({
+  title,
+  titleId,
+  onClose,
+  busy = false,
+  className,
+  backdropClassName,
+  closeClassName,
+  size,
+  children,
+}: {
+  title: ReactNode;
+  /** Id wired to the box's `aria-labelledby` and the header's `id` — unique per
+   *  dialog so the label association is unambiguous. */
+  titleId: string;
+  onClose: () => void;
+  busy?: boolean;
+  className?: string;
+  backdropClassName?: string;
+  closeClassName?: string;
+  size?: DialogResize;
+  children: ReactNode;
+}): JSX.Element {
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // Esc closes the dialog (unless busy), wherever focus sits inside it. A document
+  // listener rather than a per-field handler so every dialog gets it for free,
+  // including when focus rests on a button rather than a text field.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent): void {
+      if (e.key === "Escape" && !busy) {
+        e.preventDefault();
+        onClose();
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [busy, onClose]);
+
+  // Restore the persisted size on open, clamped to the current viewport. Applied
+  // imperatively rather than via a React `style` prop so the browser's own resize
+  // writes (which mutate the node's inline width/height directly) aren't reconciled
+  // away by a background re-render. Mount-only: seed once, then the user (via the
+  // grabber) owns the size. When nothing's saved the CSS default width stands.
+  const savedSize = size?.saved;
+  useEffect(() => {
+    const el = dialogRef.current;
+    if (!el || !savedSize) return;
+    const { width, height } = clampDialogSizeToViewport(savedSize);
+    el.style.width = `${width}px`;
+    el.style.height = `${height}px`;
+    // Mount-only seed (savedSize is read once on open); later drags own the size.
+  }, []);
+
+  // Persist the size as the user drags the corner grabber. A ResizeObserver is the
+  // only signal CSS `resize` emits; debounced (300ms) so one drag yields one write
+  // when it settles. The observer's initial synchronous fire (the mount/restored
+  // size) is skipped so restoring a viewport-clamped size never overwrites the
+  // larger saved value.
+  const onPersist = size?.onPersist;
+  useEffect(() => {
+    const el = dialogRef.current;
+    if (!el || !onPersist) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let primed = false;
+    const observer = new ResizeObserver(() => {
+      if (!primed) {
+        primed = true;
+        return;
+      }
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const rect = el.getBoundingClientRect();
+        onPersist({ width: Math.round(rect.width), height: Math.round(rect.height) });
+      }, 300);
+    });
+    observer.observe(el);
+    return () => {
+      if (timer) clearTimeout(timer);
+      observer.disconnect();
+    };
+  }, [onPersist]);
+
+  return (
+    // The backdrop dims the surface and closes the dialog on an outside click (parity
+    // with Esc) — but never while busy, so a stray click can't drop an in-flight submit.
+    <div
+      className={dialogClass("dialog-backdrop", backdropClassName)}
+      onClick={() => {
+        if (!busy) onClose();
+      }}
+    >
+      {/* Clicks inside the dialog must neither close it (don't reach the backdrop)
+          nor bubble to a row/section open-detail handler. */}
+      <div
+        ref={dialogRef}
+        className={dialogClass("dialog", className)}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="dialog-header-row">
+          <div id={titleId} className="dialog-header">
+            {title}
+          </div>
+          {/* The conventional modal dismiss, in the upper-right corner. Disabled while
+              busy so it can't drop an in-flight submit (parity with Esc/backdrop). */}
+          <button
+            className={dialogClass("icon-btn dialog-close", closeClassName)}
+            disabled={busy}
+            title="Close (Esc)"
+            aria-label="Close"
+            onClick={onClose}
+          >
+            <i className="fa-solid fa-xmark" />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 /**
  * The armed New-task dialog: a centered modal (backdrop + panel) holding a corner
  * close (✗) in the header, a textarea (an affordance the non-activating panel can
@@ -848,7 +1010,6 @@ function DexNewDialog({
   const [pending, setPending] = useState<"add" | "start" | undefined>(undefined);
   const inFlight = pending !== undefined;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const dialogRef = useRef<HTMLDivElement>(null);
 
   // Grab focus once, when the dialog opens (this runs on mount only — the dialog
   // mounts when armed and unmounts when closed). Not on every render, so a
@@ -860,52 +1021,6 @@ function DexNewDialog({
     const end = el.value.length;
     el.setSelectionRange(end, end);
   }, []);
-
-  // Restore the persisted size on open, clamped to the current viewport (the window
-  // may now be smaller than when the size was saved). Applied imperatively rather
-  // than via a React `style` prop so the browser's own resize-grabber writes (which
-  // mutate the node's inline width/height directly) aren't reconciled away by a
-  // background board re-render — the dialog is keyed only by armed-ness, so it
-  // re-renders in place. When nothing's saved the CSS default (~420px) stands.
-  // Mount-only: seed once, then the user (via the grabber) owns the size.
-  useEffect(() => {
-    const el = dialogRef.current;
-    if (!el || !savedDialogSize) return;
-    const { width, height } = clampDialogSizeToViewport(savedDialogSize);
-    el.style.width = `${width}px`;
-    el.style.height = `${height}px`;
-  }, []);
-
-  // Persist the size as the user drags the corner grabber. A ResizeObserver is the
-  // only signal CSS `resize` emits; debounced (300ms, mirroring the window resize
-  // handler) so one drag yields one write when it settles. The observer's initial
-  // synchronous fire (the mount/restored size) is skipped so restoring a
-  // viewport-clamped size never overwrites the larger saved value.
-  useEffect(() => {
-    const el = dialogRef.current;
-    if (!el) return;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let primed = false;
-    const observer = new ResizeObserver(() => {
-      if (!primed) {
-        primed = true;
-        return;
-      }
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        const rect = el.getBoundingClientRect();
-        actions.setNewTaskDialogSize({
-          width: Math.round(rect.width),
-          height: Math.round(rect.height),
-        });
-      }, 300);
-    });
-    observer.observe(el);
-    return () => {
-      if (timer) clearTimeout(timer);
-      observer.disconnect();
-    };
-  }, [actions]);
 
   const canSubmit = !inFlight && draft.trim().length > 0;
 
@@ -955,115 +1070,84 @@ function DexNewDialog({
   }
 
   return (
-    // The backdrop dims the board and closes the dialog on an outside click (parity
-    // with Esc) — but never while a launch is in flight, so a stray click can't drop
-    // an in-progress submit.
-    <div
-      className="dex-new-backdrop"
-      onClick={() => {
-        if (!inFlight) setComposing(undefined);
-      }}
+    <Dialog
+      title={header}
+      titleId="dex-new-header"
+      onClose={() => setComposing(undefined)}
+      busy={inFlight}
+      className="dex-new-dialog"
+      backdropClassName="dex-new-backdrop"
+      closeClassName="dex-new-cancel"
+      size={{ saved: savedDialogSize, onPersist: actions.setNewTaskDialogSize }}
     >
-      {/* Clicks inside the dialog must neither close it (don't reach the backdrop)
-          nor bubble to a row/section open-detail handler. */}
-      <div
-        ref={dialogRef}
-        className="dex-new-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="dex-new-header"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="dex-new-header-row">
-          <div id="dex-new-header" className="dex-new-header">
-            {header}
-          </div>
-          {/* The conventional modal dismiss, in the upper-right corner. Disabled
-              mid-launch so it can't drop an in-flight submit (parity with Esc/backdrop). */}
-          <button
-            className="icon-btn dex-new-cancel"
+      <textarea
+        ref={textareaRef}
+        className="dex-new-input"
+        placeholder="Describe the task you want — an agent will read the code and author it."
+        rows={3}
+        value={draft}
+        disabled={inFlight}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault(); // Enter submits; Shift+Enter falls through to a newline.
+            void submit();
+          }
+        }}
+      />
+      <div className="dex-new-controls">
+        {/* A project selector only when several repos' tasks share the board, so the
+            target store is unambiguous; one (or zero) project needs no choice. A
+            sub-task is locked to its parent's store, so it never offers one. */}
+        {!parent && projects.length > 1 && (
+          <select
+            className="dex-new-project"
             disabled={inFlight}
-            title="Close (Esc)"
-            aria-label="Close"
-            onClick={() => setComposing(undefined)}
+            title="Target repository"
+            value={project ?? projects[0]}
+            onChange={(e) => setProject(e.target.value)}
           >
-            <i className="fa-solid fa-xmark" />
-          </button>
-        </div>
-        <textarea
-          ref={textareaRef}
-          className="dex-new-input"
-          placeholder="Describe the task you want — an agent will read the code and author it."
-          rows={3}
-          value={draft}
-          disabled={inFlight}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault(); // Enter submits; Shift+Enter falls through to a newline.
-              void submit();
-            } else if (e.key === "Escape") {
-              e.preventDefault();
-              setComposing(undefined);
+            {projects.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+        )}
+        {/* Author the task AND immediately spawn a worker agent on it. */}
+        <button
+          className="btn btn-sm dex-new-start"
+          disabled={!canSubmit}
+          title={
+            pending === "start"
+              ? "Spawning the author agent…"
+              : "Add task and start an agent working it"
+          }
+          aria-label="Add task and start immediately"
+          onClick={() => void submit(true)}
+        >
+          <i
+            className={
+              pending === "start" ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-rocket"
             }
-          }}
-        />
-        <div className="dex-new-controls">
-          {/* A project selector only when several repos' tasks share the board, so the
-              target store is unambiguous; one (or zero) project needs no choice. A
-              sub-task is locked to its parent's store, so it never offers one. */}
-          {!parent && projects.length > 1 && (
-            <select
-              className="dex-new-project"
-              disabled={inFlight}
-              title="Target repository"
-              value={project ?? projects[0]}
-              onChange={(e) => setProject(e.target.value)}
-            >
-              {projects.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-          )}
-          {/* Author the task AND immediately spawn a worker agent on it. */}
-          <button
-            className="btn btn-sm dex-new-start"
-            disabled={!canSubmit}
-            title={
-              pending === "start"
-                ? "Spawning the author agent…"
-                : "Add task and start an agent working it"
-            }
-            aria-label="Add task and start immediately"
-            onClick={() => void submit(true)}
-          >
-            <i
-              className={
-                pending === "start" ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-rocket"
-              }
-            />{" "}
-            Add task and start immediately
-          </button>
-          {/* The default action — what Enter triggers: author the task only. */}
-          <button
-            className="btn btn-sm btn-primary dex-new-submit"
-            disabled={!canSubmit}
-            title={pending === "add" ? "Spawning the author agent…" : "Add task (Enter)"}
-            aria-label="Add task"
-            onClick={() => void submit()}
-          >
-            <i
-              className={
-                pending === "add" ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-plus"
-              }
-            />{" "}
-            Add task
-          </button>
-        </div>
+          />{" "}
+          Add task and start immediately
+        </button>
+        {/* The default action — what Enter triggers: author the task only. */}
+        <button
+          className="btn btn-sm btn-primary dex-new-submit"
+          disabled={!canSubmit}
+          title={pending === "add" ? "Spawning the author agent…" : "Add task (Enter)"}
+          aria-label="Add task"
+          onClick={() => void submit()}
+        >
+          <i
+            className={pending === "add" ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-plus"}
+          />{" "}
+          Add task
+        </button>
       </div>
-    </div>
+    </Dialog>
   );
 }
 
@@ -1883,18 +1967,20 @@ function DexEditor({ row, onClose }: { row: DexRow; onClose: () => void }): JSX.
 }
 
 /**
- * The inline confirm behind the detail view's Complete button: a textarea for an
- * optional completion result (seeded empty), with Confirm (✓) / Cancel (✗). Confirm
- * marks the task done via `window.perch.dexComplete`, passing the result the user
- * typed (blank is fine — the daemon defaults a non-empty `--result`, which `dex
- * complete` requires). Esc cancels. The non-activating panel can't use a
- * `window.prompt`/`window.confirm`, so this mirrors {@link DexEditor}'s in-place
- * editing feel — letting the user record WHY the task is done.
+ * The Complete confirmation, a modal {@link Dialog} opened from the detail view's
+ * Complete button: a textarea for an optional completion result (seeded empty), with
+ * Confirm (✓) / Cancel (✗). Confirm marks the task done via
+ * `window.perch.dexComplete`, passing the result the user typed (blank is fine — the
+ * daemon defaults a non-empty `--result`, which `dex complete` requires). Esc / ✗ /
+ * a backdrop click cancel (the shared Dialog owns those). The non-activating panel
+ * can't use a `window.prompt`/`window.confirm`, so this lets the user record WHY the
+ * task is done in a real dialog matching the New-task composer's look.
  *
  * In-flight `saving` is local boolean state (the detail screen completes one task
  * at a time, so a context-level set like spawn/delete isn't needed): Confirm
- * disables + spins while the call is in flight, and the editor stays mounted so the
- * draft survives a background push.
+ * disables + spins while the call is in flight, the dialog can't be dismissed
+ * mid-complete (Dialog's `busy`), and the dialog stays mounted so the draft survives
+ * a background push.
  *
  * A parent/epic with open children can't complete plainly — dex rejects it. Rather
  * than dead-end on that toast, the completer keeps the result returned by `dexComplete`:
@@ -1941,13 +2027,36 @@ function DexCompleter({ row, onClose }: { row: DexRow; onClose: () => void }): J
   }
 
   return (
-    <>
-      <div className="dex-detail-head">
-        <i className={dexMarkerClass(row)} title={DEX_STATUS_LABEL[row.displayStatus]} />
-        <span className="dex-detail-title">{row.name}</span>
-      </div>
+    <Dialog
+      title={
+        <>
+          <i className={dexMarkerClass(row)} title={DEX_STATUS_LABEL[row.displayStatus]} /> Complete{" "}
+          <span className="dialog-header-accent">{row.name}</span>
+        </>
+      }
+      titleId="dex-complete-header"
+      onClose={onClose}
+      busy={saving}
+      className="dex-complete-dialog"
+      backdropClassName="dex-complete-backdrop"
+      closeClassName="dex-complete-close"
+    >
+      {subtaskWarning && (
+        <div className="dex-complete-warning" role="alert">
+          {subtaskWarning}
+        </div>
+      )}
 
-      <DexMeta row={row} />
+      <div className="dex-detail-label">Result (optional)</div>
+      <textarea
+        ref={resultRef}
+        className="dex-complete-result"
+        value={result}
+        placeholder="What was done? (optional)"
+        aria-label="Completion result"
+        rows={4}
+        onChange={(e) => setResult(e.target.value)}
+      />
 
       <div className="dex-detail-actions">
         {subtaskWarning ? (
@@ -1979,6 +2088,7 @@ function DexCompleter({ row, onClose }: { row: DexRow; onClose: () => void }): J
         )}
         <button
           className="btn btn-sm dex-complete-cancel"
+          disabled={saving}
           title="Cancel"
           aria-label="Cancel"
           onClick={onClose}
@@ -1987,30 +2097,7 @@ function DexCompleter({ row, onClose }: { row: DexRow; onClose: () => void }): J
           {" Cancel"}
         </button>
       </div>
-
-      {subtaskWarning && (
-        <div className="dex-complete-warning" role="alert">
-          {subtaskWarning}
-        </div>
-      )}
-
-      <div className="dex-detail-label">Result (optional)</div>
-      <textarea
-        ref={resultRef}
-        className="dex-complete-result"
-        value={result}
-        placeholder="What was done? (optional)"
-        aria-label="Completion result"
-        rows={4}
-        onChange={(e) => setResult(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") {
-            e.preventDefault();
-            onClose();
-          }
-        }}
-      />
-    </>
+    </Dialog>
   );
 }
 
@@ -2019,7 +2106,7 @@ function DexCompleter({ row, onClose }: { row: DexRow; onClose: () => void }): J
  * task header + meta, the read-only description / result, and the actions row (a
  * spawn launch for a ready task, plus the Complete + Edit buttons). Edit flips the
  * view into the inline {@link DexEditor}; Complete (hidden once the task is done)
- * flips it into the inline {@link DexCompleter}.
+ * opens the {@link DexCompleter} as a modal overlay over the detail.
  *
  * Edit mode is component state here — NOT a module global like the old
  * `editingDexId`. Navigating back clears the selection, which unmounts this
@@ -2044,8 +2131,6 @@ function DexDetail({ row }: { row: DexRow }): JSX.Element {
 
       {editing ? (
         <DexEditor row={row} onClose={() => setEditing(false)} />
-      ) : completing ? (
-        <DexCompleter row={row} onClose={() => setCompleting(false)} />
       ) : (
         <>
           <div className="dex-detail-head">
@@ -2089,6 +2174,10 @@ function DexDetail({ row }: { row: DexRow }): JSX.Element {
           )}
         </>
       )}
+
+      {/* The Complete confirmation is a modal overlay over the detail (not a body
+          swap), so the task header/meta/body stay visible behind the backdrop. */}
+      {completing && <DexCompleter row={row} onClose={() => setCompleting(false)} />}
     </div>
   );
 }

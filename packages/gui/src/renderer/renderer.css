@@ -802,12 +802,12 @@ body {
   color: var(--accent);
 }
 
-/* The "New task from a description" dialog: a centered modal (backdrop + panel)
-   holding a textarea + project selector + submit/cancel cluster, raised above the
-   board instead of injected inline (so arming it never shifts the task list down).
-   A non-activating panel can't use window.prompt, so the description is typed here
-   (same reason the delete-confirm is in-renderer). */
-.dex-new-backdrop {
+/* Shared modal dialog (backs both the New-task composer and the Complete confirm):
+   a dimming backdrop over a centered panel, raised above the surface rather than
+   injected inline. A non-activating panel can't use window.prompt, so these dialogs
+   stand in for the native prompts/confirms (same reason the delete-confirm is
+   in-renderer). */
+.dialog-backdrop {
   position: fixed;
   inset: 0;
   z-index: 100;
@@ -817,24 +817,10 @@ body {
   padding: 16px;
   background: rgba(0, 0, 0, 0.45);
 }
-.dex-new-dialog {
+.dialog {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  /* Resizable as a whole (not just the textarea): the user drags the corner
-     grabber to make the composer as large as the draft needs. An explicit default
-     width keeps first-open identical to the old fixed box; min-width/min-height keep
-     the header + footer controls from clipping or wrapping at the smallest size; the
-     max bounds it to the viewport so it can't be dragged off-screen (the backdrop
-     pads 16px each side → 32px). `overflow: auto` is what makes the `resize` grabber
-     appear on a block element. */
-  width: 420px;
-  min-width: 320px;
-  min-height: 200px;
-  max-width: min(720px, calc(100vw - 32px));
-  max-height: calc(100vh - 32px);
-  resize: both;
-  overflow: auto;
   box-sizing: border-box;
   padding: 14px;
   color: var(--fg);
@@ -843,25 +829,43 @@ body {
   border-radius: 8px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
 }
-/* The header row: the repo-scoped title on the left, the corner close on the right. */
-.dex-new-header-row {
+/* The header row: the dialog's title on the left, the corner ✗ close on the right. */
+.dialog-header-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
-/* The repo-scoped title: which store the new task lands in. Only the repo name
-   carries the accent so the eye lands on the store without the whole header shouting. */
-.dex-new-header {
+.dialog-header {
   font-weight: 600;
   color: var(--fg);
 }
+/* The accent span inside a dialog title (the repo a new task lands in, or the name
+   of the task being completed) — only it carries the accent so the eye lands on the
+   subject without the whole header shouting. */
+.dialog-header-accent,
 .dex-new-header-repo {
   color: var(--accent);
 }
 /* The corner close sits flush at the row's trailing edge (no icon-btn auto-margin). */
-.dex-new-header-row .dex-new-cancel {
+.dialog-header-row .dialog-close {
   margin-left: 0;
+}
+/* The New-task dialog opts into a resizable, size-remembering box (#84): the user
+   drags the corner grabber to make the composer as large as the draft needs. An
+   explicit default width keeps first-open identical to the old fixed box;
+   min-width/min-height keep the header + footer controls from clipping or wrapping at
+   the smallest size; the max bounds it to the viewport so it can't be dragged
+   off-screen (the backdrop pads 16px each side → 32px). `overflow: auto` is what makes
+   the `resize` grabber appear on a block element. */
+.dex-new-dialog {
+  width: 420px;
+  min-width: 320px;
+  min-height: 200px;
+  max-width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  resize: both;
+  overflow: auto;
 }
 .dex-new-input {
   width: 100%;
@@ -1093,6 +1097,18 @@ body {
   font-size: 12px;
   line-height: 1.5;
   white-space: pre-wrap;
+}
+/* The Complete confirmation dialog box: a fixed-width modal sharing the base
+   `.dialog` chrome. No resize handle — unlike the New-task composer it has no
+   long-form draft to grow for, so the box is sized once and left alone. The action
+   row sits at the bottom, so its buttons read as the dialog's footer. */
+.dex-complete-dialog {
+  width: 420px;
+  max-width: calc(100vw - 32px);
+}
+.dex-complete-dialog .dex-detail-actions {
+  justify-content: flex-end;
+  margin-top: 2px;
 }
 
 /* The per-service status text (e.g. "running · pid 42", "crashed · exit 1"). */

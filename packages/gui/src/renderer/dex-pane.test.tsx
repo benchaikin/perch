@@ -12,7 +12,7 @@ import "./test-dom.js";
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
-import { DexPane } from "./dex-pane.js";
+import { DexPane, Dialog } from "./dex-pane.js";
 import { dexHealth, type DexRow, type DexSection } from "../dex-state.js";
 import type {
   DexAutoSpawnRequest,
@@ -529,18 +529,15 @@ test("a non-done task shows the Complete button; a done task hides it", () => {
   assert.equal(done.querySelector(".dex-complete-btn"), null, "a done task hides Complete");
 });
 
-test("Complete opens the inline confirm; confirming sends the typed result", async () => {
+test("Complete opens a confirm dialog; confirming sends the typed result", async () => {
   const c = openDetail(row({ id: "c3", name: "Finish me", status: "in-progress" }));
   fireEvent.click(c.querySelector(".dex-complete-btn")!);
-  const result = c.querySelector(".dex-complete-result") as HTMLTextAreaElement;
-  assert.ok(result, "the confirm shows a result textarea");
+  const dialog = c.querySelector(".dex-complete-dialog");
+  assert.ok(dialog, "Complete opens a modal dialog");
+  assert.equal(dialog!.getAttribute("role"), "dialog", "the overlay is a role=dialog");
+  const result = dialog!.querySelector(".dex-complete-result") as HTMLTextAreaElement;
+  assert.ok(result, "the dialog shows a result textarea");
   assert.equal(result.value, "", "result seeded empty");
-  // The read-only Complete button is replaced by Confirm/Cancel.
-  assert.equal(
-    c.querySelector(".dex-complete-btn"),
-    null,
-    "Complete button hidden in confirm mode",
-  );
   fireEvent.change(result, { target: { value: "did it by hand" } });
   await act(async () => {
     fireEvent.click(c.querySelector(".dex-complete-confirm")!);
@@ -607,13 +604,78 @@ test("a non-subtask failure stays open without offering a force override", async
   assert.ok(c.querySelector(".dex-complete-confirm"), "the plain Complete remains");
 });
 
-test("Cancel discards the completion and returns to the read-only detail", () => {
+test("Cancel discards the completion and closes the dialog", () => {
   const c = openDetail(row({ id: "c5", name: "Keep open", status: "ready" }));
   fireEvent.click(c.querySelector(".dex-complete-btn")!);
   fireEvent.change(c.querySelector(".dex-complete-result")!, { target: { value: "oops" } });
   fireEvent.click(c.querySelector(".dex-complete-cancel")!);
   assert.deepEqual(dexCompleteCalls, [], "cancel never completes");
-  assert.ok(c.querySelector(".dex-detail-title"), "back to the read-only detail");
+  assert.equal(c.querySelector(".dex-complete-dialog"), null, "the dialog closes");
+  assert.ok(c.querySelector(".dex-detail-title"), "the read-only detail remains");
+});
+
+test("Esc and a backdrop click close the Complete dialog (no completion)", () => {
+  const c = openDetail(row({ id: "c8", name: "Dismissable", status: "ready" }));
+
+  // Esc closes the dialog.
+  fireEvent.click(c.querySelector(".dex-complete-btn")!);
+  assert.ok(c.querySelector(".dex-complete-dialog"), "Complete opens the dialog");
+  fireEvent.keyDown(document, { key: "Escape" });
+  assert.equal(c.querySelector(".dex-complete-dialog"), null, "Esc closes the dialog");
+
+  // A backdrop click closes it too (parity with Esc); an inside click does not.
+  fireEvent.click(c.querySelector(".dex-complete-btn")!);
+  fireEvent.click(c.querySelector(".dex-complete-dialog")!);
+  assert.ok(c.querySelector(".dex-complete-dialog"), "an inside click leaves it open");
+  fireEvent.click(c.querySelector(".dex-complete-backdrop")!);
+  assert.equal(c.querySelector(".dex-complete-dialog"), null, "a backdrop click closes it");
+
+  assert.deepEqual(dexCompleteCalls, [], "dismissing never completes the task");
+});
+
+// ---------------------------------------------------------------------------
+// The shared <Dialog> chrome (backdrop / Esc / busy / aria)
+// ---------------------------------------------------------------------------
+
+test("<Dialog> closes on a backdrop click and on Esc, and carries its aria wiring", () => {
+  let closes = 0;
+  const { container } = render(
+    <Dialog title="Hello" titleId="t1" onClose={() => closes++}>
+      <p>body</p>
+    </Dialog>,
+  );
+
+  const box = container.querySelector("[role=dialog]")!;
+  assert.ok(box, "renders a role=dialog box");
+  assert.equal(box.getAttribute("aria-modal"), "true", "marks itself modal");
+  assert.equal(box.getAttribute("aria-labelledby"), "t1", "labels itself by the title id");
+  assert.equal(container.querySelector("#t1")!.textContent, "Hello", "the header carries that id");
+
+  // A click inside the box must not close it (stopPropagation guards the backdrop).
+  fireEvent.click(box);
+  assert.equal(closes, 0, "an inside click does not close");
+
+  fireEvent.click(container.querySelector(".dialog-backdrop")!);
+  assert.equal(closes, 1, "a backdrop click closes");
+
+  fireEvent.keyDown(document, { key: "Escape" });
+  assert.equal(closes, 2, "Esc closes");
+});
+
+test("<Dialog> busy suppresses backdrop/Esc close and disables the ✗", () => {
+  let closes = 0;
+  const { container } = render(
+    <Dialog title="Working" titleId="t2" busy onClose={() => closes++}>
+      <p>body</p>
+    </Dialog>,
+  );
+
+  fireEvent.click(container.querySelector(".dialog-backdrop")!);
+  fireEvent.keyDown(document, { key: "Escape" });
+  assert.equal(closes, 0, "busy suppresses both backdrop and Esc close");
+
+  const close = container.querySelector(".dialog-close") as HTMLButtonElement;
+  assert.equal(close.disabled, true, "the ✗ close is disabled while busy");
 });
 
 test("the description keeps focus + caret + draft across a background state push", () => {
@@ -1163,8 +1225,8 @@ test("every row exposes a new-sub-task control that arms a parent-scoped dialog 
   const dialog = container.querySelector(".dex-new-dialog");
   assert.ok(dialog, "clicking it arms the New-task dialog");
   // The header names the PARENT task (not a repo), and no project selector is offered.
-  assert.match(dialog!.querySelector(".dex-new-header")!.textContent ?? "", /sub-task to/i);
-  assert.match(dialog!.querySelector(".dex-new-header")!.textContent ?? "", /The Parent/);
+  assert.match(dialog!.querySelector(".dialog-header")!.textContent ?? "", /sub-task to/i);
+  assert.match(dialog!.querySelector(".dialog-header")!.textContent ?? "", /The Parent/);
   assert.equal(
     dialog!.querySelector(".dex-new-project"),
     null,
