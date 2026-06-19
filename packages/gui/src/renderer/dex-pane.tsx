@@ -60,6 +60,27 @@ import { DEX_STATUS_LABEL, DexTaskDot } from "./dex-task-chip.js";
  */
 const PANE_SCOPE = " :pane";
 
+/**
+ * The composer-armed prefix marking a SUB-TASK scope: the armed value is
+ * `task:<parentId>`, distinct from a repo `project` basename or the
+ * {@link PANE_SCOPE} sentinel. Keeps the single `composing` state (no parallel
+ * field, no persistence) while letting it mean "create a child of <parentId>".
+ */
+const SUBTASK_SCOPE_PREFIX = "task:";
+
+/** The composer-arm scope that authors a sub-task of `parentId`. */
+function subtaskScope(parentId: string): string {
+  return `${SUBTASK_SCOPE_PREFIX}${parentId}`;
+}
+
+/** The parent task id a {@link subtaskScope} encodes, or `undefined` when `scope`
+ *  is a project / pane scope rather than a sub-task scope. */
+function subtaskParentId(scope: string | undefined): string | undefined {
+  return scope?.startsWith(SUBTASK_SCOPE_PREFIX)
+    ? scope.slice(SUBTASK_SCOPE_PREFIX.length)
+    : undefined;
+}
+
 /** The repo-group collapse key for a project, namespaced so it never collides
  *  with a bare epic id in the shared collapse set. */
 function repoCollapseKey(project: string): string {
@@ -107,9 +128,10 @@ interface DexContextValue {
   /**
    * The scope the New-task composer is armed for (the `composingNewTask`
    * replacement, now per-repo): a repo `project` on a multi-repo board, the
-   * {@link PANE_SCOPE} sentinel on a single-repo board, or `undefined` when no
-   * composer is open. Per-scope so arming one repo's composer leaves the others
-   * (and their half-typed drafts) untouched.
+   * {@link PANE_SCOPE} sentinel on a single-repo board, a {@link subtaskScope}
+   * (`task:<id>`) to author a child of that task, or `undefined` when no composer
+   * is open. Per-scope so arming one site's composer leaves the others (and their
+   * half-typed drafts) untouched.
    */
   composing: string | undefined;
   /** Arm the New-task composer for a scope, or close it with `undefined`. */
@@ -696,6 +718,47 @@ function DexNewButton({ scope }: { scope: string }): JSX.Element {
 }
 
 /**
+ * The per-row "new sub-task" control: a small trailing button that arms the
+ * New-task dialog scoped to THIS row as parent (toggling closed if already armed
+ * for it), so a child task is authored in the parent's store via `dex create
+ * --parent`. The board-level {@link DexNewButton} arms a *project* scope; this arms
+ * a {@link subtaskScope}. A distinct glyph (a node sprouting a child) keeps it
+ * legible apart from the spawn-play and delete controls it sits beside. The click
+ * is stopped from bubbling so it never opens the row's detail (matching the other
+ * trailing controls).
+ */
+function DexSubtaskButton({ parentId }: { parentId: string }): JSX.Element {
+  const { composing, setComposing } = useDexContext();
+  const scope = subtaskScope(parentId);
+  const active = composing === scope;
+  return (
+    <button
+      className={`icon-btn dex-new-subtask${active ? " dex-new-active" : ""}`}
+      title="New sub-task from a description"
+      aria-label="New sub-task from a description"
+      onClick={(e) => {
+        e.stopPropagation();
+        setComposing(active ? undefined : scope);
+      }}
+    >
+      <i className="fa-solid fa-diagram-next" />
+    </button>
+  );
+}
+
+/**
+ * The existing-task parent the New-task dialog authors a child of (a
+ * {@link subtaskScope} arm), resolved from the parent row so the dialog can name it
+ * and pin the child to its store. `project` is the parent's repo (`undefined` on a
+ * single cwd store — the daemon resolves it).
+ */
+interface DexNewParent {
+  id: string;
+  name: string;
+  project: string | undefined;
+}
+
+/**
  * The armed New-task dialog: a centered modal (backdrop + panel) holding a corner
  * close (✗) in the header, a textarea (an affordance the non-activating panel can
  * rely on, unlike `window.prompt`), an optional project selector (only when several
@@ -715,8 +778,19 @@ function DexNewButton({ scope }: { scope: string }): JSX.Element {
  * whether it is open (the armed scope), never by board data, so a push can't
  * remount it. The mount effect focuses the textarea ONCE when the dialog opens (not
  * per render), so the same push can't steal focus mid-type either.
+ *
+ * When armed for a `parent` (a {@link subtaskScope}) the dialog authors a CHILD of
+ * that task: the header names the parent instead of a repo, the project selector is
+ * suppressed (a sub-task MUST land in its parent's store), and submit passes the
+ * parent's id + project through so `dex.new` runs `dex create --parent <id>` there.
  */
-function DexNewDialog({ projects }: { projects: string[] }): JSX.Element {
+function DexNewDialog({
+  projects,
+  parent,
+}: {
+  projects: string[];
+  parent?: DexNewParent;
+}): JSX.Element {
   const actions = useActions();
   const { setComposing } = useDexContext();
   const [draft, setDraft] = useState("");
@@ -745,7 +819,11 @@ function DexNewDialog({ projects }: { projects: string[] }): JSX.Element {
   // single-store board the name is unknown (the daemon resolves the sole repo),
   // so degrade to a plain label rather than "Add a task to undefined repository".
   const targetProject = newTaskTargetProject(projects, project);
-  const header = targetProject ? (
+  const header = parent ? (
+    <>
+      Add a sub-task to <span className="dex-new-header-repo">{parent.name}</span>
+    </>
+  ) : targetProject ? (
     <>
       Add a task to <span className="dex-new-header-repo">{targetProject}</span> repository
     </>
@@ -756,16 +834,24 @@ function DexNewDialog({ projects }: { projects: string[] }): JSX.Element {
   // Launch the author agent for the trimmed draft (with the resolved target
   // project), marking the chosen action in flight so the controls disable + that
   // action's button shows a spinner. With `start`, the author agent also spawns a
-  // worker on the new task once authored. On success close the dialog — its unmount
-  // drops the local draft, so there's nothing to reset; on failure re-enable so the
-  // user can retry (the success/error notice itself is pushed from main via panel
-  // state). Guards against a second launch in flight and against an empty description.
+  // worker on the new task once authored. For a sub-task the parent pins the store
+  // (its project) and threads `parentId`, so `dex create --parent` lands the child
+  // there. On success close the dialog — its unmount drops the local draft, so
+  // there's nothing to reset; on failure re-enable so the user can retry (the
+  // success/error notice itself is pushed from main via panel state). Guards against
+  // a second launch in flight and against an empty description.
   async function submit(start = false): Promise<void> {
     const description = draft.trim();
     if (!description || inFlight) return;
     setPending(start ? "start" : "add");
     try {
-      await actions.dexNew({ description, project: newTaskTargetProject(projects, project), start });
+      // A sub-task pins the store to its parent's project and threads `parentId`; a
+      // top-level task omits `parentId` entirely, so its payload is unchanged.
+      await actions.dexNew(
+        parent
+          ? { description, project: parent.project, start, parentId: parent.id }
+          : { description, project: newTaskTargetProject(projects, project), start },
+      );
       setComposing(undefined);
     } catch {
       setPending(undefined);
@@ -827,8 +913,9 @@ function DexNewDialog({ projects }: { projects: string[] }): JSX.Element {
         />
         <div className="dex-new-controls">
           {/* A project selector only when several repos' tasks share the board, so the
-              target store is unambiguous; one (or zero) project needs no choice. */}
-          {projects.length > 1 && (
+              target store is unambiguous; one (or zero) project needs no choice. A
+              sub-task is locked to its parent's store, so it never offers one. */}
+          {!parent && projects.length > 1 && (
             <select
               className="dex-new-project"
               disabled={inFlight}
@@ -1119,8 +1206,10 @@ function DexTaskRow({ row }: { row: DexRow }): JSX.Element {
 
       <DexRowBody row={row} />
 
-      {/* A ready, unblocked, unworked task trails a spawn play button; every row
-          trails a delete control (both stop propagation so the row stays closed). */}
+      {/* Every row trails a "new sub-task" control (the cluster's leading anchor); a
+          ready, unblocked, unworked task adds a spawn play button; every row trails a
+          delete control (all stop propagation so the row stays closed). */}
+      <DexSubtaskButton parentId={row.id} />
       {canSpawnDex(row) && <DexSpawnButton id={row.id} />}
       <DexDeleteControl row={row} />
     </div>
@@ -1221,8 +1310,10 @@ function DexGraphRow({
       <span className="dex-chevron-spacer" />
       <DexRowBody row={row} />
 
-      {/* Mirror the tree row's trailing controls: a spawn play button on ready
-          rows, a delete control on every row (both stop propagation). */}
+      {/* Mirror the tree row's trailing controls: a "new sub-task" anchor on every
+          row, a spawn play button on ready rows, a delete control on every row (all
+          stop propagation). */}
+      <DexSubtaskButton parentId={row.id} />
       {canSpawnDex(row) && <DexSpawnButton id={row.id} />}
       <DexDeleteControl row={row} />
     </div>
@@ -1735,10 +1826,22 @@ function DexSectionBody({ section }: { section: DexSection }): JSX.Element {
   // background push without remounting its textarea. The armed scope resolves the
   // projects the inline sites used to pass: the pane sentinel offers the board's
   // distinct projects (single-repo → no selector), a repo scope pre-binds to that
-  // one repo (one-element list → no selector, the task lands there).
-  const dialog = composing !== undefined && (
-    <DexNewDialog projects={composing === PANE_SCOPE ? dexProjects(section) : [composing]} />
-  );
+  // one repo (one-element list → no selector, the task lands there). A sub-task scope
+  // (`task:<id>`) instead resolves the parent row, so the dialog names it and pins the
+  // child to its store; if that parent went away (completed/removed) there's nothing
+  // to arm, so the dialog drops rather than misrender the scope as a bogus project.
+  const parentId = subtaskParentId(composing);
+  const parentRow =
+    parentId !== undefined ? section.rows.find((r) => r.id === parentId) : undefined;
+  const dialog =
+    composing === undefined || (parentId !== undefined && !parentRow) ? null : parentRow ? (
+      <DexNewDialog
+        projects={[]}
+        parent={{ id: parentRow.id, name: parentRow.name, project: parentRow.project }}
+      />
+    ) : (
+      <DexNewDialog projects={composing === PANE_SCOPE ? dexProjects(section) : [composing]} />
+    );
 
   // Multi-repo board: a per-repo collapsible group, each with its own header +
   // controls. The pane-level header keeps only the view toggle.

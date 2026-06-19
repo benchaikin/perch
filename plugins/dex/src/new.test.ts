@@ -8,13 +8,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import {
-  newTaskPrompt,
-  newTaskTitle,
-  resolveNewRepo,
-  runNew,
-  type NewDeps,
-} from "./new.js";
+import { newTaskPrompt, newTaskTitle, resolveNewRepo, runNew, type NewDeps } from "./new.js";
 
 test("resolveNewRepo: explicit repo wins as given", () => {
   assert.deepEqual(resolveNewRepo({ repo: "/explicit/path" }, ["/work/perch"]), {
@@ -82,6 +76,25 @@ test("newTaskPrompt: start mode tells the agent to spawn a worker after authorin
   // The description is still embedded and `dex create` is still the authoring step.
   assert.ok(prompt.includes("Add a logout button"));
   assert.ok(prompt.includes("dex create"));
+});
+
+test("newTaskPrompt: a parentId authors a sub-task under the parent (no fresh epic)", () => {
+  const prompt = newTaskPrompt("Add a logout endpoint", false, "abc123");
+  // The description is embedded and the parent is threaded into `dex create --parent`.
+  assert.ok(prompt.includes("Add a logout endpoint"));
+  assert.match(prompt, /dex create --parent abc123/);
+  assert.match(prompt, /sub-task/i);
+  // Already inside an epic — it must default to one sub-task, not spin up a new epic.
+  assert.match(prompt, /do NOT spin up a new epic/i);
+  // Author-only by default still holds for a sub-task.
+  assert.match(prompt, /Do NOT implement the work — only author it\./);
+});
+
+test("newTaskPrompt: parentId composes with start mode (author the sub-task, then spawn a worker)", () => {
+  const prompt = newTaskPrompt("Add a logout endpoint", true, "abc123");
+  assert.match(prompt, /dex create --parent abc123/);
+  assert.match(prompt, /START WORKING/);
+  assert.doesNotMatch(prompt, /Do NOT implement the work — only author it\./);
 });
 
 test("newTaskPrompt: offers both the single-task and the epic/sub-task path", () => {
@@ -157,14 +170,8 @@ test("runNew: happy path — launches an auto-mode agent in the sole repo with t
   assert.equal(script.commands.length, 1);
   // The window title (description snippet) is set first, then the cd+exec claude
   // line in the resolved repo, in auto mode, with the seeded prompt.
-  assert.match(
-    script.commands[0]!,
-    /^printf '\\033\]0;%s\\007' 'dex new · Add a logout button'\n/,
-  );
-  assert.match(
-    script.commands[0]!,
-    /\ncd '\/work\/perch' && exec claude --permission-mode auto '/,
-  );
+  assert.match(script.commands[0]!, /^printf '\\033\]0;%s\\007' 'dex new · Add a logout button'\n/);
+  assert.match(script.commands[0]!, /\ncd '\/work\/perch' && exec claude --permission-mode auto '/);
   assert.ok(script.commands[0]!.includes("dex create"));
   assert.ok(script.commands[0]!.includes("Add a logout button"));
 });
@@ -180,11 +187,25 @@ test("runNew: start mode seeds the worker-spawning prompt and a distinct success
   assert.match(script.commands[0]!, /START WORKING/);
 });
 
+test("runNew: a parentId threads `dex create --parent` into the seeded prompt", async () => {
+  const script = fakeWriteScript();
+  const res = await runNew(
+    { description: "Add a thing", parentId: "epic42", project: "perch" },
+    deps({ spawn: fakeSpawn().spawn, writeScript: script.writeScript }),
+  );
+  assert.equal(res.ok, true);
+  assert.match(script.commands[0]!, /dex create --parent epic42/);
+});
+
 test("runNew: an explicit project targets that repo's directory", async () => {
   const script = fakeWriteScript();
   const res = await runNew(
     { description: "Do a thing", project: "other" },
-    deps({ repos: ["/work/perch", "/work/other"], spawn: fakeSpawn().spawn, writeScript: script.writeScript }),
+    deps({
+      repos: ["/work/perch", "/work/other"],
+      spawn: fakeSpawn().spawn,
+      writeScript: script.writeScript,
+    }),
   );
   assert.equal(res.ok, true);
   assert.equal(res.repo, "/work/other");
@@ -195,7 +216,12 @@ test("runNew: no configured repos falls back to the daemon's cwd store", async (
   const script = fakeWriteScript();
   const res = await runNew(
     { description: "Do a thing" },
-    deps({ repos: [], cwd: "/daemon/cwd", spawn: fakeSpawn().spawn, writeScript: script.writeScript }),
+    deps({
+      repos: [],
+      cwd: "/daemon/cwd",
+      spawn: fakeSpawn().spawn,
+      writeScript: script.writeScript,
+    }),
   );
   assert.equal(res.ok, true);
   assert.equal(res.repo, "/daemon/cwd");
@@ -206,7 +232,11 @@ test("runNew: multiple repos with no target is a clean ambiguity error, nothing 
   const term = fakeSpawn();
   const res = await runNew(
     { description: "Do a thing" },
-    deps({ repos: ["/work/perch", "/work/other"], spawn: term.spawn, writeScript: fakeWriteScript().writeScript }),
+    deps({
+      repos: ["/work/perch", "/work/other"],
+      spawn: term.spawn,
+      writeScript: fakeWriteScript().writeScript,
+    }),
   );
   assert.equal(res.ok, false);
   assert.match(res.message, /multiple dex repos/);

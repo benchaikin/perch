@@ -20,11 +20,7 @@
  */
 import type { spawn as nodeSpawn } from "node:child_process";
 
-import {
-  buildAgentLaunchCommand,
-  spawnInTerminal,
-  type GlobalTerminalConfig,
-} from "@perch/sdk";
+import { buildAgentLaunchCommand, spawnInTerminal, type GlobalTerminalConfig } from "@perch/sdk";
 
 import { resolveRepo } from "./spawn.js";
 
@@ -47,6 +43,13 @@ export interface NewInput {
    * Defaults to author-only.
    */
   start?: boolean;
+  /**
+   * Author the work as a CHILD of this existing task — the agent runs `dex create
+   * --parent <parentId>` so the new task nests under it. The GUI passes this (with
+   * the parent's `project`, which pins the repo) when the composer is armed from a
+   * task row's "new sub-task" control. Omitted authors a top-level task.
+   */
+  parentId?: string;
 }
 
 /** The `dex.new` action result, surfaced to every projected surface. */
@@ -112,8 +115,14 @@ export function resolveNewRepo(
  * NOT implement" guidance, the agent is told to spawn a SEPARATE worker agent on
  * the new task (a `dex/<id>-<slug>` worktree, the spawn-dex/dex-worktree flow) right
  * after authoring — the one-click "author it AND start working it" path.
+ *
+ * When `parentId` is set the work is authored as a CHILD of that task (`dex create
+ * --parent <parentId>`). The scope judgment is different here: a sub-task is by
+ * definition already inside an epic, so the prompt biases to a SINGLE sub-task and
+ * tells the agent NOT to spin up a fresh epic — unlike the top-level path, which
+ * judges single-task-vs-epic from scratch.
  */
-export function newTaskPrompt(description: string, start = false): string {
+export function newTaskPrompt(description: string, start = false, parentId?: string): string {
   const closing = start
     ? `Once authored, do NOT stop — START WORKING the new task by handing it to a ` +
       `separate worker agent: take the id \`dex create\` returned (for an epic, the ` +
@@ -123,6 +132,27 @@ export function newTaskPrompt(description: string, start = false): string {
       `the work yourself in this session — author it here, then spawn the worker that ` +
       `does the implementation.`
     : `Do NOT implement the work — only author it.`;
+  if (parentId) {
+    return (
+      `Here is a rough description of work to create as a SUB-TASK of the existing dex ` +
+      `task \`${parentId}\`:\n\n${description}\n\n` +
+      `Author this as well-formed dex work for THIS repository (your cwd), nested UNDER ` +
+      `\`${parentId}\` as its child. First read the relevant code to ground the work in how ` +
+      `things actually work here — find the real reuse points, the files to touch, and the ` +
+      `gotchas.\n\n` +
+      `Create it with \`dex create --parent ${parentId}\` in this directory (so it lands in ` +
+      `this repo's .dex store, nested under its parent). This work is ALREADY inside an epic, ` +
+      `so default to a SINGLE sub-task — do NOT spin up a new epic. Only when the description ` +
+      `genuinely spans multiple independently-mergeable pieces, create several sub-tasks ` +
+      `(each with \`dex create --parent ${parentId}\`, wired with \`--blocked-by <ids>\` using ` +
+      `the real ids \`dex create\` returns) to encode their order — but bias hard toward one.\n\n` +
+      `Give each task a concise imperative name and a rich description that follows this repo's ` +
+      `existing task conventions: the WHY, the key design, reuse pointers, guards/edge cases, ` +
+      `and acceptance criteria. After creating, run \`dex show <id> --full\` to verify each ` +
+      `sub-task was created and reads well, and confirm it nests under \`${parentId}\` (e.g. ` +
+      `\`dex list ${parentId}\`). ${closing}`
+    );
+  }
   return (
     `Here is a rough description of work to create as dex task(s):\n\n${description}\n\n` +
     `Author this as well-formed dex work for THIS repository (your cwd). First read the ` +
@@ -188,7 +218,7 @@ export async function runNew(input: NewInput, deps: NewDeps): Promise<NewResult>
   const dir = resolved.repo ?? deps.cwd;
 
   const launched = spawnInTerminal({
-    command: buildAgentLaunchCommand(dir, newTaskPrompt(description, input.start)),
+    command: buildAgentLaunchCommand(dir, newTaskPrompt(description, input.start, input.parentId)),
     terminal: deps.terminal,
     label: "dex new",
     // Title the window with a description snippet so a row of author windows is

@@ -950,6 +950,76 @@ test("a backdrop click cancels the dialog (parity with Esc); a click inside does
   );
 });
 
+test("every row exposes a new-sub-task control that arms a parent-scoped dialog (no repo selector)", () => {
+  const { container } = render(
+    <DexPane section={section([row({ id: "parent1", name: "The Parent", project: "beta" })])} />,
+  );
+  // The trailing control is present and distinct from the spawn/delete buttons.
+  const sub = container.querySelector(".dex-row .dex-new-subtask") as HTMLButtonElement;
+  assert.ok(sub, "the row exposes a new-sub-task control");
+  assert.ok(!sub.classList.contains("dex-spawn") && !sub.classList.contains("dex-delete-btn"));
+
+  fireEvent.click(sub);
+  const dialog = container.querySelector(".dex-new-dialog");
+  assert.ok(dialog, "clicking it arms the New-task dialog");
+  // The header names the PARENT task (not a repo), and no project selector is offered.
+  assert.match(dialog!.querySelector(".dex-new-header")!.textContent ?? "", /sub-task to/i);
+  assert.match(dialog!.querySelector(".dex-new-header")!.textContent ?? "", /The Parent/);
+  assert.equal(
+    dialog!.querySelector(".dex-new-project"),
+    null,
+    "a sub-task offers no repo selector",
+  );
+});
+
+test("submitting a sub-task threads parentId + the parent's project through dexNew", () => {
+  const { container } = render(
+    <DexPane section={section([row({ id: "parent1", name: "The Parent", project: "beta" })])} />,
+  );
+  fireEvent.click(container.querySelector(".dex-row .dex-new-subtask")!);
+  const dialog = container.querySelector(".dex-new-dialog")!;
+  fireEvent.change(dialog.querySelector(".dex-new-input")!, {
+    target: { value: "  do the child  " },
+  });
+
+  fireEvent.click(dialog.querySelector(".dex-new-submit") as HTMLButtonElement);
+  assert.equal(dexNewCalls.length, 1);
+  assert.deepEqual(dexNewCalls[0], {
+    description: "do the child",
+    project: "beta",
+    start: false,
+    parentId: "parent1",
+  });
+});
+
+test("a sub-task's 'start immediately' authors the child then starts it (parentId + start)", () => {
+  const { container } = render(
+    <DexPane section={section([row({ id: "parent1", name: "The Parent", project: "beta" })])} />,
+  );
+  fireEvent.click(container.querySelector(".dex-row .dex-new-subtask")!);
+  const dialog = container.querySelector(".dex-new-dialog")!;
+  fireEvent.change(dialog.querySelector(".dex-new-input")!, { target: { value: "child work" } });
+
+  fireEvent.click(dialog.querySelector(".dex-new-start") as HTMLButtonElement);
+  assert.equal(dexNewCalls.length, 1);
+  assert.equal(dexNewCalls[0]!.parentId, "parent1");
+  assert.equal(dexNewCalls[0]!.start, true);
+});
+
+test("the row's new-sub-task control toggles closed when re-clicked and never opens row detail", () => {
+  const { container } = render(<DexPane section={section([row({ id: "p", name: "P" })])} />);
+  const sub = (): HTMLButtonElement =>
+    container.querySelector(".dex-row .dex-new-subtask") as HTMLButtonElement;
+
+  fireEvent.click(sub());
+  assert.ok(container.querySelector(".dex-new-dialog"), "first click arms the dialog");
+  // Clicking the control must not navigate to the row's detail view.
+  assert.equal(container.querySelector(".dex-detail"), null, "the control never opens row detail");
+
+  fireEvent.click(sub());
+  assert.equal(container.querySelector(".dex-new-dialog"), null, "re-clicking disarms the dialog");
+});
+
 // ---------------------------------------------------------------------------
 // View-mode toggle (tree ↔ graph) + the dependency-graph view
 // ---------------------------------------------------------------------------
@@ -1259,7 +1329,11 @@ test("a configured-but-empty repo still renders its header (with a working New '
   });
   fireEvent.click(dialog!.querySelector(".dex-new-submit")!);
   assert.equal(dexNewCalls.length, 1, "the first task for an empty repo can be authored here");
-  assert.deepEqual(dexNewCalls[0], { description: "first beta task", project: "beta", start: false });
+  assert.deepEqual(dexNewCalls[0], {
+    description: "first beta task",
+    project: "beta",
+    start: false,
+  });
 });
 
 test("a non-empty repo and an empty configured repo render side by side", () => {
