@@ -806,9 +806,13 @@ body {
   border-radius: 8px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
 }
-/* The repo-scoped title: which store the new task lands in, made unmistakable. */
+/* The repo-scoped title: which store the new task lands in. Only the repo name
+   carries the accent so the eye lands on the store without the whole header shouting. */
 .dex-new-header {
   font-weight: 600;
+  color: var(--fg);
+}
+.dex-new-header-repo {
   color: var(--accent);
 }
 .dex-new-input {

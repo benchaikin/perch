@@ -740,7 +740,13 @@ function DexNewDialog({ projects }: { projects: string[] }): JSX.Element {
   // single-store board the name is unknown (the daemon resolves the sole repo),
   // so degrade to a plain label rather than "Add a task to undefined repository".
   const targetProject = newTaskTargetProject(projects, project);
-  const headerText = targetProject ? `Add a task to ${targetProject} repository` : "Add a task";
+  const header = targetProject ? (
+    <>
+      Add a task to <span className="dex-new-header-repo">{targetProject}</span> repository
+    </>
+  ) : (
+    "Add a task"
+  );
 
   // Launch the author agent for the trimmed draft (with the resolved target
   // project), marking it in flight so the controls disable + the submit shows a
@@ -780,7 +786,7 @@ function DexNewDialog({ projects }: { projects: string[] }): JSX.Element {
         onClick={(e) => e.stopPropagation()}
       >
         <div id="dex-new-header" className="dex-new-header">
-          {headerText}
+          {header}
         </div>
         <textarea
           ref={textareaRef}
