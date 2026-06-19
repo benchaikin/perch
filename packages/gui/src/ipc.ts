@@ -102,6 +102,15 @@ export const Channels = {
   /** Renderer → main: open a worktree dir (payload: the path). Main runs `worktrees.open`. */
   worktreeOpen: "perch:worktree-open",
   /**
+   * Renderer → main `invoke`: remove a worktree (payload: a
+   * {@link WorktreeRemoveRequest}). Main confirms with a native dialog (removal
+   * is irreversible and a forced one discards uncommitted work) before running
+   * `worktrees.remove`, then re-reads the list so the row disappears. Resolves
+   * when the removal finishes (or is declined / fails) so the row's trash control
+   * can clear its in-progress state; the outcome is toasted from main.
+   */
+  worktreeRemove: "perch:worktree-remove",
+  /**
    * Renderer → main `invoke`: spawn an agent for a ready dex task (payload: the
    * task id). Main runs `dex.spawn` and resolves when the worktree/terminal work
    * finishes, so the button can clear its in-progress state.
@@ -178,6 +187,21 @@ export interface DexDeleteRequest {
   warning?: string;
 }
 
+/**
+ * Renderer → main payload to remove a git worktree. Carries the worktree `name`
+ * so the native confirm dialog can name what's being removed; `force` (computed
+ * from the row — set for a dirty/conflicted/locked/prunable tree git won't drop
+ * cleanly) is passed through to `worktrees.remove`; and the renderer-computed
+ * `warning` (the discarded changes / orphaned linked task) reads as the dialog's
+ * detail. `warning` is absent for a clean tree with no live work.
+ */
+export interface WorktreeRemoveRequest {
+  path: string;
+  name: string;
+  force?: boolean;
+  warning?: string;
+}
+
 /** Renderer → main payload to add/remove a dex dependency (blocker) edge. */
 export interface DexBlockerRequest {
   /** The task that becomes (or stops being) blocked — `dex edit`'s target. */
@@ -244,6 +268,15 @@ export interface PerchBridge {
   setDexViewMode(mode: DexViewMode): void;
   /** Ask the main process to open a worktree directory (by path). */
   worktreeOpen(path: string): void;
+  /**
+   * Ask the main process to remove a worktree (payload: a
+   * {@link WorktreeRemoveRequest}). Main confirms with a native dialog (removal
+   * is irreversible; a forced one discards uncommitted work) before removing.
+   * Resolves when the removal finishes (or is declined / fails) and the list has
+   * re-read, so the caller can clear its in-progress UI; the success/error notice
+   * is pushed via panel state.
+   */
+  worktreeRemove(request: WorktreeRemoveRequest): Promise<void>;
   /**
    * Ask the main process to spawn an agent for a ready dex task (by id).
    * Resolves when the spawn finishes (or fails), so the caller can clear its

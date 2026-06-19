@@ -46,6 +46,7 @@ import {
   type OpenAgentRequest,
   type ResolveConflictsRequest,
   type ServiceActionRequest,
+  type WorktreeRemoveRequest,
 } from "./ipc.js";
 import { addProc, procsFromConfig, removeProc, type Proc } from "./procs.js";
 import { addRepo, removeRepo, reposFromConfig, setDefault, toEntries } from "./repos.js";
@@ -623,6 +624,69 @@ async function openWorktree(path: string): Promise<void> {
     await client.invoke({ id: "worktrees.open", input: { path } });
   } catch (err) {
     showNotice({ tone: "bad", text: `Open worktree failed: ${errorMessage(err)}` });
+  }
+}
+
+/**
+ * Remove a worktree via the worktrees plugin's `remove` action, then re-read the
+ * list and toast the outcome. Removal is irreversible — and a forced one (a
+ * dirty/conflicted/locked tree) discards uncommitted work — so we confirm with a
+ * native dialog first, mirroring {@link deleteDex}: default button Cancel
+ * (index 1), the renderer-computed `warning` (discarded changes, an orphaned
+ * linked task) reading as the dialog detail. Awaited by the renderer (via
+ * `ipcMain.handle`) so the row's trash control clears its in-progress state when
+ * the work finishes (or the removal is declined). On success the list is re-read
+ * immediately so the row disappears without waiting for the next poll. Removes
+ * only the worktree — the `dex/<id>` branch and the linked task are left intact.
+ */
+async function removeWorktree(request: WorktreeRemoveRequest): Promise<void> {
+  if (!client) return;
+  const { path, force } = request;
+
+  const confirmOptions = {
+    type: "warning" as const,
+    buttons: ["Remove", "Cancel"],
+    defaultId: 1,
+    cancelId: 1,
+    message: `Remove worktree "${request.name}"?`,
+    detail: request.warning
+      ? `This removes the worktree directory.\n\n${request.warning}`
+      : "This removes the worktree directory.",
+  };
+  const { response } =
+    panel && !panel.isDestroyed()
+      ? await dialog.showMessageBox(panel, confirmOptions)
+      : await dialog.showMessageBox(confirmOptions);
+  if (response !== 0) return;
+
+  try {
+    const result = (await client.invoke({
+      id: "worktrees.remove",
+      input: { path, force },
+    })) as { ok?: boolean; message?: string } | null;
+    if (result && result.ok === false) {
+      showNotice({
+        tone: "bad",
+        text: result.message ?? `Couldn't remove worktree ${request.name}.`,
+      });
+    } else {
+      showNotice({ tone: "ok", text: result?.message ?? `Removed worktree ${request.name}.` });
+      await refreshWorktreesBoard();
+    }
+  } catch (err) {
+    showNotice({ tone: "bad", text: `Remove worktree failed: ${errorMessage(err)}` });
+  } finally {
+    pushState();
+  }
+}
+
+/** Re-invoke `worktrees.list` so the section reflects a just-removed worktree immediately. */
+async function refreshWorktreesBoard(): Promise<void> {
+  if (!client) return;
+  try {
+    buildInput.worktreesList = (await client.invoke({ id: WORKTREES_LIST_ID })) as WorktreeList;
+  } catch {
+    // Best-effort: the subscription's next poll (≤10s) reconciles the list anyway.
   }
 }
 
@@ -1513,6 +1577,9 @@ function registerIpc(): void {
   );
   ipcMain.on(Channels.serviceLogs, (_event, name: string) => void serviceLogs(name));
   ipcMain.on(Channels.worktreeOpen, (_event, path: string) => void openWorktree(path));
+  ipcMain.handle(Channels.worktreeRemove, (_event, request: WorktreeRemoveRequest) =>
+    removeWorktree(request),
+  );
   // Spawns use `handle` (not `send`) so the renderer can await completion and
   // clear the button's in-progress state when the worktree/terminal work finishes.
   ipcMain.handle(Channels.dexSpawn, (_event, id: string) => spawnDex(id));

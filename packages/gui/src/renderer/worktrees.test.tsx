@@ -13,23 +13,47 @@
 import "./test-dom.js";
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { WorktreesPane } from "./worktrees.js";
 import type { WorktreeRepoGroup, WorktreeRow, WorktreesSection } from "../worktrees-state.js";
 import type { LinkedTask } from "../worktree-task-link.js";
-import type { PerchBridge } from "../ipc.js";
+import type { PerchBridge, WorktreeRemoveRequest } from "../ipc.js";
 
 /** Records the path of every worktree the rows ask to open. */
 let worktreeOpenCalls: string[];
+/** Records every worktree-remove request handed to the bridge. */
+let worktreeRemoveCalls: WorktreeRemoveRequest[];
+/** Parked resolvers for the in-flight remove promises, settled on demand. */
+let actionResolvers: Array<() => void>;
+
+/** A fresh promise whose resolver is parked for the test to settle on demand. */
+function pending(): Promise<void> {
+  return new Promise<void>((resolve) => actionResolvers.push(resolve));
+}
+
+/** Resolve every in-flight remove promise and flush the resulting state updates. */
+async function settleActions(): Promise<void> {
+  await act(async () => {
+    for (const resolve of actionResolvers.splice(0)) resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
 
 const bridge = {
   worktreeOpen(path: string) {
     worktreeOpenCalls.push(path);
   },
+  worktreeRemove(request: WorktreeRemoveRequest) {
+    worktreeRemoveCalls.push(request);
+    return pending();
+  },
 } as unknown as PerchBridge;
 
 beforeEach(() => {
   worktreeOpenCalls = [];
+  worktreeRemoveCalls = [];
+  actionResolvers = [];
   (globalThis as unknown as { window: { perch: PerchBridge } }).window.perch = bridge;
 });
 
@@ -205,6 +229,82 @@ test("multi-repo rows group under collapsible headers whose toggle hides the row
   // Expanding again restores the rows.
   fireEvent.click(headers[0]!);
   assert.equal(container.querySelectorAll(".worktree-row").length, 2);
+});
+
+test("a non-main row's trash control calls worktreeRemove and optimistically spins", async () => {
+  const { container } = render(
+    <WorktreesPane section={flatSection([wtRow({ path: "/wt/feature", name: "feature" })])} />,
+  );
+  const btn = container.querySelector(".worktree-remove-btn") as HTMLButtonElement;
+  assert.ok(btn, "a non-main row gets a remove control");
+  assert.equal(btn.title, "Remove worktree");
+
+  fireEvent.click(btn);
+  // The renderer just fires the action — the confirm dialog is raised in main. A
+  // clean, unlinked tree needs no --force and carries no warning.
+  assert.deepEqual(worktreeRemoveCalls, [
+    { path: "/wt/feature", name: "feature", force: false, warning: undefined },
+  ]);
+  // stopPropagation: removing must not also open the worktree directory.
+  assert.equal(worktreeOpenCalls.length, 0, "removing must not open the worktree");
+  const spinning = container.querySelector(".worktree-remove-btn") as HTMLButtonElement;
+  assert.equal(spinning.disabled, true, "the in-flight remove is disabled");
+  assert.equal(spinning.title, "Removing…");
+  assert.ok(spinning.querySelector(".fa-spin"), "the in-flight remove shows a spinner");
+
+  // The optimistic state clears when the remove resolves (confirm, decline, or error).
+  await settleActions();
+  const settled = container.querySelector(".worktree-remove-btn") as HTMLButtonElement;
+  assert.equal(settled.disabled, false, "the spinner clears when the remove resolves");
+});
+
+test("the main worktree has no remove control", () => {
+  const { container } = render(
+    <WorktreesPane
+      section={flatSection([
+        wtRow({ path: "/wt/main", name: "perch", branch: "main", main: true }),
+        wtRow({ path: "/wt/feature", name: "feature" }),
+      ])}
+    />,
+  );
+  // Only the non-main row carries a trash control.
+  assert.equal(container.querySelectorAll(".worktree-remove-btn").length, 1);
+});
+
+test("removing a dirty tree forces and warns of the discarded changes", () => {
+  const { container } = render(
+    <WorktreesPane
+      section={flatSection([
+        wtRow({ path: "/wt/dirty", name: "dirty", dirty: true, dirtyCount: 3 }),
+      ])}
+    />,
+  );
+  fireEvent.click(container.querySelector(".worktree-remove-btn")!);
+  const req = worktreeRemoveCalls[0]!;
+  assert.equal(req.force, true, "a dirty tree is force-removed");
+  assert.match(req.warning ?? "", /3 uncommitted changes will be discarded/);
+});
+
+test("removing a locked, conflicted tree linked to an open task warns about each", () => {
+  const { container } = render(
+    <WorktreesPane
+      section={flatSection([
+        wtRow({
+          path: "/wt/live",
+          name: "live",
+          conflict: true,
+          locked: true,
+          task: task({ id: "abc123", status: "in-progress", blockedByCount: 0 }),
+        }),
+      ])}
+    />,
+  );
+  fireEvent.click(container.querySelector(".worktree-remove-btn")!);
+  const req = worktreeRemoveCalls[0]!;
+  assert.equal(req.force, true, "a conflicted/locked tree is force-removed");
+  assert.match(req.warning ?? "", /unresolved merge conflicts/);
+  assert.match(req.warning ?? "", /worktree is locked/);
+  assert.match(req.warning ?? "", /dex task abc123 .*will be orphaned/);
 });
 
 test("a hidden section renders nothing", () => {

@@ -294,6 +294,15 @@ body {
   cursor: pointer;
 }
 
+/* The remove (trash) control on a non-main worktree row. Keeps .icon-btn's
+   margin-left:auto so it hugs the trailing edge, and is sized to match the other
+   in-row controls (e.g. the dex row's spawn/delete buttons). The confirmation is
+   a native dialog raised from main, so there's no inline confirm/cancel to style. */
+.worktree-row .worktree-remove-btn {
+  padding: 1px 4px;
+  font-size: 11px;
+}
+
 /* Chip annotating a worktree row with its linked dex task's live status
    (🗒 status). Tone comes from the shared .chip status classes; the branch label
    already carries the task's id + name, so the chip stays a compact status token

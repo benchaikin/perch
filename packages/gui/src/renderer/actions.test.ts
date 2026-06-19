@@ -43,6 +43,7 @@ const CASES: Array<[keyof PerchActions, unknown, boolean]> = [
   ["setActiveTab", "tab-id", false],
   ["setDexViewMode", "graph", false],
   ["worktreeOpen", "/path/to/wt", false],
+  ["worktreeRemove", { path: "/path/to/wt", name: "wt" }, true],
   ["dexSpawn", "task-1", true],
   ["dexSpawnReady", undefined, true],
   ["dexDelete", { id: "t", name: "n" }, true],

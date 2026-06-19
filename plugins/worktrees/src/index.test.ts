@@ -6,13 +6,20 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import type { Capability, ReadDef } from "@perch/sdk";
+import type { ActionDef, Capability, ReadDef } from "@perch/sdk";
 
 import plugin, { __setExec, resolveRepoRoots, type Worktrees, type WorktreesConfig } from "./index.js";
 import type { Exec } from "./provider.js";
 
 /** Pull the `list` read off the plugin and type its `run` for direct invocation. */
 const list = plugin.capabilities.list as Capability as ReadDef<unknown, Worktrees, WorktreesConfig>;
+
+/** Pull the `remove` action off the plugin for direct invocation. */
+const remove = plugin.capabilities.remove as Capability as ActionDef<
+  { path: string; force?: boolean },
+  WorktreesConfig,
+  { ok: boolean; message: string }
+>;
 
 /** A minimal `git worktree list --porcelain` for a repo with one (main) worktree. */
 function listing(path: string, branch: string): string {
@@ -136,6 +143,64 @@ test("list: a perch.dexTask config override beats the branch parse", async () =>
   try {
     const { worktrees } = await run({}, { repos: ["/work/alpha"] });
     assert.equal(worktrees[0]!.taskId, "override9");
+  } finally {
+    __setExec(undefined);
+  }
+});
+
+/** Capture every exec call, returning canned stdout (or throwing on `fail`). */
+function recordingExec(fail?: Error): { exec: Exec; calls: string[][] } {
+  const calls: string[][] = [];
+  const exec: Exec = (_cmd, args) => {
+    calls.push(args);
+    return fail ? Promise.reject(fail) : Promise.resolve("");
+  };
+  return { exec, calls };
+}
+
+/** Invoke the `remove` action with an input + config. */
+function runRemove(
+  input: { path: string; force?: boolean },
+  config: WorktreesConfig = {},
+): Promise<{ ok: boolean; message: string }> {
+  return Promise.resolve(remove.run({ input, ctx: { config, global: undefined, log: () => {} } }));
+}
+
+test("remove: a clean tree runs `git -C <path> worktree remove <path>` (no --force)", async () => {
+  const { exec, calls } = recordingExec();
+  __setExec(exec);
+  try {
+    const result = await runRemove({ path: "/wt/feature" });
+    assert.deepEqual(calls, [["-C", "/wt/feature", "worktree", "remove", "/wt/feature"]]);
+    assert.equal(result.ok, true);
+    assert.match(result.message, /Removed worktree feature/);
+  } finally {
+    __setExec(undefined);
+  }
+});
+
+test("remove: force inserts --force before the path", async () => {
+  const { exec, calls } = recordingExec();
+  __setExec(exec);
+  try {
+    const result = await runRemove({ path: "/wt/dirty", force: true });
+    assert.deepEqual(calls, [["-C", "/wt/dirty", "worktree", "remove", "--force", "/wt/dirty"]]);
+    assert.equal(result.ok, true);
+  } finally {
+    __setExec(undefined);
+  }
+});
+
+test("remove: a git failure degrades to {ok:false} carrying git's stderr", async () => {
+  const err = Object.assign(new Error("Command failed"), {
+    stderr: "fatal: '/wt/feature' contains modified or untracked files, use --force to delete it",
+  });
+  __setExec(recordingExec(err).exec);
+  try {
+    const result = await runRemove({ path: "/wt/feature" });
+    assert.equal(result.ok, false);
+    assert.match(result.message, /Couldn't remove worktree feature/);
+    assert.match(result.message, /modified or untracked files/);
   } finally {
     __setExec(undefined);
   }
