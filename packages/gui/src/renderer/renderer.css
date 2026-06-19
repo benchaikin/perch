@@ -857,6 +857,7 @@ body {
    `.btn.btn-sm`'s auto-margin so they don't drift apart. */
 .dex-new-controls .btn.btn-sm {
   margin-left: 0;
+  padding: 3px 12px;
 }
 .dex-new-project {
   font: inherit;
