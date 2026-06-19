@@ -213,11 +213,11 @@ function ServicesRepoGroupView({
  * and none configured), so the panel is unchanged for users without
  * process-compose.
  *
- * With more than one repo configured (`section.multiRepo`) the rows render under
- * collapsible per-repo headers (config order, including configured-but-empty
- * repos); otherwise they render as a flat list, exactly as before. Collapse is
- * LOCAL component state (like the PRs pane), so it survives the 5s `services.list`
- * poll re-render.
+ * When any repo is known (`section.grouped`) the rows render under collapsible
+ * per-repo headers (config order, including configured-but-empty repos), even for
+ * a single repo — the header names the project. Only an older daemon with no repo
+ * association falls back to a flat list. Collapse is LOCAL component state (like
+ * the PRs pane), so it survives the 5s `services.list` poll re-render.
  *
  * `showTitle` is false when this section is the active full-tab pane: the panel
  * header title already names "Services", so the section's own title would
@@ -267,7 +267,7 @@ export function ServicesPane({
           ) : null}
         </div>
       ) : null}
-      {section.multiRepo
+      {section.grouped
         ? section.repoGroups.map((group) => (
             <ServicesRepoGroupView
               key={group.project}

@@ -86,7 +86,7 @@ test("buildServicesSection gives every row a Logs affordance", () => {
 });
 
 test("buildServicesSection hides when no list / unreachable / empty", () => {
-  const hidden = { visible: false, rows: [], controls: [], multiRepo: false, repoGroups: [] };
+  const hidden = { visible: false, rows: [], controls: [], grouped: false, repoGroups: [] };
   assert.deepEqual(buildServicesSection(undefined), hidden);
   assert.deepEqual(buildServicesSection({ services: [], available: false }), hidden);
   // Reachable but empty → still hidden (nothing to show).
@@ -152,15 +152,18 @@ test("buildServicesSection shows rows when available with services", () => {
   assert.equal(section.rows[1]!.inFlight, true);
 });
 
-test("buildServicesSection: single configured repo stays flat (no grouping)", () => {
+test("buildServicesSection: single configured repo groups under one header", () => {
   const list: ServiceList = {
     available: true,
     projects: ["ashby"],
     services: [{ name: "api", status: "running", project: "ashby" }],
   };
   const section = buildServicesSection(list);
-  assert.equal(section.multiRepo, false);
-  assert.deepEqual(section.repoGroups, []);
+  assert.equal(section.grouped, true);
+  assert.deepEqual(
+    section.repoGroups.map((g) => [g.project, g.rows.map((r) => r.name)]),
+    [["ashby", ["api"]]],
+  );
 });
 
 test("buildServicesSection: a list with no projects[] (older daemon) stays flat", () => {
@@ -172,7 +175,7 @@ test("buildServicesSection: a list with no projects[] (older daemon) stays flat"
     ],
   };
   const section = buildServicesSection(list);
-  assert.equal(section.multiRepo, false);
+  assert.equal(section.grouped, false);
   assert.deepEqual(section.repoGroups, []);
 });
 
@@ -187,7 +190,7 @@ test("buildServicesSection: 2+ configured repos group rows in config order", () 
     ],
   };
   const section = buildServicesSection(list);
-  assert.equal(section.multiRepo, true);
+  assert.equal(section.grouped, true);
   // One group per configured repo, in config order — INCLUDING the empty `perch`.
   assert.deepEqual(
     section.repoGroups.map((g) => [g.project, g.rows.map((r) => r.name)]),
@@ -199,7 +202,7 @@ test("buildServicesSection: 2+ configured repos group rows in config order", () 
   );
 });
 
-test("buildServicesSection: an unmapped row buckets under (unknown) when multiRepo", () => {
+test("buildServicesSection: an unmapped row buckets under (unknown) when grouped", () => {
   const list: ServiceList = {
     available: true,
     projects: ["ashby", "web"],
@@ -210,7 +213,7 @@ test("buildServicesSection: an unmapped row buckets under (unknown) when multiRe
     ],
   };
   const section = buildServicesSection(list);
-  assert.equal(section.multiRepo, true);
+  assert.equal(section.grouped, true);
   assert.deepEqual(
     section.repoGroups.map((g) => [g.project, g.rows.map((r) => r.name)]),
     [
@@ -232,7 +235,7 @@ test("buildServicesSection: a project on a row but not configured appends a trai
     ],
   };
   const section = buildServicesSection(list);
-  assert.equal(section.multiRepo, true);
+  assert.equal(section.grouped, true);
   assert.deepEqual(
     section.repoGroups.map((g) => g.project),
     ["ashby", "web", "legacy"],
@@ -261,7 +264,7 @@ test("worstServiceHealth picks the most severe row (bad > warn > ok > muted)", (
   assert.equal(worstServiceHealth(sec("stopped", "stopped")), "muted");
   // No rows (hidden section) → muted.
   assert.equal(
-    worstServiceHealth({ visible: false, rows: [], controls: [], multiRepo: false, repoGroups: [] }),
+    worstServiceHealth({ visible: false, rows: [], controls: [], grouped: false, repoGroups: [] }),
     "muted",
   );
 });
