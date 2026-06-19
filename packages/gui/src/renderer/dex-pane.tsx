@@ -38,6 +38,7 @@ import {
 } from "../dex-state.js";
 import type { LandableState } from "../landable.js";
 import type { AgentState, AgentSummary } from "../agents-state.js";
+import { isIncompleteSubtaskError } from "../ipc.js";
 import type { DexCompleteRequest, DexEditRequest } from "../ipc.js";
 // Type-only: `window-state.ts` reads/writes files (`node:fs`), so it must never
 // reach the browser bundle. The default mode is the `"tree"` literal below,
@@ -1885,11 +1886,21 @@ function DexEditor({ row, onClose }: { row: DexRow; onClose: () => void }): JSX.
  * at a time, so a context-level set like spawn/delete isn't needed): Confirm
  * disables + spins while the call is in flight, and the editor stays mounted so the
  * draft survives a background push.
+ *
+ * A parent/epic with open children can't complete plainly — dex rejects it. Rather
+ * than dead-end on that toast, the completer keeps the result returned by `dexComplete`:
+ * on the incomplete-subtask failure it stays open, shows the warning inline, and
+ * offers a "Complete anyway" button that re-issues with `force: true` (leaving the
+ * children as-is). A leaf, or a parent whose children are all done, still completes in
+ * one click — no force, no extra prompt.
  */
 function DexCompleter({ row, onClose }: { row: DexRow; onClose: () => void }): JSX.Element {
   const actions = useActions();
   const [result, setResult] = useState("");
   const [saving, setSaving] = useState(false);
+  // dex's incomplete-subtask error, once hit: stays the completer open and surfaces
+  // the "Complete anyway" recovery. Null until the plain complete is refused.
+  const [subtaskWarning, setSubtaskWarning] = useState<string | null>(null);
   const resultRef = useRef<HTMLTextAreaElement>(null);
 
   // Focus the result field once, when the confirm opens.
@@ -1897,18 +1908,26 @@ function DexCompleter({ row, onClose }: { row: DexRow; onClose: () => void }): J
     resultRef.current?.focus();
   }, []);
 
-  async function complete(): Promise<void> {
+  async function complete(force = false): Promise<void> {
     if (saving) return;
     setSaving(true);
     try {
       // Send only a non-empty result; a blank note lets the daemon default one.
       const request: DexCompleteRequest = { id: row.id };
       if (result.trim() !== "") request.result = result;
-      await actions.dexComplete(request);
+      if (force) request.force = true;
+      const res = await actions.dexComplete(request);
+      if (res.ok) {
+        // Leave confirm mode; the board refresh from main updates the detail (the task
+        // flips to done, and with showCompleted off leaves the list).
+        onClose();
+      } else if (isIncompleteSubtaskError(res.message)) {
+        // Don't close: offer the deliberate force retry instead of a dead toast.
+        setSubtaskWarning(res.message);
+      }
+      // Any other failure was toasted by main; stay open so the user can retry/cancel.
     } finally {
-      // Leave confirm mode on completion; the board refresh from main updates the
-      // detail (the task flips to done, and with showCompleted off leaves the list).
-      onClose();
+      setSaving(false);
     }
   }
 
@@ -1922,16 +1941,33 @@ function DexCompleter({ row, onClose }: { row: DexRow; onClose: () => void }): J
       <DexMeta row={row} />
 
       <div className="dex-detail-actions">
-        <button
-          className="btn btn-sm dex-complete-confirm"
-          disabled={saving}
-          title={saving ? "Completing…" : "Mark this task complete"}
-          aria-label={saving ? "Completing…" : "Mark this task complete"}
-          onClick={() => void complete()}
-        >
-          <i className={saving ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-check"} />
-          {saving ? " Completing…" : " Complete"}
-        </button>
+        {subtaskWarning ? (
+          <button
+            className="btn btn-sm dex-complete-force"
+            disabled={saving}
+            title={saving ? "Completing…" : "Complete anyway, leaving incomplete subtasks as-is"}
+            aria-label={saving ? "Completing…" : "Complete anyway"}
+            onClick={() => void complete(true)}
+          >
+            <i
+              className={
+                saving ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-triangle-exclamation"
+              }
+            />
+            {saving ? " Completing…" : " Complete anyway"}
+          </button>
+        ) : (
+          <button
+            className="btn btn-sm dex-complete-confirm"
+            disabled={saving}
+            title={saving ? "Completing…" : "Mark this task complete"}
+            aria-label={saving ? "Completing…" : "Mark this task complete"}
+            onClick={() => void complete()}
+          >
+            <i className={saving ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-check"} />
+            {saving ? " Completing…" : " Complete"}
+          </button>
+        )}
         <button
           className="btn btn-sm dex-complete-cancel"
           title="Cancel"
@@ -1942,6 +1978,12 @@ function DexCompleter({ row, onClose }: { row: DexRow; onClose: () => void }): J
           {" Cancel"}
         </button>
       </div>
+
+      {subtaskWarning && (
+        <div className="dex-complete-warning" role="alert">
+          {subtaskWarning}
+        </div>
+      )}
 
       <div className="dex-detail-label">Result (optional)</div>
       <textarea

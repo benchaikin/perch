@@ -36,6 +36,12 @@ export interface CompleteInput {
   repo?: string;
   /** The completion result/note; blank or omitted defaults to {@link DEFAULT_COMPLETE_RESULT}. */
   result?: string;
+  /**
+   * Pass `--force` so dex completes a parent even with incomplete subtasks. Off by
+   * default; only ever set after a deliberate GUI opt-in ("Complete anyway"), never
+   * automatically — children are left as-is.
+   */
+  force?: boolean;
 }
 
 /** The `dex.complete` action result, surfaced to every projected surface. */
@@ -59,11 +65,12 @@ export interface CompleteDeps {
  * fallback); otherwise {@link locateTaskStore} finds the owning store (identical to
  * delete/edit). Runs `dex complete <id> --result "<text>" --no-commit` through the
  * {@link DexRunner}, defaulting an empty result so the CLI never fails on a missing
- * `--result`.
+ * `--result`. `input.force` adds `--force` (the deliberate "Complete anyway" opt-in);
+ * left off, dex's own incomplete-subtask validation surfaces verbatim.
  *
  * Never throws: a bad id, a task no store knows, or a CLI failure (including dex's
- * own incomplete-subtask validation, which we deliberately let surface by NOT
- * passing `--force`) all return a clear `{ ok:false, message }`.
+ * own incomplete-subtask validation, surfaced when `force` is off) all return a
+ * clear `{ ok:false, message }`.
  */
 export async function runComplete(
   input: CompleteInput,
@@ -105,7 +112,7 @@ export async function runComplete(
   }
 
   try {
-    await dex.complete(id, result, storagePath);
+    await dex.complete(id, result, storagePath, input.force);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     return { ok: false, message: `couldn't complete dex task "${id}": ${detail}` };

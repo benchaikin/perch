@@ -77,6 +77,23 @@ test("runComplete: happy path — finds the store and completes with a default r
   assert.ok(!done!.args.includes("--force"));
 });
 
+test("runComplete: force:true adds --force (the deliberate Complete-anyway opt-in)", async () => {
+  const { exec, calls } = execStub({ tasks: { "/work/perch/.dex": { name: "Epic" } } });
+  const res = await runComplete({ id: "abc12", force: true }, deps(exec));
+  assert.equal(res.ok, true);
+  const done = calls.find((c) => c.cmd === "dex" && c.args.includes("complete"));
+  assert.ok(done!.args.includes("--force"), "force:true puts --force on the args");
+});
+
+test("runComplete: force defaults off — no --force without an explicit opt-in", async () => {
+  const { exec, calls } = execStub({ tasks: { "/work/perch/.dex": { name: "T" } } });
+  await runComplete({ id: "abc12" }, deps(exec));
+  await runComplete({ id: "abc12", force: false }, deps(exec));
+  const completes = calls.filter((c) => c.cmd === "dex" && c.args.includes("complete"));
+  assert.equal(completes.length, 2);
+  for (const c of completes) assert.ok(!c.args.includes("--force"), "no silent force-complete");
+});
+
 test("runComplete: a given result is passed through verbatim", async () => {
   const { exec, calls } = execStub({ tasks: { "/work/perch/.dex": { name: "T" } } });
   const res = await runComplete({ id: "abc12", result: "did it by hand" }, deps(exec));

@@ -5,7 +5,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { autoSpawnRepos, effectiveDirs, NewInputSchema, tasksForProject } from "./index.js";
+import {
+  autoSpawnRepos,
+  CompleteInputSchema,
+  effectiveDirs,
+  NewInputSchema,
+  tasksForProject,
+} from "./index.js";
 
 test("effectiveDirs: dirs override global.repos when set and non-empty", () => {
   assert.deepEqual(effectiveDirs(["/a", "/b"], { repos: ["/x", "/y"] }), ["/a", "/b"]);
@@ -54,6 +60,17 @@ test("tasksForProject: a project filters to that store's tasks (preserving order
 
 test("tasksForProject: an unknown project yields nothing (no accidental launch)", () => {
   assert.deepEqual(tasksForProject(PROJECT_TASKS, "gamma"), []);
+});
+
+test("CompleteInputSchema: declares `force` so the action doesn't strip it (the start-flag bug)", () => {
+  // A bare z.object drops undeclared keys; if `force` weren't in the schema it would
+  // silently never reach runComplete — and the GUI's "Complete anyway" would be inert.
+  assert.deepEqual(CompleteInputSchema.parse({ id: "abc12", force: true }), {
+    id: "abc12",
+    force: true,
+  });
+  // Omitting it stays omitted (no accidental default-true force).
+  assert.deepEqual(CompleteInputSchema.parse({ id: "abc12" }), { id: "abc12" });
 });
 
 test("autoSpawnRepos: an undefined map auto-spawns nothing (default config is inert)", () => {

@@ -179,10 +179,14 @@ const DeleteInputSchema = z.object({
  * and an optional completion result. A blank/omitted result is defaulted daemon-side
  * so the CLI's required `--result` is never empty.
  */
-const CompleteInputSchema = z.object({
+export const CompleteInputSchema = z.object({
   id: z.string(),
   repo: z.string().optional(),
   result: z.string().optional(),
+  // Declare `force` so it isn't stripped: a bare z.object drops undeclared keys, so
+  // an undeclared `force` would silently never reach runComplete (the strip bug that
+  // broke the start flag, task wmnisbn1). It's the "Complete anyway" opt-in.
+  force: z.boolean().optional(),
 });
 
 /**
@@ -561,10 +565,11 @@ export default definePlugin({
      * store is `input.repo`'s when given, else found by probing the configured
      * stores (same precedence as `spawn`/`delete`/`edit`). Runs `dex complete <id>
      * --result "..." --no-commit` — `--no-commit` because a manual completion has no
-     * merge commit to link (the auto-land path links `--commit`), and NO `--force`,
-     * so dex's incomplete-subtask validation surfaces as a toast rather than
-     * silently force-completing an epic with open children. An empty result is
-     * defaulted daemon-side. Daemon-side; MCP-exposed (yielding `perch dex complete
+     * merge commit to link (the auto-land path links `--commit`). `--force` is off by
+     * default, so dex's incomplete-subtask validation surfaces rather than silently
+     * force-completing an epic with open children; the GUI's "Complete anyway" opt-in
+     * sets `input.force` to add it deliberately. An empty result is defaulted
+     * daemon-side. Daemon-side; MCP-exposed (yielding `perch dex complete
      * <id>` + a typed tool). Never throws: any failure returns `{ ok:false, message }`.
      */
     complete: action<CompleteInput, DexConfig, CompleteResult>({
