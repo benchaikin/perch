@@ -741,7 +741,7 @@ function DexSubtaskButton({ parentId }: { parentId: string }): JSX.Element {
         setComposing(active ? undefined : scope);
       }}
     >
-      <i className="fa-solid fa-diagram-next" />
+      <i className="fa-solid fa-plus" />
     </button>
   );
 }
