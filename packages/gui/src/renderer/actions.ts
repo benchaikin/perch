@@ -62,6 +62,9 @@ export function createActions(bridge: () => PerchActions): PerchActions {
     worktreeOpen(path) {
       bridge().worktreeOpen(path);
     },
+    worktreeRemove(request) {
+      return bridge().worktreeRemove(request);
+    },
     dexSpawn(id) {
       return bridge().dexSpawn(id);
     },

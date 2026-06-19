@@ -122,6 +122,20 @@ export function __setOpenSpawn(spawnFn: typeof nodeSpawn | undefined): void {
 /** A small {ok, message} result, mirroring the services actions. */
 const OpenInput = z.object({ path: z.string() });
 
+/**
+ * Input for the `remove` action: the worktree `path` to drop, plus an optional
+ * `force` for a dirty/conflicted/locked tree (git refuses to remove one without
+ * it). The GUI computes `force` from the row and warns before passing it.
+ */
+const RemoveInput = z.object({ path: z.string(), force: z.boolean().optional() });
+
+/** Surface git's own error text (its stderr) over the generic exec wrapper message. */
+function gitErrorMessage(err: unknown): string {
+  const e = err as { stderr?: string; message?: string };
+  const stderr = typeof e.stderr === "string" ? e.stderr.trim() : "";
+  return stderr || e.message || String(err);
+}
+
 export default definePlugin({
   id: "worktrees",
   name: "Worktrees",
@@ -218,6 +232,36 @@ export default definePlugin({
           log: ctx.log,
           spawn: openSpawn,
         });
+      },
+    }),
+
+    /**
+     * Remove a single worktree (`git worktree remove`). MCP-exposed so an agent
+     * can clean up an abandoned tree. Removes ONLY the worktree directory — it
+     * never deletes the `dex/<id>` branch or completes the linked task (that's
+     * land-dex's job). `force` drops a dirty/conflicted/locked tree; the GUI
+     * warns before setting it. Returns a small {ok, message}: a git failure
+     * (e.g. the main worktree, or an unforced dirty tree) degrades to
+     * `{ ok:false, message }` rather than throwing.
+     */
+    remove: action<z.infer<typeof RemoveInput>, unknown, { ok: boolean; message: string }>({
+      summary: "Remove a git worktree (force discards uncommitted changes)",
+      input: RemoveInput,
+      expose: { mcp: true },
+      run: async ({ input, ctx }) => {
+        const cfg = configOf(ctx.config);
+        const provider = new WorktreesProvider(cfg.gitBin ?? "git", { exec: execOverride });
+        const name = input.path.split("/").filter(Boolean).pop() ?? input.path;
+        try {
+          await provider.removeRaw(input.path, { force: input.force });
+          return { ok: true, message: `Removed worktree ${name}.` };
+        } catch (err) {
+          ctx.log(`worktrees.remove: git worktree remove failed for ${input.path}: ${String(err)}`);
+          return {
+            ok: false,
+            message: `Couldn't remove worktree ${name}: ${gitErrorMessage(err)}`,
+          };
+        }
       },
     }),
   },

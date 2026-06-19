@@ -112,11 +112,94 @@ function WorktreeTaskChip({ task }: { task: LinkedTask }): JSX.Element {
 }
 
 /**
+ * The extra warning a remove confirmation carries when dropping the worktree
+ * would discard work or orphan a live session: uncommitted changes (a forced
+ * remove throws them away), an in-flight merge conflict, a locked tree, or a
+ * linked open dex task (an agent may be running in that terminal — the task
+ * itself is left intact, but its checkout vanishes). Returns `undefined` for a
+ * clean, unlinked tree, so its confirmation stays unadorned. Mirrors
+ * `dex-pane`'s `dexDeleteWarning`; rides along to main's native confirm dialog.
+ */
+function worktreeRemoveWarning(row: WorktreeRow): string | undefined {
+  const parts: string[] = [];
+  if (row.dirty) {
+    parts.push(
+      `${row.dirtyCount} uncommitted change${row.dirtyCount === 1 ? "" : "s"} will be discarded`,
+    );
+  }
+  if (row.conflict) parts.push("it has unresolved merge conflicts");
+  if (row.locked) parts.push("the worktree is locked");
+  if (row.task && isOpenDexTask(row.task)) {
+    parts.push(`its dex task ${row.task.id} (an agent may be running here) will be orphaned`);
+  }
+  return parts.length > 0 ? `Warning: ${parts.join("; ")}.` : undefined;
+}
+
+/**
+ * Whether removing this worktree needs `git worktree remove --force`. git refuses
+ * to drop a dirty, conflicted, locked, or prunable (stale) tree without it; these
+ * are exactly the abandoned agent worktrees users want to clean up, so we force
+ * after the confirm dialog has warned of the discarded work.
+ */
+function worktreeNeedsForce(row: WorktreeRow): boolean {
+  return row.dirty || row.conflict || row.locked || row.prunable;
+}
+
+/**
+ * The remove (trash) control on a worktree row: a single trash button whose click
+ * hands the worktree to main, which raises a native confirm dialog and only
+ * removes on confirm (the non-activating panel can't show a `window.confirm`, so
+ * the confirmation stays in main). {@link worktreeRemoveWarning} rides along so
+ * discarded changes or an orphaned linked task are flagged first. Optimistically
+ * disables + spins while in flight (cleared whether the user confirms, declines,
+ * or it errors). The click never bubbles to the row's open-in-terminal. Modeled
+ * on `dex-pane`'s `DexDeleteControl`.
+ */
+function WorktreeRemoveControl({
+  row,
+  inFlight,
+  onRemove,
+}: {
+  row: WorktreeRow;
+  inFlight: boolean;
+  onRemove: (row: WorktreeRow) => void;
+}): JSX.Element {
+  const title = inFlight ? "Removing…" : "Remove worktree";
+  return (
+    <button
+      className="icon-btn worktree-remove-btn"
+      disabled={inFlight}
+      title={title}
+      aria-label={title}
+      onClick={
+        inFlight
+          ? undefined
+          : (e) => {
+              e.stopPropagation();
+              onRemove(row);
+            }
+      }
+    >
+      <i className={inFlight ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-trash-can"} />
+    </button>
+  );
+}
+
+/**
  * One worktree row: a health dot, the branch (the primary label — what an agent
  * is working on), a `main` tag, and the state chips. Clicking opens the worktree
- * directory via the configured command.
+ * directory via the configured command. A non-main row also carries a trailing
+ * trash control to remove the worktree (gated by a confirm dialog in main).
  */
-function WorktreeRowView({ row }: { row: WorktreeRow }): JSX.Element {
+function WorktreeRowView({
+  row,
+  removing,
+  onRemove,
+}: {
+  row: WorktreeRow;
+  removing: boolean;
+  onRemove: (row: WorktreeRow) => void;
+}): JSX.Element {
   const actions = useActions();
   const detail = [
     row.branch ?? "(detached)",
@@ -168,6 +251,9 @@ function WorktreeRowView({ row }: { row: WorktreeRow }): JSX.Element {
         )}
         {row.prunable && <span className="chip bad">prunable</span>}
       </span>
+      {/* The main worktree is never removable (git refuses; it's the repo's primary
+          checkout), so the trash control is omitted there. */}
+      {!row.main && <WorktreeRemoveControl row={row} inFlight={removing} onRemove={onRemove} />}
     </div>
   );
 }
@@ -183,7 +269,13 @@ function WorktreeRowView({ row }: { row: WorktreeRow }): JSX.Element {
  * pane stays mounted while the Worktrees tab is active.
  */
 export function WorktreesPane({ section }: { section: WorktreesSection }): JSX.Element | null {
+  const actions = useActions();
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+  // Paths whose removal is in flight (optimistic spinner + disabled). The pane is
+  // props-down with no dex-style context, so the in-flight set lives here as
+  // component state — preserved across pushes because the pane stays mounted while
+  // the Worktrees tab is active.
+  const [removing, setRemoving] = useState<ReadonlySet<string>>(() => new Set());
   if (!section.visible) return null;
 
   function toggle(repo: string): void {
@@ -195,6 +287,40 @@ export function WorktreesPane({ section }: { section: WorktreesSection }): JSX.E
     });
   }
 
+  // Hand the worktree (path, name, computed force + warning) to main, which raises
+  // the native confirm dialog and only removes on confirm; the renderer just fires
+  // and shows the optimistic spinner until main resolves (confirm, decline, or
+  // error all clear it). On success main re-reads the list and the row drops out.
+  function removeWorktree(row: WorktreeRow): void {
+    if (removing.has(row.path)) return;
+    setRemoving((prev) => new Set(prev).add(row.path));
+    void (async () => {
+      try {
+        await actions.worktreeRemove({
+          path: row.path,
+          name: row.name,
+          force: worktreeNeedsForce(row),
+          warning: worktreeRemoveWarning(row),
+        });
+      } finally {
+        setRemoving((prev) => {
+          const next = new Set(prev);
+          next.delete(row.path);
+          return next;
+        });
+      }
+    })();
+  }
+
+  const renderRow = (row: WorktreeRow): JSX.Element => (
+    <WorktreeRowView
+      key={row.path}
+      row={row}
+      removing={removing.has(row.path)}
+      onRemove={removeWorktree}
+    />
+  );
+
   const grouped = section.multiRepo && section.repoGroups.length > 0;
   return (
     <section className="repo-section worktrees-section">
@@ -204,12 +330,11 @@ export function WorktreesPane({ section }: { section: WorktreesSection }): JSX.E
             return (
               <Fragment key={group.repo}>
                 <WorktreeRepoHeader group={group} collapsed={isCollapsed} onToggle={toggle} />
-                {!isCollapsed &&
-                  group.rows.map((row) => <WorktreeRowView key={row.path} row={row} />)}
+                {!isCollapsed && group.rows.map(renderRow)}
               </Fragment>
             );
           })
-        : section.rows.map((row) => <WorktreeRowView key={row.path} row={row} />)}
+        : section.rows.map(renderRow)}
     </section>
   );
 }

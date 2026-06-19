@@ -63,6 +63,21 @@ export class WorktreesProvider {
   }
 
   /**
+   * Remove one worktree: `git -C <path> worktree remove [--force] <path>`. The
+   * `-C <path>` resolves the repo from the worktree itself, so the caller needs
+   * only the worktree path (not the repo root). `--force` lets git drop a dirty,
+   * conflicted, or locked tree (git refuses otherwise) — the caller passes it
+   * only after the user confirms the discarded changes. Rejects on git failure
+   * (the action turns that into `{ ok:false, message }`).
+   */
+  removeRaw(worktreePath: string, opts: { force?: boolean } = {}): Promise<string> {
+    const args = ["-C", worktreePath, "worktree", "remove"];
+    if (opts.force) args.push("--force");
+    args.push(worktreePath);
+    return this.exec(this.gitBin, args);
+  }
+
+  /**
    * The worktree-local `perch.dexTask` git config (trimmed), or "" when unset.
    * Best-effort: `git config --worktree --get` exits non-zero when the key is
    * missing *or* when `extensions.worktreeConfig` is disabled — both degrade
