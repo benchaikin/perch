@@ -843,21 +843,6 @@ function DexNewDialog({ projects }: { projects: string[] }): JSX.Element {
               ))}
             </select>
           )}
-          {/* The default action — what Enter triggers: author the task only. */}
-          <button
-            className="btn btn-sm btn-primary dex-new-submit"
-            disabled={!canSubmit}
-            title={pending === "add" ? "Spawning the author agent…" : "Add task (Enter)"}
-            aria-label="Add task"
-            onClick={() => void submit()}
-          >
-            <i
-              className={
-                pending === "add" ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-plus"
-              }
-            />{" "}
-            Add task
-          </button>
           {/* Author the task AND immediately spawn a worker agent on it. */}
           <button
             className="btn btn-sm dex-new-start"
@@ -876,6 +861,21 @@ function DexNewDialog({ projects }: { projects: string[] }): JSX.Element {
               }
             />{" "}
             Add task and start immediately
+          </button>
+          {/* The default action — what Enter triggers: author the task only. */}
+          <button
+            className="btn btn-sm btn-primary dex-new-submit"
+            disabled={!canSubmit}
+            title={pending === "add" ? "Spawning the author agent…" : "Add task (Enter)"}
+            aria-label="Add task"
+            onClick={() => void submit()}
+          >
+            <i
+              className={
+                pending === "add" ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-plus"
+              }
+            />{" "}
+            Add task
           </button>
         </div>
       </div>
