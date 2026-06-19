@@ -18,7 +18,12 @@ import { test } from "node:test";
 
 import { type CapabilityContext } from "@perch/sdk";
 
-import plugin, { __setLogsSpawn, __setProviderSpawn, resolveComposeFile } from "./index.js";
+import plugin, {
+  __setLogsSpawn,
+  __setProviderSpawn,
+  resolveComposeFile,
+  serviceLogsTitle,
+} from "./index.js";
 import { generatedComposePath, type SyncComposeResult } from "./compose.js";
 import { type ServiceList } from "./services.js";
 
@@ -351,6 +356,45 @@ test("services.logs is a CLI-only action that spawns the templated logs command"
   } finally {
     __setLogsSpawn(undefined);
   }
+});
+
+test("services.logs sets the terminal title to the service name", () => {
+  const calls: Array<{ args: readonly string[] }> = [];
+  __setLogsSpawn(((_command: string, args: readonly string[]) => {
+    calls.push({ args });
+    return { on: () => {}, unref: () => {} };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }) as any);
+  try {
+    const result = plugin.capabilities.logs!.run({
+      input: { name: "api" },
+      // A known terminal app (not a custom template) emits the title escape.
+      ctx: {
+        config: { socket: "/tmp/pc.sock" },
+        global: { terminal: { terminalApp: "Terminal" } },
+        log: () => {},
+      },
+    }) as { ok: boolean };
+    assert.equal(result.ok, true);
+    const launched = calls[0]!.args[1] as string;
+    const m = /sh (\/\S+\.sh)/.exec(launched);
+    assert.ok(m, `expected an 'sh <script>' launch, got: ${launched}`);
+    // The OSC 0 title escape carries the `logs <name>` title for the service.
+    assert.match(readFileSync(m[1]!, "utf8"), /printf '\\033\]0;%s\\007' 'logs api'/);
+  } finally {
+    __setLogsSpawn(undefined);
+  }
+});
+
+test("serviceLogsTitle prefixes the service name and trims long names", () => {
+  assert.equal(serviceLogsTitle("api"), "logs api");
+  assert.equal(serviceLogsTitle("  api  "), "logs api");
+  assert.equal(serviceLogsTitle(""), "logs");
+  const long = "x".repeat(50);
+  const title = serviceLogsTitle(long);
+  assert.ok(title.startsWith("logs "));
+  assert.ok(title.endsWith("…"));
+  assert.equal(title.length, "logs ".length + 40);
 });
 
 test("services.logs falls back to the legacy per-services terminal when no global is set", () => {
