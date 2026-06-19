@@ -220,6 +220,12 @@ export interface DexNewRequest {
    * single (or no) project — the daemon resolves the sole repo (or its cwd store).
    */
   project?: string;
+  /**
+   * Author AND immediately start working the new task. The author agent spawns a
+   * worker agent on the task right after `dex create` (the GUI can't chain to a
+   * `dex.spawn` itself — `dex.new` returns no task id). Omitted/false authors only.
+   */
+  start?: boolean;
 }
 
 /**

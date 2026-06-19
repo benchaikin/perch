@@ -40,6 +40,13 @@ export interface NewInput {
    * has tasks, so the target store is unambiguous.
    */
   project?: string;
+  /**
+   * Author AND immediately start working the new task: the author agent, after
+   * running `dex create`, spawns a separate agent in a `dex/<id>-<slug>` worktree to
+   * implement it (overriding the default author-only "do NOT implement" guidance).
+   * Defaults to author-only.
+   */
+  start?: boolean;
 }
 
 /** The `dex.new` action result, surfaced to every projected surface. */
@@ -100,8 +107,22 @@ export function resolveNewRepo(
  * create` targets the right store with no `--storage-path`. The description is
  * embedded verbatim (the launcher shell-quotes the whole prompt, so
  * backticks/quotes inside it don't expand).
+ *
+ * When `start` is set the closing line is swapped: instead of the author-only "do
+ * NOT implement" guidance, the agent is told to spawn a SEPARATE worker agent on
+ * the new task (a `dex/<id>-<slug>` worktree, the spawn-dex/dex-worktree flow) right
+ * after authoring — the one-click "author it AND start working it" path.
  */
-export function newTaskPrompt(description: string): string {
+export function newTaskPrompt(description: string, start = false): string {
+  const closing = start
+    ? `Once authored, do NOT stop — START WORKING the new task by handing it to a ` +
+      `separate worker agent: take the id \`dex create\` returned (for an epic, the ` +
+      `first ready leaf sub-task), create a \`dex/<id>-<slug>\` git worktree for it ` +
+      `(the spawn-dex / dex-worktree skill flow, so perch links the worktree to the ` +
+      `task), and launch an agent in that worktree to IMPLEMENT it. Do NOT implement ` +
+      `the work yourself in this session — author it here, then spawn the worker that ` +
+      `does the implementation.`
+    : `Do NOT implement the work — only author it.`;
   return (
     `Here is a rough description of work to create as dex task(s):\n\n${description}\n\n` +
     `Author this as well-formed dex work for THIS repository (your cwd). First read the ` +
@@ -127,8 +148,7 @@ export function newTaskPrompt(description: string): string {
     `design, reuse pointers, guards/edge cases, and acceptance criteria. After creating, ` +
     `run \`dex show <id> --full\` to verify each task was created and reads well; for an ` +
     `epic, also confirm the parent/child tree and the blocked-by edges read correctly ` +
-    `(e.g. \`dex list <epic-id>\` or \`dex show <epic-id> --full\`). Do NOT implement ` +
-    `the work — only author it.`
+    `(e.g. \`dex list <epic-id>\` or \`dex show <epic-id> --full\`). ${closing}`
   );
 }
 
@@ -168,7 +188,7 @@ export async function runNew(input: NewInput, deps: NewDeps): Promise<NewResult>
   const dir = resolved.repo ?? deps.cwd;
 
   const launched = spawnInTerminal({
-    command: buildAgentLaunchCommand(dir, newTaskPrompt(description)),
+    command: buildAgentLaunchCommand(dir, newTaskPrompt(description, input.start)),
     terminal: deps.terminal,
     label: "dex new",
     // Title the window with a description snippet so a row of author windows is
@@ -184,7 +204,9 @@ export async function runNew(input: NewInput, deps: NewDeps): Promise<NewResult>
 
   return {
     ok: true,
-    message: `Spawned an agent in ${dir} to author the task; it'll appear on the next refresh.`,
+    message: input.start
+      ? `Spawned an agent in ${dir} to author the task and start an agent working it; it'll appear on the next refresh.`
+      : `Spawned an agent in ${dir} to author the task; it'll appear on the next refresh.`,
     repo: dir,
   };
 }

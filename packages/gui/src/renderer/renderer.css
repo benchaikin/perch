@@ -806,6 +806,13 @@ body {
   border-radius: 8px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
 }
+/* The header row: the repo-scoped title on the left, the corner close on the right. */
+.dex-new-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
 /* The repo-scoped title: which store the new task lands in. Only the repo name
    carries the accent so the eye lands on the store without the whole header shouting. */
 .dex-new-header {
@@ -814,6 +821,10 @@ body {
 }
 .dex-new-header-repo {
   color: var(--accent);
+}
+/* The corner close sits flush at the row's trailing edge (no icon-btn auto-margin). */
+.dex-new-header-row .dex-new-cancel {
+  margin-left: 0;
 }
 .dex-new-input {
   width: 100%;
@@ -835,14 +846,16 @@ body {
 .dex-new-input::placeholder {
   color: var(--muted);
 }
-/* The composer's controls hug the trailing edge (selector + submit/cancel). */
+/* The composer's controls hug the trailing edge (selector + the two action buttons). */
 .dex-new-controls {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 4px;
+  gap: 6px;
 }
-.dex-new-controls .icon-btn {
+/* The labeled action buttons sit in the flex row with the controls' own gap — drop
+   `.btn.btn-sm`'s auto-margin so they don't drift apart. */
+.dex-new-controls .btn.btn-sm {
   margin-left: 0;
 }
 .dex-new-project {
@@ -853,10 +866,7 @@ body {
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 2px 4px;
-}
-/* Submit reads as the "go" action (accent on hover); cancel stays neutral. */
-.dex-new-dialog .dex-new-submit:hover:not(:disabled) {
-  color: var(--accent);
+  margin-right: auto;
 }
 
 /* Task detail view (replaces the list when a task is selected). */

@@ -696,14 +696,17 @@ function DexNewButton({ scope }: { scope: string }): JSX.Element {
 }
 
 /**
- * The armed New-task dialog: a centered modal (backdrop + panel) holding a textarea
- * (an affordance the non-activating panel can rely on, unlike `window.prompt`), an
- * optional project selector (only when several repos have tasks, so the target store
- * is unambiguous), and submit (✓) / cancel (✗) controls. Enter submits, Shift+Enter
- * inserts a newline, Esc cancels, a backdrop click cancels (parity with Esc); an
- * empty/whitespace description disables submit; an in-flight launch shows a spinner
- * and disables the controls. Rendered once at the top of the board (keyed only by the
- * armed `composing` scope), so it overlays the list rather than shifting it down.
+ * The armed New-task dialog: a centered modal (backdrop + panel) holding a corner
+ * close (✗) in the header, a textarea (an affordance the non-activating panel can
+ * rely on, unlike `window.prompt`), an optional project selector (only when several
+ * repos have tasks, so the target store is unambiguous), and two labeled footer
+ * actions — "Add task" (the default, what Enter triggers) and "Add task and start
+ * immediately" (authors AND kicks off a worker agent on the new task). Enter triggers
+ * the plain "Add task" path, Shift+Enter inserts a newline, Esc cancels, a backdrop
+ * click cancels (parity with Esc); an empty/whitespace description disables both
+ * actions; an in-flight launch shows a spinner on the active action and disables the
+ * controls. Rendered once at the top of the board (keyed only by the armed
+ * `composing` scope), so it overlays the list rather than shifting it down.
  *
  * Focus continuity is free here: draft + in-flight are component state and the
  * textarea is a stable, controlled node, so a background board push re-renders
@@ -718,7 +721,9 @@ function DexNewDialog({ projects }: { projects: string[] }): JSX.Element {
   const { setComposing } = useDexContext();
   const [draft, setDraft] = useState("");
   const [project, setProject] = useState<string | undefined>(undefined);
-  const [inFlight, setInFlight] = useState(false);
+  // Which action is launching (so only that button spins), or undefined when idle.
+  const [pending, setPending] = useState<"add" | "start" | undefined>(undefined);
+  const inFlight = pending !== undefined;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Grab focus once, when the dialog opens (this runs on mount only — the dialog
@@ -749,20 +754,21 @@ function DexNewDialog({ projects }: { projects: string[] }): JSX.Element {
   );
 
   // Launch the author agent for the trimmed draft (with the resolved target
-  // project), marking it in flight so the controls disable + the submit shows a
-  // spinner. On success close the dialog — its unmount drops the local draft, so
-  // there's nothing to reset; on failure re-enable so the user can retry (the
-  // success/error notice itself is pushed from main via panel state). Guards
-  // against a second launch in flight and against an empty description.
-  async function submit(): Promise<void> {
+  // project), marking the chosen action in flight so the controls disable + that
+  // action's button shows a spinner. With `start`, the author agent also spawns a
+  // worker on the new task once authored. On success close the dialog — its unmount
+  // drops the local draft, so there's nothing to reset; on failure re-enable so the
+  // user can retry (the success/error notice itself is pushed from main via panel
+  // state). Guards against a second launch in flight and against an empty description.
+  async function submit(start = false): Promise<void> {
     const description = draft.trim();
     if (!description || inFlight) return;
-    setInFlight(true);
+    setPending(start ? "start" : "add");
     try {
-      await actions.dexNew({ description, project: newTaskTargetProject(projects, project) });
+      await actions.dexNew({ description, project: newTaskTargetProject(projects, project), start });
       setComposing(undefined);
     } catch {
-      setInFlight(false);
+      setPending(undefined);
     }
   }
 
@@ -785,8 +791,21 @@ function DexNewDialog({ projects }: { projects: string[] }): JSX.Element {
         aria-labelledby="dex-new-header"
         onClick={(e) => e.stopPropagation()}
       >
-        <div id="dex-new-header" className="dex-new-header">
-          {header}
+        <div className="dex-new-header-row">
+          <div id="dex-new-header" className="dex-new-header">
+            {header}
+          </div>
+          {/* The conventional modal dismiss, in the upper-right corner. Disabled
+              mid-launch so it can't drop an in-flight submit (parity with Esc/backdrop). */}
+          <button
+            className="icon-btn dex-new-cancel"
+            disabled={inFlight}
+            title="Close (Esc)"
+            aria-label="Close"
+            onClick={() => setComposing(undefined)}
+          >
+            <i className="fa-solid fa-xmark" />
+          </button>
         </div>
         <textarea
           ref={textareaRef}
@@ -824,23 +843,39 @@ function DexNewDialog({ projects }: { projects: string[] }): JSX.Element {
               ))}
             </select>
           )}
+          {/* The default action — what Enter triggers: author the task only. */}
           <button
-            className="icon-btn dex-new-submit"
+            className="btn btn-sm btn-primary dex-new-submit"
             disabled={!canSubmit}
-            title={inFlight ? "Spawning the author agent…" : "Create task (Enter)"}
-            aria-label={inFlight ? "Spawning the author agent…" : "Create task (Enter)"}
+            title={pending === "add" ? "Spawning the author agent…" : "Add task (Enter)"}
+            aria-label="Add task"
             onClick={() => void submit()}
           >
-            <i className={inFlight ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-check"} />
+            <i
+              className={
+                pending === "add" ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-plus"
+              }
+            />{" "}
+            Add task
           </button>
+          {/* Author the task AND immediately spawn a worker agent on it. */}
           <button
-            className="icon-btn dex-new-cancel"
-            disabled={inFlight}
-            title="Cancel (Esc)"
-            aria-label="Cancel (Esc)"
-            onClick={() => setComposing(undefined)}
+            className="btn btn-sm dex-new-start"
+            disabled={!canSubmit}
+            title={
+              pending === "start"
+                ? "Spawning the author agent…"
+                : "Add task and start an agent working it"
+            }
+            aria-label="Add task and start immediately"
+            onClick={() => void submit(true)}
           >
-            <i className="fa-solid fa-xmark" />
+            <i
+              className={
+                pending === "start" ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-rocket"
+              }
+            />{" "}
+            Add task and start immediately
           </button>
         </div>
       </div>
