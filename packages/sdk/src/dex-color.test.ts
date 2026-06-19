@@ -125,7 +125,7 @@ test("palette: chromatic hues stay in the mid-tone band, neutrals stay legible",
 test("palette: the four neutrals (white + three grays) are present", () => {
   // The neutral spread the identity palette is meant to include, distinct from
   // the inherited warm gray (#bab0ac) and from each other.
-  for (const hex of ["#ffffff", "#d4d4d4", "#8a8a8a", "#555555"]) {
+  for (const hex of ["#ffffff", "#8a8a8a", "#555555", "#333333"]) {
     assert.ok(
       DEX_TASK_PALETTE.includes(hex as (typeof DEX_TASK_PALETTE)[number]),
       `palette includes ${hex}`,

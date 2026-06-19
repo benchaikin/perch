@@ -52,7 +52,7 @@ export interface DexTaskColor {
  * band (CIELAB L* ≈ 42–68; the lone outlier is the inherited light pink) and is
  * well separated from its neighbors in normal vision (min ΔE ≈ 12).
  *
- * The final four entries are NEUTRALS — white plus a light, mid, and dark gray.
+ * The final four entries are NEUTRALS — white plus a mid, dark, and darker gray.
  * They intentionally break the mid-tone band (white sits well above it, the dark
  * gray below it) and the min-ΔE separation goal (the grays differ from each
  * other mostly by lightness/role, not chroma, so several are close in ΔE). That
@@ -91,9 +91,9 @@ export const DEX_TASK_PALETTE = [
   "#cf6a3a", // sienna
   "#b0873b", // ochre
   "#ffffff", // white
-  "#d4d4d4", // light gray
   "#8a8a8a", // mid gray
   "#555555", // dark gray
+  "#333333", // darker gray
 ] as const;
 
 /**
