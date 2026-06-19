@@ -276,7 +276,11 @@ test("the landable + live-agent markers render for the rows that carry them", ()
 
   const landable = container.querySelector(".dex-landable");
   assert.ok(landable, "expected a landable chip on the landable row");
-  assert.match(landable!.textContent ?? "", /needs review/);
+  // needs-review is icon-only: the eye icon, no visible text, label kept for a11y/tooltip.
+  assert.ok(landable!.querySelector(".fa-eye"), "expected the eye icon");
+  assert.doesNotMatch(landable!.textContent ?? "", /needs review/);
+  assert.equal(landable!.getAttribute("aria-label"), "needs review");
+  assert.match(landable!.getAttribute("title") ?? "", /CI passing — awaiting review/);
 
   const agent = container.querySelector(".dex-agent");
   assert.ok(agent, "expected a live-agent marker on the agent row");

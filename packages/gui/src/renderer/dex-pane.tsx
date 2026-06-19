@@ -451,13 +451,17 @@ function DexBlockedChip({ count }: { count: number }): JSX.Element {
  * renders rather than crashes (see {@link LANDABLE_FALLBACK} / {@link LandableChip}).
  */
 const LANDABLE_CHIP: Partial<
-  Record<LandableState, { label: string; tone: string; icon: string; spin?: boolean; hint: string }>
+  Record<
+    LandableState,
+    { label: string; tone: string; icon: string; spin?: boolean; hint: string; iconOnly?: boolean }
+  >
 > = {
   "needs-review": {
     label: "needs review",
     tone: "warn",
     icon: "eye",
     hint: "CI passing — awaiting review",
+    iconOnly: true,
   },
   "changes-requested": {
     label: "changes requested",
@@ -495,12 +499,17 @@ function LandableChip({ state }: { state: LandableState }): JSX.Element | null {
   if (state === "none") return null;
   const spec = LANDABLE_CHIP[state];
   const tone = spec?.tone ?? LANDABLE_FALLBACK.tone;
+  const label = spec?.label ?? state;
   return (
-    <span className={`chip ${tone} dex-landable`} title={spec?.hint ?? `Landable: ${state}`}>
+    <span
+      className={`chip ${tone} dex-landable`}
+      title={spec?.hint ?? `Landable: ${state}`}
+      aria-label={spec?.iconOnly ? label : undefined}
+    >
       <i
         className={`fa-solid fa-${spec?.icon ?? LANDABLE_FALLBACK.icon}${spec?.spin ? " fa-spin" : ""}`}
       />
-      {` ${spec?.label ?? state}`}
+      {spec?.iconOnly ? null : ` ${label}`}
     </span>
   );
 }
