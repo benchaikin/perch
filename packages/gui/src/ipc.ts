@@ -226,6 +226,13 @@ export interface DexNewRequest {
    * `dex.spawn` itself — `dex.new` returns no task id). Omitted/false authors only.
    */
   start?: boolean;
+  /**
+   * Author the task as a CHILD of this existing task (`dex create --parent <id>`),
+   * so it nests under that parent. Set when the composer is armed from a task row's
+   * "new sub-task" control; the parent's `project` pins the target store. Omitted
+   * authors a top-level task, resolved by `project` as before.
+   */
+  parentId?: string;
 }
 
 /**

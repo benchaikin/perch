@@ -375,6 +375,20 @@ body {
   font-size: 11px;
 }
 
+/* The "new sub-task" control on a dex row: the leading anchor of the trailing
+   cluster, so it keeps .icon-btn's margin-left:auto (the spawn/delete after it sit
+   tight — once this absorbs the row's free space, their auto-margins resolve to 0).
+   Sized to match the in-row controls; reads accent while its composer is armed,
+   mirroring the header's New "+". */
+.dex-row .dex-new-subtask,
+.dex-graph-row .dex-new-subtask {
+  padding: 1px 4px;
+  font-size: 11px;
+}
+.dex-new-subtask.dex-new-active {
+  color: var(--accent);
+}
+
 /* The start button on a ready dex row. Sits at the trailing edge (keep
    .icon-btn's margin-left:auto) and is sized to match the in-row controls. */
 .dex-row .dex-spawn {
