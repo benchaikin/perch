@@ -779,10 +779,11 @@ test("the optimistic in-flight state clears when a push drops the deleted row", 
 // New-task-from-description composer (T8f)
 // ---------------------------------------------------------------------------
 
-/** Arm the dialog (click the + control) and return its textarea + submit. */
+/** Arm the dialog (click the + control) and return its textarea + the two actions. */
 function armComposer(container: HTMLElement): {
   textarea: HTMLTextAreaElement;
   submit: HTMLButtonElement;
+  start: HTMLButtonElement;
 } {
   fireEvent.click(container.querySelector(".dex-new")!);
   const dialog = container.querySelector(".dex-new-dialog");
@@ -790,23 +791,47 @@ function armComposer(container: HTMLElement): {
   return {
     textarea: dialog!.querySelector(".dex-new-input") as HTMLTextAreaElement,
     submit: dialog!.querySelector(".dex-new-submit") as HTMLButtonElement,
+    start: dialog!.querySelector(".dex-new-start") as HTMLButtonElement,
   };
 }
 
-test("the + control arms the composer; submit calls dexNew with the trimmed description", () => {
+test("the + control arms the composer; Add task calls dexNew (trimmed, no start flag)", () => {
   const { container } = render(<DexPane section={section([row({ id: "a", name: "A" })])} />);
-  const { textarea, submit } = armComposer(container);
+  const { textarea, submit, start } = armComposer(container);
 
-  // An empty draft is a no-op: submit is disabled.
-  assert.equal(submit.disabled, true, "an empty draft disables submit");
+  // An empty draft is a no-op: both actions are disabled.
+  assert.equal(submit.disabled, true, "an empty draft disables Add task");
+  assert.equal(start.disabled, true, "an empty draft disables Add task and start immediately");
 
   // Type a description (with surrounding whitespace to prove it's trimmed on submit).
   fireEvent.change(textarea, { target: { value: "  build the thing  " } });
-  assert.equal(submit.disabled, false, "a non-empty draft enables submit");
+  assert.equal(submit.disabled, false, "a non-empty draft enables Add task");
+  assert.equal(start.disabled, false, "a non-empty draft enables Add task and start immediately");
 
   fireEvent.click(submit);
-  assert.equal(dexNewCalls.length, 1, "submit calls dexNew once");
+  assert.equal(dexNewCalls.length, 1, "Add task calls dexNew once");
   assert.equal(dexNewCalls[0]!.description, "build the thing", "the description is trimmed");
+  assert.equal(dexNewCalls[0]!.start, false, "the plain Add task path never starts an agent");
+});
+
+test("Add task and start immediately calls dexNew with the start flag set", () => {
+  const { container } = render(<DexPane section={section([row({ id: "a", name: "A" })])} />);
+  const { textarea, start } = armComposer(container);
+  fireEvent.change(textarea, { target: { value: "build the thing" } });
+
+  fireEvent.click(start);
+  assert.equal(dexNewCalls.length, 1, "the start action calls dexNew once");
+  assert.equal(dexNewCalls[0]!.start, true, "the start action threads start: true");
+});
+
+test("Enter triggers the plain Add task path only (never starts an agent)", () => {
+  const { container } = render(<DexPane section={section([row({ id: "a", name: "A" })])} />);
+  const { textarea } = armComposer(container);
+  fireEvent.change(textarea, { target: { value: "build the thing" } });
+
+  fireEvent.keyDown(textarea, { key: "Enter" });
+  assert.equal(dexNewCalls.length, 1, "Enter submits");
+  assert.equal(dexNewCalls[0]!.start, false, "Enter never starts an agent");
 });
 
 test("the + control also arms the composer on an empty board (author the first task)", () => {
@@ -1137,7 +1162,7 @@ test("a repo header's New '+' arms a dialog bound to THAT repo (no project selec
   });
   fireEvent.click(dialog!.querySelector(".dex-new-submit")!);
   assert.equal(dexNewCalls.length, 1);
-  assert.deepEqual(dexNewCalls[0], { description: "new beta task", project: "beta" });
+  assert.deepEqual(dexNewCalls[0], { description: "new beta task", project: "beta", start: false });
 });
 
 test("a repo header's spawn-all launches only that repo's ready tasks", async () => {
@@ -1234,7 +1259,7 @@ test("a configured-but-empty repo still renders its header (with a working New '
   });
   fireEvent.click(dialog!.querySelector(".dex-new-submit")!);
   assert.equal(dexNewCalls.length, 1, "the first task for an empty repo can be authored here");
-  assert.deepEqual(dexNewCalls[0], { description: "first beta task", project: "beta" });
+  assert.deepEqual(dexNewCalls[0], { description: "first beta task", project: "beta", start: false });
 });
 
 test("a non-empty repo and an empty configured repo render side by side", () => {

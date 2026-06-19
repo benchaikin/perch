@@ -66,6 +66,24 @@ test("newTaskPrompt: embeds the description and instructs `dex create` (no imple
   assert.match(prompt, /Do NOT implement/);
 });
 
+test("newTaskPrompt: default authors only (no worker spawned)", () => {
+  const prompt = newTaskPrompt("Add a logout button", false);
+  assert.match(prompt, /Do NOT implement the work — only author it\./);
+  assert.doesNotMatch(prompt, /START WORKING/);
+});
+
+test("newTaskPrompt: start mode tells the agent to spawn a worker after authoring", () => {
+  const prompt = newTaskPrompt("Add a logout button", true);
+  // It overrides the author-only guidance and names the worktree/spawn mechanism.
+  assert.doesNotMatch(prompt, /Do NOT implement the work — only author it\./);
+  assert.match(prompt, /START WORKING/);
+  assert.match(prompt, /dex\/<id>-<slug>/);
+  assert.match(prompt, /spawn-dex|dex-worktree/);
+  // The description is still embedded and `dex create` is still the authoring step.
+  assert.ok(prompt.includes("Add a logout button"));
+  assert.ok(prompt.includes("dex create"));
+});
+
 test("newTaskPrompt: offers both the single-task and the epic/sub-task path", () => {
   const prompt = newTaskPrompt("Port the renderer to React across the app");
   // It judges scope rather than forcing a single task.
@@ -149,6 +167,17 @@ test("runNew: happy path — launches an auto-mode agent in the sole repo with t
   );
   assert.ok(script.commands[0]!.includes("dex create"));
   assert.ok(script.commands[0]!.includes("Add a logout button"));
+});
+
+test("runNew: start mode seeds the worker-spawning prompt and a distinct success message", async () => {
+  const script = fakeWriteScript();
+  const res = await runNew(
+    { description: "Add a logout button", start: true },
+    deps({ spawn: fakeSpawn().spawn, writeScript: script.writeScript }),
+  );
+  assert.equal(res.ok, true);
+  assert.match(res.message, /start an agent working it/);
+  assert.match(script.commands[0]!, /START WORKING/);
 });
 
 test("runNew: an explicit project targets that repo's directory", async () => {
