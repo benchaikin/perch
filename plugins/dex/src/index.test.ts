@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { effectiveDirs, tasksForProject } from "./index.js";
+import { autoSpawnRepos, effectiveDirs, tasksForProject } from "./index.js";
 
 test("effectiveDirs: dirs override global.repos when set and non-empty", () => {
   assert.deepEqual(effectiveDirs(["/a", "/b"], { repos: ["/x", "/y"] }), ["/a", "/b"]);
@@ -54,4 +54,29 @@ test("tasksForProject: a project filters to that store's tasks (preserving order
 
 test("tasksForProject: an unknown project yields nothing (no accidental launch)", () => {
   assert.deepEqual(tasksForProject(PROJECT_TASKS, "gamma"), []);
+});
+
+test("autoSpawnRepos: an undefined map auto-spawns nothing (default config is inert)", () => {
+  assert.deepEqual(autoSpawnRepos(["/repos/alpha", "/repos/beta"], undefined), []);
+});
+
+test("autoSpawnRepos: empty map auto-spawns nothing", () => {
+  assert.deepEqual(autoSpawnRepos(["/repos/alpha", "/repos/beta"], {}), []);
+});
+
+test("autoSpawnRepos: only repos keyed true (by basename) are Auto; false/absent are Manual", () => {
+  assert.deepEqual(
+    autoSpawnRepos(["/repos/alpha", "/repos/beta", "/repos/gamma"], {
+      alpha: true,
+      beta: false,
+    }),
+    ["/repos/alpha"],
+  );
+});
+
+test("autoSpawnRepos: selection follows dirs order (deterministic spawn loop)", () => {
+  assert.deepEqual(autoSpawnRepos(["/repos/beta", "/repos/alpha"], { alpha: true, beta: true }), [
+    "/repos/beta",
+    "/repos/alpha",
+  ]);
 });

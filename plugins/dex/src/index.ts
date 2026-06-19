@@ -138,6 +138,16 @@ const DexConfig = z.object({
    * the reaping to a manual `land-dex` run.
    */
   autoLand: z.boolean().optional(),
+  /**
+   * Per-repo auto-spawn mode, keyed by the repo tag (a monitored dir's basename —
+   * the same key `tasksForProject` filters on). `true` ⇒ Auto: on each reap pass
+   * the daemon spawns an agent for every ready (unblocked) task in that repo,
+   * draining its queue with no human in the loop. Absent/`false` ⇒ Manual: the
+   * repo is never auto-spawned (today's behavior). Default empty ⇒ no repo
+   * auto-spawns, so existing configs see no change. Like `dirs`, a perch.json-
+   * edited field for v1; the GUI sibling adds the toggle.
+   */
+  autoSpawn: z.record(z.string(), z.boolean()).optional(),
 });
 export type DexConfig = z.infer<typeof DexConfig>;
 
@@ -285,6 +295,59 @@ export function tasksForProject<T extends { project?: string }>(
   return project === undefined ? [...tasks] : tasks.filter((t) => t.project === project);
 }
 
+/**
+ * The monitored dirs whose repo tag (basename) is set to Auto in the `autoSpawn`
+ * map — the repos the reap pass should drain. Order follows `dirs` (so the spawn
+ * loop is deterministic). Absent/false entries are Manual and excluded; an empty
+ * or undefined map yields `[]`, so the default config auto-spawns nothing.
+ * Exported for unit coverage.
+ */
+export function autoSpawnRepos(
+  dirs: readonly string[],
+  autoSpawn: Record<string, boolean> | undefined,
+): string[] {
+  if (!autoSpawn) return [];
+  return dirs.filter((dir) => autoSpawn[basename(dir)] === true);
+}
+
+/**
+ * The reap pass's front-of-loop half: for every repo set to Auto in
+ * `cfg.autoSpawn`, spawn an agent for each ready (unblocked) task in that repo's
+ * store. Mirrors the `spawn-all` action — same board fetch and the exact same
+ * `runSpawnBatch` deps — but scoped per Auto repo. Runs the repos (and each
+ * repo's batch) SEQUENTIALLY, the same race rationale `runSpawnBatch` documents.
+ *
+ * A task `runSpawn` launches is marked in-progress (`dex start`) and its worktree
+ * now exists, so it's no longer `ready` and won't re-spawn next pass; blocked /
+ * in-progress / done tasks never pass the `isReadyToSpawn` gate. Returns early
+ * (touching nothing) when no repo is Auto, so the default config is inert.
+ */
+async function autoSpawnReadyRepos(
+  cfg: DexConfig,
+  repos: string[],
+  ctx: { global?: unknown; log: (message: string) => void },
+): Promise<void> {
+  const autoRepos = autoSpawnRepos(repos, cfg.autoSpawn);
+  if (autoRepos.length === 0) return;
+
+  const provider = new DexProvider(cfg.dexBin ?? "dex", { exec: execOverride });
+  const board = await fetchBoard(provider, autoRepos, cfg.showCompleted ?? false, ctx.log);
+  const deps = {
+    exec: execOverride ?? defaultExec,
+    dexBin: cfg.dexBin ?? "dex",
+    gitBin: cfg.gitBin ?? "git",
+    repos,
+    terminal: terminalConfigOf(ctx.global),
+    spawn: spawnOpenSpawn,
+    log: ctx.log,
+  };
+  for (const dir of autoRepos) {
+    const tag = basename(dir);
+    const result = await runSpawnBatch(tasksForProject(board.tasks, tag), deps);
+    ctx.log(`dex.land: auto-spawn ${tag}: ${result.message}`);
+  }
+}
+
 export default definePlugin({
   id: "dex",
   name: "Dex Tasks",
@@ -328,6 +391,8 @@ export default definePlugin({
     // `dirs` (the monitored project roots) stays a perch.json-only setting: the
     // generic settings UI has no list field type yet, and exposing a string[] as
     // a single text input would fight the config schema. Edit it in perch.json.
+    // `autoSpawn` (the per-repo Auto/Manual map) is likewise perch.json-only here;
+    // the GUI sibling adds a per-repo toggle that patches it directly.
   ]),
   capabilities: {
     /**
@@ -599,7 +664,7 @@ export default definePlugin({
           const cfg = configOf(ctx.config);
           // Same repo precedence as `dex.tasks`/`dex.spawn`: `dirs` → global.repos.
           const repos = effectiveDirs(cfg.dirs ?? [], ctx.global);
-          return await runLand({
+          const board = await runLand({
             exec: execOverride ?? defaultExec,
             gitBin: cfg.gitBin ?? "git",
             ghBin: cfg.ghBin ?? "gh",
@@ -608,6 +673,11 @@ export default definePlugin({
             autoLand: cfg.autoLand ?? true,
             log: ctx.log,
           });
+          // Front of the loop: after reaping the back, drain the ready queue for
+          // every Auto repo. Stays inside the `landing` latch so a long spawn
+          // pass never overlaps the next poll. No-op when no repo is set to Auto.
+          await autoSpawnReadyRepos(cfg, repos, ctx);
+          return board;
         } finally {
           landing = false;
         }
