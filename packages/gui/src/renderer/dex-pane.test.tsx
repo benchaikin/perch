@@ -14,7 +14,13 @@ import { afterEach, beforeEach, test } from "node:test";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { DexPane } from "./dex-pane.js";
 import { dexHealth, type DexRow, type DexSection } from "../dex-state.js";
-import type { DexDeleteRequest, DexEditRequest, DexNewRequest, PerchBridge } from "../ipc.js";
+import type {
+  DexCompleteRequest,
+  DexDeleteRequest,
+  DexEditRequest,
+  DexNewRequest,
+  PerchBridge,
+} from "../ipc.js";
 import type { DexViewMode } from "../window-state.js";
 
 /** Bridge spies the pane drives: copyText + dexEdit from the tree/detail; the
@@ -27,6 +33,7 @@ let dexSpawnReadyCalls: number;
  *  single-repo launch) — so a test can assert a per-repo launch is scoped. */
 let dexSpawnReadyProjects: Array<string | undefined>;
 let dexDeleteCalls: DexDeleteRequest[];
+let dexCompleteCalls: DexCompleteRequest[];
 let dexNewCalls: DexNewRequest[];
 let setDexViewModeCalls: DexViewMode[];
 /**
@@ -74,6 +81,10 @@ const bridge = {
     dexDeleteCalls.push(request);
     return pending();
   },
+  dexComplete(request: DexCompleteRequest) {
+    dexCompleteCalls.push(request);
+    return Promise.resolve();
+  },
   dexNew(request: DexNewRequest) {
     dexNewCalls.push(request);
     return new Promise<void>((resolve) => {
@@ -92,6 +103,7 @@ beforeEach(() => {
   dexSpawnReadyCalls = 0;
   dexSpawnReadyProjects = [];
   dexDeleteCalls = [];
+  dexCompleteCalls = [];
   actionResolvers = [];
   dexNewCalls = [];
   dexNewResolve = undefined;
@@ -474,6 +486,53 @@ test("Cancel discards the draft and returns to the read-only detail", () => {
   // Re-opening shows the original, not the discarded draft.
   fireEvent.click(c.querySelector(".dex-edit-btn")!);
   assert.equal((c.querySelector(".dex-edit-name") as HTMLInputElement).value, "Original");
+});
+
+test("a non-done task shows the Complete button; a done task hides it", () => {
+  const open = openDetail(row({ id: "c1", name: "Open task", status: "ready" }));
+  assert.ok(open.querySelector(".dex-complete-btn"), "non-done task offers Complete");
+  cleanup();
+  const done = openDetail(row({ id: "c2", name: "Closed task", status: "done" }));
+  assert.equal(done.querySelector(".dex-complete-btn"), null, "a done task hides Complete");
+});
+
+test("Complete opens the inline confirm; confirming sends the typed result", async () => {
+  const c = openDetail(row({ id: "c3", name: "Finish me", status: "in-progress" }));
+  fireEvent.click(c.querySelector(".dex-complete-btn")!);
+  const result = c.querySelector(".dex-complete-result") as HTMLTextAreaElement;
+  assert.ok(result, "the confirm shows a result textarea");
+  assert.equal(result.value, "", "result seeded empty");
+  // The read-only Complete button is replaced by Confirm/Cancel.
+  assert.equal(
+    c.querySelector(".dex-complete-btn"),
+    null,
+    "Complete button hidden in confirm mode",
+  );
+  fireEvent.change(result, { target: { value: "did it by hand" } });
+  await act(async () => {
+    fireEvent.click(c.querySelector(".dex-complete-confirm")!);
+  });
+  assert.deepEqual(dexCompleteCalls, [{ id: "c3", result: "did it by hand" }]);
+  // Confirm mode closes back to the read-only view.
+  assert.equal(c.querySelector(".dex-complete-result"), null, "confirm closed after completing");
+});
+
+test("a blank result completes with no result field (the daemon defaults it)", async () => {
+  const c = openDetail(row({ id: "c4", name: "No note", status: "ready" }));
+  fireEvent.click(c.querySelector(".dex-complete-btn")!);
+  await act(async () => {
+    fireEvent.click(c.querySelector(".dex-complete-confirm")!);
+  });
+  assert.deepEqual(dexCompleteCalls, [{ id: "c4" }], "no result sent → daemon defaults one");
+});
+
+test("Cancel discards the completion and returns to the read-only detail", () => {
+  const c = openDetail(row({ id: "c5", name: "Keep open", status: "ready" }));
+  fireEvent.click(c.querySelector(".dex-complete-btn")!);
+  fireEvent.change(c.querySelector(".dex-complete-result")!, { target: { value: "oops" } });
+  fireEvent.click(c.querySelector(".dex-complete-cancel")!);
+  assert.deepEqual(dexCompleteCalls, [], "cancel never completes");
+  assert.ok(c.querySelector(".dex-detail-title"), "back to the read-only detail");
 });
 
 test("the description keeps focus + caret + draft across a background state push", () => {

@@ -331,6 +331,22 @@ export class DexRunner {
     if (fields.priority !== undefined) args.push("-p", String(fields.priority));
     return this.exec(this.dexBin, args);
   }
+
+  /**
+   * `dex [--storage-path P] complete <id> --result "<text>" --no-commit` — mark a
+   * task done. Resolves with the CLI's stdout; rejects (surfacing stderr) on
+   * failure. `dex complete` REQUIRES a non-empty `--result`, so the caller defaults
+   * one. `--no-commit` because a manual completion has no merge commit to link (the
+   * auto-land path is the one that passes `--commit <sha>`); and there is no
+   * `--force`, so dex's own incomplete-subtask validation surfaces verbatim rather
+   * than silently force-completing an epic with open children.
+   */
+  async complete(id: string, result: string, storagePath?: string): Promise<string> {
+    const args: string[] = [];
+    if (storagePath) args.push("--storage-path", storagePath);
+    args.push("complete", id, "--result", result, "--no-commit");
+    return this.exec(this.dexBin, args);
+  }
 }
 
 /** Dependencies for {@link runSpawn} — the seams the action injects, tests stub. */
