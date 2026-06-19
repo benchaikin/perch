@@ -87,7 +87,7 @@ export interface ServicesControl {
   label: string;
 }
 
-/** One repo's service rows, grouped under a per-repo header on a multi-repo board. */
+/** One repo's service rows, grouped under a per-repo header. */
 export interface ServicesRepoGroup {
   /** Source project label (a configured repo basename) the rows belong to. */
   project: string;
@@ -104,17 +104,20 @@ export interface ServicesRepoGroup {
  * set; `bulkActing` names the whole-stack action currently in flight (its button
  * spins and the cluster disables), if any.
  *
- * `multiRepo` is true when more than one repo is *configured* (mirrors Dex): the
- * renderer then groups `rows` under collapsible per-repo headers, one per
- * `repoGroups` entry (config order, INCLUDING configured-but-empty repos as
- * empty groups). When false `repoGroups` is empty and rows render as a flat list.
+ * `grouped` is true when there is at least one *known* repo to group under — a
+ * configured repo, or a repo seen on a service. The renderer then groups `rows`
+ * under collapsible per-repo headers, one per `repoGroups` entry (config order,
+ * INCLUDING configured-but-empty repos as empty groups), even for a single repo
+ * — the header names which project the services belong to. It is false only when
+ * no repo is known at all (an older daemon with no `projects[]` and no
+ * per-service `project`); then `repoGroups` is empty and rows render flat.
  */
 export interface ServicesSection {
   visible: boolean;
   rows: ServiceRow[];
   controls: ServicesControl[];
   bulkActing?: ServicesBulkAction;
-  multiRepo: boolean;
+  grouped: boolean;
   repoGroups: ServicesRepoGroup[];
 }
 
@@ -280,18 +283,21 @@ export function buildServicesSection(
   bulkActing?: ServicesBulkAction,
 ): ServicesSection {
   if (!list || list.services.length === 0) {
-    return { visible: false, rows: [], controls: [], multiRepo: false, repoGroups: [] };
+    return { visible: false, rows: [], controls: [], grouped: false, repoGroups: [] };
   }
   const inFlight = new Set(acting);
   const rows = list.services.map((svc) => toServiceRow(svc, inFlight));
   const repos = configuredRepos(list);
-  const multiRepo = repos.length > 1;
+  // Group whenever there's at least one known repo to head the rows — including a
+  // single repo (the header names the project). Flat only when no repo is known
+  // (an older daemon with no `projects[]` and no per-service `project`).
+  const grouped = repos.length > 0;
   return {
     visible: true,
     rows,
     controls: servicesControls(list.available),
     bulkActing,
-    multiRepo,
-    repoGroups: multiRepo ? groupRowsByProject(rows, repos) : [],
+    grouped,
+    repoGroups: grouped ? groupRowsByProject(rows, repos) : [],
   };
 }

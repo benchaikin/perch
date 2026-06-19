@@ -77,12 +77,12 @@ function group(project: string, ...rows: ServiceRow[]): ServicesRepoGroup {
 }
 
 /** A section literal that may omit the grouping fields (defaulted to the flat case). */
-type SectionInput = Omit<ServicesSection, "multiRepo" | "repoGroups"> &
-  Partial<Pick<ServicesSection, "multiRepo" | "repoGroups">>;
+type SectionInput = Omit<ServicesSection, "grouped" | "repoGroups"> &
+  Partial<Pick<ServicesSection, "grouped" | "repoGroups">>;
 
 /** Fill the grouping defaults so flat-case tests can pass plain literals. */
 function asSection(input: SectionInput): ServicesSection {
-  return { multiRepo: false, repoGroups: [], ...input };
+  return { grouped: false, repoGroups: [], ...input };
 }
 
 /**
@@ -229,12 +229,12 @@ test("with showTitle the section renders its own Services title", () => {
   assert.equal(title?.textContent, "Services");
 });
 
-test("multiRepo renders a collapsible header per repo with name + count chip", () => {
+test("grouped renders a collapsible header per repo with name + count chip", () => {
   const c = render({
     visible: true,
     rows: [runningRow("api"), runningRow("ui")],
     controls: [],
-    multiRepo: true,
+    grouped: true,
     // ashby (1) + web (1) + perch (0, configured-but-empty).
     repoGroups: [group("ashby", runningRow("api")), group("web", runningRow("ui")), group("perch")],
   });
@@ -250,12 +250,33 @@ test("multiRepo renders a collapsible header per repo with name + count chip", (
   assert.equal(c.querySelectorAll(".service-row").length, 2);
 });
 
+test("a single grouped repo renders one collapsible header over its rows", () => {
+  const c = render({
+    visible: true,
+    rows: [runningRow("api")],
+    controls: [],
+    grouped: true,
+    repoGroups: [group("ashby", runningRow("api"))],
+  });
+
+  const headers = [...c.querySelectorAll(".services-repo-header-btn")];
+  assert.equal(headers.length, 1);
+  assert.equal(headers[0]?.querySelector(".services-repo-name")?.textContent, "ashby");
+  assert.equal(headers[0]?.querySelector(".services-repo-count")?.textContent, "1");
+  assert.equal(c.querySelectorAll(".service-row").length, 1);
+
+  // Clicking the lone header collapses its row.
+  flushSync(() => click(headers[0] as HTMLButtonElement));
+  assert.equal(c.querySelectorAll(".service-row").length, 0);
+  assert.ok(headers[0]?.querySelector("i.fa-chevron-right"));
+});
+
 test("clicking a repo header collapses just that group, and it survives a poll re-render", () => {
   const section: SectionInput = {
     visible: true,
     rows: [runningRow("api"), runningRow("ui")],
     controls: [],
-    multiRepo: true,
+    grouped: true,
     repoGroups: [group("ashby", runningRow("api")), group("web", runningRow("ui"))],
   };
   const { container: c, rerender } = mount(section);
