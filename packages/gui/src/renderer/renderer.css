@@ -778,6 +778,11 @@ body {
   border-radius: 8px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
 }
+/* The repo-scoped title: which store the new task lands in, made unmistakable. */
+.dex-new-header {
+  font-weight: 600;
+  color: var(--accent);
+}
 .dex-new-input {
   width: 100%;
   box-sizing: border-box;

@@ -734,6 +734,14 @@ function DexNewDialog({ projects }: { projects: string[] }): JSX.Element {
 
   const canSubmit = !inFlight && draft.trim().length > 0;
 
+  // Name the repo the new task will land in, derived from the SAME resolution
+  // submit() uses so the header and the actual target can never disagree, and
+  // from the live `project` so it follows the select on a multi-repo board. On a
+  // single-store board the name is unknown (the daemon resolves the sole repo),
+  // so degrade to a plain label rather than "Add a task to undefined repository".
+  const targetProject = newTaskTargetProject(projects, project);
+  const headerText = targetProject ? `Add a task to ${targetProject} repository` : "Add a task";
+
   // Launch the author agent for the trimmed draft (with the resolved target
   // project), marking it in flight so the controls disable + the submit shows a
   // spinner. On success close the dialog — its unmount drops the local draft, so
@@ -768,9 +776,12 @@ function DexNewDialog({ projects }: { projects: string[] }): JSX.Element {
         className="dex-new-dialog"
         role="dialog"
         aria-modal="true"
-        aria-label="New task from a description"
+        aria-labelledby="dex-new-header"
         onClick={(e) => e.stopPropagation()}
       >
+        <div id="dex-new-header" className="dex-new-header">
+          {headerText}
+        </div>
         <textarea
           ref={textareaRef}
           className="dex-new-input"
