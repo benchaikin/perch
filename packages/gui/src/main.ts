@@ -38,6 +38,7 @@ import { DaemonUnavailableError, PerchClient } from "@perch/cli";
 import { shouldShowNotification, toNotifyOptions } from "./notify.js";
 import {
   Channels,
+  type DexAutoSpawnRequest,
   type DexBlockerRequest,
   type DexCompleteRequest,
   type DexDeleteRequest,
@@ -767,6 +768,31 @@ async function spawnDexReady(project?: string): Promise<void> {
     });
   } catch (err) {
     showNotice({ tone: "bad", text: `Spawn all ready failed: ${errorMessage(err)}` });
+  } finally {
+    pushState();
+  }
+}
+
+/**
+ * Set a repo's auto-spawn mode (Auto/Manual) by persisting
+ * `plugins.dex.autoSpawn[<project>]` via `config.update` (deep-merged, so other
+ * repos' modes are untouched), then re-read the board so the header toggle
+ * reflects the persisted mode immediately. Awaited by the renderer (via
+ * `ipcMain.handle`) so the toggle clears its in-flight state when the write
+ * finishes; only a failure toasts (the flip itself is visible on the board).
+ */
+async function setDexAutoSpawn(request: DexAutoSpawnRequest): Promise<void> {
+  if (!client) return;
+  try {
+    await client.configUpdate({
+      patch: { plugins: { dex: { autoSpawn: { [request.project]: request.enabled } } } },
+    });
+    await refreshDexBoard();
+  } catch (err) {
+    showNotice({
+      tone: "bad",
+      text: `Set auto-spawn for ${request.project} failed: ${errorMessage(err)}`,
+    });
   } finally {
     pushState();
   }
@@ -1652,6 +1678,9 @@ function registerIpc(): void {
   // clear the button's in-progress state when the worktree/terminal work finishes.
   ipcMain.handle(Channels.dexSpawn, (_event, id: string) => spawnDex(id));
   ipcMain.handle(Channels.dexSpawnReady, (_event, project?: string) => spawnDexReady(project));
+  ipcMain.handle(Channels.dexSetAutoSpawn, (_event, request: DexAutoSpawnRequest) =>
+    setDexAutoSpawn(request),
+  );
   ipcMain.handle(Channels.dexDelete, (_event, request: DexDeleteRequest) => deleteDex(request));
   ipcMain.handle(Channels.dexEdit, (_event, request: DexEditRequest) => editDex(request));
   ipcMain.handle(Channels.dexComplete, (_event, request: DexCompleteRequest) =>

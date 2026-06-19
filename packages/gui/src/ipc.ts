@@ -129,6 +129,14 @@ export const Channels = {
    */
   dexSpawnReady: "perch:dex-spawn-ready",
   /**
+   * Renderer → main `invoke`: set a repo's auto-spawn mode (payload: a
+   * {@link DexAutoSpawnRequest} — the project basename and the desired enabled
+   * flag). Main writes `plugins.dex.autoSpawn[<project>]` via `config.update`,
+   * re-reads the board so the toggle reflects the persisted mode, and resolves when
+   * the write finishes so the toggle can clear its in-flight state.
+   */
+  dexSetAutoSpawn: "perch:dex-set-auto-spawn",
+  /**
    * Renderer → main `invoke`: delete a dex task (payload: the task id). Main runs
    * `dex.delete`, refreshes the board, and resolves when the delete finishes, so
    * the renderer can clear its in-progress state; the outcome is toasted from main.
@@ -221,6 +229,14 @@ export interface WorktreeRemoveRequest {
   name: string;
   force?: boolean;
   warning?: string;
+}
+
+/** Renderer → main payload to set a repo's auto-spawn (Auto/Manual) mode. */
+export interface DexAutoSpawnRequest {
+  /** The repo (project basename) whose mode to set — the `plugins.dex.autoSpawn` key. */
+  project: string;
+  /** `true` ⇒ Auto (reap-time auto-spawn), `false` ⇒ Manual. */
+  enabled: boolean;
 }
 
 /** Renderer → main payload to add/remove a dex dependency (blocker) edge. */
@@ -332,6 +348,14 @@ export interface PerchBridge {
    * pushed via panel state.
    */
   dexSpawnReady(project?: string): Promise<void>;
+  /**
+   * Ask the main process to set a repo's auto-spawn mode (payload: a
+   * {@link DexAutoSpawnRequest} — the project basename + desired enabled flag).
+   * Main persists `plugins.dex.autoSpawn[<project>]` and re-reads the board.
+   * Resolves when the write finishes (or fails), so the caller can clear its
+   * in-flight UI; the error notice (if any) is pushed via panel state.
+   */
+  dexSetAutoSpawn(request: DexAutoSpawnRequest): Promise<void>;
   /**
    * Ask the main process to delete a dex task (payload: a {@link DexDeleteRequest}
    * — the id plus the task name and any computed warning). Main confirms with a

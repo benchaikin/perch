@@ -60,6 +60,13 @@ export interface DexBoard {
    * then falls back to the projects seen on tasks.
    */
   projects?: string[];
+  /**
+   * Per-repo auto-spawn mode (`plugins.dex.autoSpawn`), keyed by project basename:
+   * `true` ⇒ Auto (the daemon's reap pass spawns that repo's ready tasks), absent/
+   * false ⇒ Manual. Drives each repo header's Auto/Manual toggle. Absent on an older
+   * daemon (or when no repo is Auto) ⇒ every repo reads Manual.
+   */
+  autoSpawn?: Record<string, boolean>;
 }
 
 /** A rendered task row's marker health → CSS dot color. */
@@ -146,6 +153,8 @@ export interface DexRepoGroup {
   project: string;
   /** This project's rows, in the board's pre-order (tree-ordered, depth-tagged). */
   rows: DexRow[];
+  /** Auto-spawn mode for this repo: `true` ⇒ Auto, `false` ⇒ Manual (the default). */
+  autoSpawn: boolean;
 }
 
 /**
@@ -166,6 +175,19 @@ export interface DexSection {
   counts: DexCounts;
   multiRepo: boolean;
   repoGroups: DexRepoGroup[];
+  /**
+   * Per-repo auto-spawn modes (keyed by project basename), carried through from the
+   * board so the single-repo header can look up its repo's mode. Empty when the
+   * board reports none. Per-repo groups also carry their own resolved {@link
+   * DexRepoGroup.autoSpawn}; this is the raw map for the non-grouped header.
+   */
+  autoSpawn: Record<string, boolean>;
+  /**
+   * The sole configured repo on a single-repo board (so its header can render the
+   * Auto/Manual toggle), or undefined when the board groups multiple repos or reads
+   * the daemon's own cwd store (no project to key auto-spawn on).
+   */
+  soleProject?: string;
 }
 
 /** Map a derived status to its marker color. */
@@ -218,7 +240,11 @@ function configuredRepos(board: DexBoard): string[] {
  * practice only a single-store board yields unprojected rows, and that board
  * isn't multi-repo, so this branch never runs for it.
  */
-function groupRowsByProject(rows: DexRow[], configured: readonly string[]): DexRepoGroup[] {
+function groupRowsByProject(
+  rows: DexRow[],
+  configured: readonly string[],
+  autoSpawn: Record<string, boolean>,
+): DexRepoGroup[] {
   const byProject = new Map<string, DexRow[]>();
   const order: string[] = [];
   const ensure = (project: string): DexRow[] => {
@@ -233,7 +259,11 @@ function groupRowsByProject(rows: DexRow[], configured: readonly string[]): DexR
   // Seed every configured repo first (in config order) so empty ones get a group.
   for (const project of configured) ensure(project);
   for (const row of rows) ensure(row.project ?? "(unknown)").push(row);
-  return order.map((project) => ({ project, rows: byProject.get(project)! }));
+  return order.map((project) => ({
+    project,
+    rows: byProject.get(project)!,
+    autoSpawn: autoSpawn[project] === true,
+  }));
 }
 
 /**
@@ -276,6 +306,7 @@ export function buildDexSection(
       counts: { ...ZERO_COUNTS },
       multiRepo: false,
       repoGroups: [],
+      autoSpawn: {},
     };
   }
   const activeAncestors = ancestorsWithActiveDescendant(board.tasks);
@@ -319,8 +350,12 @@ export function buildDexSection(
   // still holding tasks isn't lost. >1 distinct repo ⇒ grouped; 0/1 stays flat.
   const repos = configuredRepos(board);
   const multiRepo = repos.length > 1;
-  const repoGroups = multiRepo ? groupRowsByProject(rows, repos) : [];
-  return { visible: present, rows, counts, multiRepo, repoGroups };
+  const autoSpawn = board.autoSpawn ?? {};
+  const repoGroups = multiRepo ? groupRowsByProject(rows, repos, autoSpawn) : [];
+  // A single configured repo (not the cwd store) is the sole project whose header
+  // carries the Auto/Manual toggle; multi-repo headers carry their own per group.
+  const soleProject = !multiRepo && repos.length === 1 ? repos[0] : undefined;
+  return { visible: present, rows, counts, multiRepo, repoGroups, autoSpawn, soleProject };
 }
 
 /**

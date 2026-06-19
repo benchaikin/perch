@@ -15,6 +15,7 @@ import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { DexPane } from "./dex-pane.js";
 import { dexHealth, type DexRow, type DexSection } from "../dex-state.js";
 import type {
+  DexAutoSpawnRequest,
   DexCompleteRequest,
   DexDeleteRequest,
   DexEditRequest,
@@ -32,6 +33,8 @@ let dexSpawnReadyCalls: number;
 /** The `project` arg each dexSpawnReady call carried (undefined for the unscoped,
  *  single-repo launch) — so a test can assert a per-repo launch is scoped. */
 let dexSpawnReadyProjects: Array<string | undefined>;
+/** The {@link DexAutoSpawnRequest}s each dexSetAutoSpawn call carried. */
+let dexSetAutoSpawnCalls: DexAutoSpawnRequest[];
 let dexDeleteCalls: DexDeleteRequest[];
 let dexCompleteCalls: DexCompleteRequest[];
 let dexNewCalls: DexNewRequest[];
@@ -77,6 +80,10 @@ const bridge = {
     dexSpawnReadyProjects.push(project);
     return pending();
   },
+  dexSetAutoSpawn(request: DexAutoSpawnRequest) {
+    dexSetAutoSpawnCalls.push(request);
+    return pending();
+  },
   dexDelete(request: DexDeleteRequest) {
     dexDeleteCalls.push(request);
     return pending();
@@ -102,6 +109,7 @@ beforeEach(() => {
   dexSpawnCalls = [];
   dexSpawnReadyCalls = 0;
   dexSpawnReadyProjects = [];
+  dexSetAutoSpawnCalls = [];
   dexDeleteCalls = [];
   dexCompleteCalls = [];
   actionResolvers = [];
@@ -130,14 +138,20 @@ function row(over: Partial<DexRow> & Pick<DexRow, "id" | "name">): DexRow {
   };
 }
 
-/** A visible (single-repo) Dex section wrapping the given rows. */
-function section(rows: DexRow[]): DexSection {
+/**
+ * A visible (single-repo) Dex section wrapping the given rows. `auto` optionally
+ * names the sole repo and its stored auto-spawn mode so the header renders the
+ * Auto/Manual toggle (omitted ⇒ the cwd store, no toggle).
+ */
+function section(rows: DexRow[], auto?: { project: string; enabled: boolean }): DexSection {
   return {
     visible: true,
     rows,
     counts: { ready: 0, blocked: 0, inProgress: 0, done: 0, total: rows.length },
     multiRepo: false,
     repoGroups: [],
+    autoSpawn: auto ? { [auto.project]: auto.enabled } : {},
+    soleProject: auto?.project,
   };
 }
 
@@ -148,7 +162,11 @@ function section(rows: DexRow[]): DexSection {
  * configured-but-empty repo appear as an empty group; when omitted it falls back
  * to the rows' first-appearance order.
  */
-function multiRepoSection(rows: DexRow[], configured?: string[]): DexSection {
+function multiRepoSection(
+  rows: DexRow[],
+  configured?: string[],
+  autoSpawn: Record<string, boolean> = {},
+): DexSection {
   const byProject = new Map<string, DexRow[]>();
   const order: string[] = [];
   const ensure = (project: string): DexRow[] => {
@@ -167,7 +185,12 @@ function multiRepoSection(rows: DexRow[], configured?: string[]): DexSection {
     rows,
     counts: { ready: 0, blocked: 0, inProgress: 0, done: 0, total: rows.length },
     multiRepo: true,
-    repoGroups: order.map((project) => ({ project, rows: byProject.get(project)! })),
+    repoGroups: order.map((project) => ({
+      project,
+      rows: byProject.get(project)!,
+      autoSpawn: autoSpawn[project] === true,
+    })),
+    autoSpawn,
   };
 }
 
@@ -663,6 +686,66 @@ test("the spawn-all-ready button is absent when nothing is ready", () => {
     />,
   );
   assert.equal(container.querySelector(".dex-spawn-all"), null, "no ready tasks → no fleet launch");
+});
+
+test("the single-repo header's Auto/Manual toggle reflects the stored mode and flips it", async () => {
+  const { container } = render(
+    <DexPane
+      section={section([row({ id: "r1", name: "Ready" })], { project: "alpha", enabled: false })}
+    />,
+  );
+  const btn = container.querySelector(".dex-auto-spawn") as HTMLButtonElement;
+  assert.ok(btn, "the single-repo header carries the auto-spawn toggle");
+  assert.equal(btn.getAttribute("aria-pressed"), "false", "the stored mode is Manual");
+  assert.equal(btn.classList.contains("on"), false);
+
+  fireEvent.click(btn);
+  assert.deepEqual(
+    dexSetAutoSpawnCalls,
+    [{ project: "alpha", enabled: true }],
+    "the click flips the persisted mode to Auto",
+  );
+  // Optimistic: the toggle reads Auto and disables until the write resolves.
+  const flipped = container.querySelector(".dex-auto-spawn") as HTMLButtonElement;
+  assert.equal(flipped.getAttribute("aria-pressed"), "true");
+  assert.equal(flipped.classList.contains("on"), true);
+  assert.equal(flipped.disabled, true);
+
+  await settleActions();
+  const settled = container.querySelector(".dex-auto-spawn") as HTMLButtonElement;
+  assert.equal(settled.disabled, false, "the toggle re-enables when the write resolves");
+});
+
+test("the cwd store (no project) shows no auto-spawn toggle", () => {
+  const { container } = render(<DexPane section={section([row({ id: "r1", name: "Ready" })])} />);
+  assert.equal(
+    container.querySelector(".dex-auto-spawn"),
+    null,
+    "without a project there's no key to persist auto-spawn on",
+  );
+});
+
+test("each repo header's toggle reflects that repo's stored auto-spawn mode", () => {
+  const { container } = render(
+    <DexPane
+      section={multiRepoSection(
+        [
+          row({ id: "a1", name: "A", project: "alpha" }),
+          row({ id: "b1", name: "B", project: "beta" }),
+        ],
+        ["alpha", "beta"],
+        { alpha: true },
+      )}
+    />,
+  );
+  const toggles = [...container.querySelectorAll(".dex-auto-spawn")] as HTMLButtonElement[];
+  assert.equal(toggles.length, 2, "every repo header carries its own toggle");
+  assert.equal(toggles[0]!.getAttribute("aria-pressed"), "true", "alpha is Auto");
+  assert.equal(toggles[1]!.getAttribute("aria-pressed"), "false", "beta is Manual");
+
+  // Clicking alpha's (currently Auto) toggle flips just that repo to Manual.
+  fireEvent.click(toggles[0]!);
+  assert.deepEqual(dexSetAutoSpawnCalls, [{ project: "alpha", enabled: false }]);
 });
 
 // Spawn-all hover preview: hovering a rocket lights exactly the rows it would

@@ -47,6 +47,7 @@ const CASES: Array<[keyof PerchActions, unknown, boolean]> = [
   ["worktreeRemove", { path: "/path/to/wt", name: "wt" }, true],
   ["dexSpawn", "task-1", true],
   ["dexSpawnReady", undefined, true],
+  ["dexSetAutoSpawn", { project: "p", enabled: true }, true],
   ["dexDelete", { id: "t", name: "n" }, true],
   ["dexEdit", { id: "t", name: "n" }, true],
   ["dexComplete", { id: "t", result: "done" }, true],

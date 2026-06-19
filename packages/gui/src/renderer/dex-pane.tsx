@@ -170,6 +170,14 @@ interface DexContextValue {
    * single-repo board) launches the sole store's ready tasks, as before.
    */
   spawnAllReady(project?: string): void;
+  /**
+   * Repos whose auto-spawn toggle is in flight, mapped to the mode being written —
+   * so the toggle shows the new state optimistically (and stays disabled) until the
+   * board catches up. A repo absent from the map renders its board-reported mode.
+   */
+  autoSpawnPending: ReadonlyMap<string, boolean>;
+  /** Optimistically set a repo's auto-spawn mode (the `dex.set-auto-spawn` write). */
+  setAutoSpawn(project: string, enabled: boolean): void;
   /** Ids whose delete is in flight (optimistic spinner + disabled). */
   deleting: ReadonlySet<string>;
   /** Optimistically delete a task (main raises the confirm dialog first). */
@@ -227,6 +235,9 @@ export function DexProvider({
   // fresh reference per change re-renders the affected button.
   const [spawning, setSpawning] = useState<ReadonlySet<string>>(() => new Set());
   const [spawningAll, setSpawningAll] = useState<ReadonlySet<string>>(() => new Set());
+  const [autoSpawnPending, setAutoSpawnPending] = useState<ReadonlyMap<string, boolean>>(
+    () => new Map(),
+  );
   const [deleting, setDeleting] = useState<ReadonlySet<string>>(() => new Set());
   const [ownedViewMode, setViewMode] = useState<DexViewMode | undefined>(undefined);
   // `"tree"` is `DEFAULT_DEX_VIEW_MODE` — inlined to keep `window-state.ts` (and its
@@ -299,6 +310,26 @@ export function DexProvider({
           }
         })();
       },
+      autoSpawnPending,
+      // Optimistically flip the repo's mode (so the toggle reads the new state and
+      // disables while in flight), persist it via main, and clear the override when
+      // it resolves — by then main has re-read the board, which now reports the
+      // persisted mode. Keyed per repo so two repos can toggle independently.
+      setAutoSpawn(project, enabled) {
+        if (autoSpawnPending.has(project)) return;
+        setAutoSpawnPending((prev) => new Map(prev).set(project, enabled));
+        void (async () => {
+          try {
+            await actions.dexSetAutoSpawn({ project, enabled });
+          } finally {
+            setAutoSpawnPending((prev) => {
+              const next = new Map(prev);
+              next.delete(project);
+              return next;
+            });
+          }
+        })();
+      },
       deleting,
       // Hand the task (id, name, computed warning) to main, which raises the
       // native confirm dialog and only deletes on confirm; the renderer just fires
@@ -332,6 +363,7 @@ export function DexProvider({
       drag,
       spawning,
       spawningAll,
+      autoSpawnPending,
       deleting,
       viewMode,
       savedDialogSize,
@@ -1132,6 +1164,49 @@ function DexSpawnAllButton({ count, project }: { count: number; project?: string
 }
 
 /**
+ * The per-repo Auto/Manual toggle: one click flips the repo's auto-spawn mode,
+ * persisted under `plugins.dex.autoSpawn[<project>]`. In Auto the daemon's reap
+ * pass spawns an agent for each of the repo's ready tasks unattended; Manual (the
+ * default) leaves spawning to the user. The displayed state reads the optimistic
+ * override (while a write is in flight) ahead of the board-reported `enabled`, and
+ * the button disables until the write resolves — mirroring {@link DexSpawnAllButton}.
+ */
+function DexAutoSpawnToggle({
+  project,
+  enabled,
+}: {
+  project: string;
+  enabled: boolean;
+}): JSX.Element {
+  const { autoSpawnPending, setAutoSpawn } = useDexContext();
+  const pending = autoSpawnPending.get(project);
+  const inFlight = pending !== undefined;
+  const on = pending ?? enabled;
+  const label = on
+    ? "Auto-spawn on — ready tasks spawn automatically each reap. Click for Manual."
+    : "Auto-spawn off (Manual) — spawn ready tasks yourself. Click for Auto.";
+  return (
+    <button
+      className={`icon-btn dex-auto-spawn${on ? " on" : ""}`}
+      disabled={inFlight}
+      aria-pressed={on}
+      title={label}
+      aria-label={label}
+      onClick={
+        inFlight
+          ? undefined
+          : (e) => {
+              e.stopPropagation();
+              setAutoSpawn(project, !on);
+            }
+      }
+    >
+      <i className={`fa-solid fa-${on ? "robot" : "hand"}`} />
+    </button>
+  );
+}
+
+/**
  * The delete control for a dex task: a trash button whose click hands the task to
  * main, which raises a native confirm dialog and only deletes on confirm (the
  * confirmation stays in main — the non-activating panel can't show a
@@ -1487,9 +1562,13 @@ function DexCollapseAllButton({ epicIds }: { epicIds: string[] }): JSX.Element {
 function DexHeader({
   epicIds,
   readyCount,
+  autoSpawn,
 }: {
   epicIds: string[];
   readyCount: number;
+  // The sole repo's auto-spawn control on a single-repo board, or undefined when
+  // there's no project to key it on (the daemon's own cwd store).
+  autoSpawn?: { project: string; enabled: boolean };
 }): JSX.Element {
   const { viewMode } = useDexContext();
   // Collapse-all only applies to the tree's epics — skip it in graph mode and
@@ -1499,6 +1578,7 @@ function DexHeader({
     <div className="repo-header dex-header">
       <DexViewToggle />
       <DexNewButton scope={PANE_SCOPE} />
+      {autoSpawn && <DexAutoSpawnToggle project={autoSpawn.project} enabled={autoSpawn.enabled} />}
       {/* Fleet launch: spawn an agent for every ready task at once. Hidden when
           nothing is ready (a no-op that would just toast "no ready tasks"). */}
       {readyCount > 0 && <DexSpawnAllButton count={readyCount} />}
@@ -1563,6 +1643,7 @@ function DexRepoHeader({
       </button>
       <span className="dex-repo-actions">
         <DexNewButton scope={group.project} />
+        <DexAutoSpawnToggle project={group.project} enabled={group.autoSpawn} />
         {readyCount > 0 && <DexSpawnAllButton count={readyCount} project={group.project} />}
         {showCollapseAll && <DexCollapseAllButton epicIds={epicIds} />}
       </span>
@@ -2027,9 +2108,14 @@ function DexSectionBody({ section }: { section: DexSection }): JSX.Element {
   // the tab as "Dex".
   const epicIds = section.rows.filter((r) => r.isEpic).map((r) => r.id);
   const readyCount = section.rows.filter(canSpawnDex).length;
+  // A single configured repo gets an Auto/Manual toggle keyed on its project; the
+  // cwd store (no project) gets none.
+  const autoSpawn = section.soleProject
+    ? { project: section.soleProject, enabled: section.autoSpawn[section.soleProject] === true }
+    : undefined;
   return (
     <>
-      <DexHeader epicIds={epicIds} readyCount={readyCount} />
+      <DexHeader epicIds={epicIds} readyCount={readyCount} autoSpawn={autoSpawn} />
       {section.rows.length === 0 ? (
         <div className="message">No open tasks</div>
       ) : viewMode === "graph" ? (
