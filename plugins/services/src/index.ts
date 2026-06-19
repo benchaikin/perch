@@ -198,12 +198,39 @@ type ActionResult = z.infer<typeof ActionResult>;
 /** Input shared by the single-service actions: the process name to target. */
 const ServiceActionInput = z.object({ name: z.string() });
 
-/** Input for the bulk (whole-stack) actions: no arguments. */
-const BulkActionInput = z.object({}).default({});
+/**
+ * Input for the bulk (whole-stack) actions: an optional `project` (a configured
+ * repo basename) that scopes the action to just that repo's live procs, for the
+ * Services tab's per-repo group controls. Omitted → the whole stack, the
+ * behavior MCP/agent callers rely on.
+ */
+const BulkActionInput = z.object({ project: z.string().optional() }).default({});
+type BulkActionInput = z.infer<typeof BulkActionInput>;
 
 /** A process that's up or coming up — Stop applies to it; Start doesn't. */
 function isRunningStatus(status: ServiceStatus): boolean {
   return status === "running" || status === "starting";
+}
+
+/**
+ * Restrict a live process list to one repo's procs when `project` is set. The
+ * project label is a GUI-only association resolved from config
+ * ({@link resolveProject} over each proc's `repo`/`cwd`) — the same resolution the
+ * `list` read uses — so we map configured proc names → project and keep only the
+ * live processes whose name resolves to `project`. Unscoped (`project` undefined)
+ * returns the list unchanged: the whole-stack behavior MCP/agent callers depend on.
+ */
+function scopeProcesses<T extends { name: string }>(
+  processes: T[],
+  project: string | undefined,
+  ctx: { config: unknown; global?: unknown },
+): T[] {
+  if (project === undefined) return processes;
+  const repos = reposOf(ctx.global);
+  const projectByName = new Map(
+    (configOf(ctx.config).procs ?? []).map((p) => [p.name, resolveProject(p, repos)] as const),
+  );
+  return processes.filter((p) => projectByName.get(p.name) === project);
 }
 
 /** Pluralized "Verbed n/total services." summary for the bulk actions. */
@@ -315,8 +342,10 @@ export default definePlugin({
     }),
 
     // ── Bulk (whole-stack) actions ──
-    // start / stop / restart every process at once, for the panel's top-level
-    // "Start all / Stop all / Restart all" controls (and as single agent tools).
+    // start / stop / restart every process at once, for the panel's per-repo
+    // group controls (and as single agent tools). Each takes an optional
+    // `project` (a configured repo basename) that scopes the action to just that
+    // repo's live procs; omitted, it targets the whole stack (the MCP/agent path).
     // `startAll` additionally brings process-compose **up on demand** when the
     // server is down — the path for procs that are defined but not auto-started.
 
@@ -326,17 +355,17 @@ export default definePlugin({
      * an unreachable server yields `ok: false` with nothing to restart. Useful as
      * a single agent tool to bounce the whole stack after a config change.
      */
-    restartAll: action<Record<string, never> | undefined, unknown, ActionResult>({
+    restartAll: action<BulkActionInput | undefined, unknown, ActionResult>({
       summary: "Restart every process-compose service (best-effort)",
       input: BulkActionInput,
       expose: { mcp: true },
-      run: async ({ ctx }) => {
+      run: async ({ input, ctx }) => {
         const provider = providerOf(ctx);
         const processes = await provider.processes();
         if (processes === undefined) {
           return { ok: false, message: "process-compose is unreachable." };
         }
-        const names = processes.map((p) => p.name);
+        const names = scopeProcesses(processes, input?.project, ctx).map((p) => p.name);
         const results = await Promise.all(names.map((name) => provider.action(name, "restart")));
         const restarted = results.filter(Boolean).length;
         return {
@@ -353,18 +382,22 @@ export default definePlugin({
      * reflects the live statuses. When it's already **up**, start each process
      * that isn't running/starting and report how many of N took.
      */
-    startAll: action<Record<string, never> | undefined, unknown, ActionResult>({
+    startAll: action<BulkActionInput | undefined, unknown, ActionResult>({
       summary: "Start every service, bringing process-compose up if it's down",
       input: BulkActionInput,
       expose: { mcp: true },
-      run: async ({ ctx }) => {
+      run: async ({ input, ctx }) => {
         const provider = providerOf(ctx);
         const processes = await provider.processes();
         if (processes === undefined) {
+          // No running server to target a subset against: `up -D` brings the
+          // WHOLE stack up. A scoped Start-all while the server is down still
+          // starts every repo's procs (the next poll reflects them all) — there's
+          // no per-repo selectivity without a server to start individual procs on.
           provider.startServer();
           return { ok: true, message: "Starting services…" };
         }
-        const targets = processes
+        const targets = scopeProcesses(processes, input?.project, ctx)
           .filter((p) => !isRunningStatus(mapStatus(p.status, p.exit_code)))
           .map((p) => p.name);
         if (targets.length === 0) return { ok: true, message: "All services already running." };
@@ -382,17 +415,17 @@ export default definePlugin({
      * server (nothing running) is a no-op success; with the server up, reports
      * how many of the running N stopped.
      */
-    stopAll: action<Record<string, never> | undefined, unknown, ActionResult>({
+    stopAll: action<BulkActionInput | undefined, unknown, ActionResult>({
       summary: "Stop every running process-compose service",
       input: BulkActionInput,
       expose: { mcp: true },
-      run: async ({ ctx }) => {
+      run: async ({ input, ctx }) => {
         const provider = providerOf(ctx);
         const processes = await provider.processes();
         if (processes === undefined) {
           return { ok: true, message: "process-compose is not running." };
         }
-        const targets = processes
+        const targets = scopeProcesses(processes, input?.project, ctx)
           .filter((p) => isRunningStatus(mapStatus(p.status, p.exit_code)))
           .map((p) => p.name);
         if (targets.length === 0) return { ok: true, message: "No running services to stop." };

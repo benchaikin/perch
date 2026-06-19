@@ -32,12 +32,13 @@ const win = dom.window;
 // check the exact action wiring (the data-down / events-up contract).
 const calls = {
   serviceAction: [] as ServiceActionRequest[],
-  servicesBulk: [] as ServicesBulkAction[],
+  servicesBulk: [] as { action: ServicesBulkAction; project?: string }[],
   serviceLogs: [] as string[],
 };
 (win as unknown as { perch: unknown }).perch = {
   serviceAction: (request: ServiceActionRequest) => calls.serviceAction.push(request),
-  servicesBulk: (action: ServicesBulkAction) => calls.servicesBulk.push(action),
+  servicesBulk: (action: ServicesBulkAction, project?: string) =>
+    calls.servicesBulk.push({ action, project }),
   serviceLogs: (name: string) => calls.serviceLogs.push(name),
 };
 
@@ -73,7 +74,16 @@ const BULK_CONTROLS: ServicesControl[] = [
 
 /** A repo group with the given project label and rows (none → an empty group). */
 function group(project: string, ...rows: ServiceRow[]): ServicesRepoGroup {
-  return { project, rows };
+  return { project, rows, controls: [] };
+}
+
+/** A repo group carrying the full bulk-control trio (a server-up named repo). */
+function groupWithControls(
+  project: string,
+  rows: ServiceRow[],
+  bulkActing?: ServicesBulkAction,
+): ServicesRepoGroup {
+  return { project, rows, controls: BULK_CONTROLS, bulkActing };
 }
 
 /** A section literal that may omit the grouping fields (defaulted to the flat case). */
@@ -90,7 +100,10 @@ function asSection(input: SectionInput): ServicesSection {
  * `rerender` so collapse-state tests can push a follow-up render (like a 5s poll)
  * into the SAME root.
  */
-function mount(input: SectionInput, showTitle = false): {
+function mount(
+  input: SectionInput,
+  showTitle = false,
+): {
   container: HTMLElement;
   rerender: (next: SectionInput) => void;
 } {
@@ -163,8 +176,9 @@ test("the Logs button calls serviceLogs with the service name", () => {
   assert.deepEqual(calls.serviceLogs, ["api"]);
 });
 
-test("a bulk header control calls servicesBulk with its action", () => {
+test("a flat-fallback bulk control calls servicesBulk unscoped (no project)", () => {
   calls.servicesBulk.length = 0;
+  // No groups → the flat pane cluster; its controls act on the whole stack.
   const c = render({ visible: true, rows: [runningRow("api")], controls: BULK_CONTROLS });
 
   const restartAll = [...c.querySelectorAll<HTMLButtonElement>(".service-bulk-btn")].find(
@@ -172,7 +186,91 @@ test("a bulk header control calls servicesBulk with its action", () => {
   );
   assert.ok(restartAll);
   click(restartAll);
-  assert.deepEqual(calls.servicesBulk, ["restartAll"]);
+  assert.deepEqual(calls.servicesBulk, [{ action: "restartAll", project: undefined }]);
+});
+
+test("a group header bulk control calls servicesBulk scoped to that repo", () => {
+  calls.servicesBulk.length = 0;
+  const c = render({
+    visible: true,
+    rows: [runningRow("api"), runningRow("ui")],
+    controls: [],
+    grouped: true,
+    repoGroups: [
+      groupWithControls("ashby", [runningRow("api")]),
+      groupWithControls("web", [runningRow("ui")]),
+    ],
+  });
+
+  // The grouped pane has no pane-level cluster — controls live in group headers.
+  assert.equal(c.querySelector(".services-header .services-controls"), null);
+
+  // Each group header carries its own trio; clicking web's Stop all scopes to web.
+  const webHeader = [...c.querySelectorAll(".services-repo-header")].find(
+    (h) => h.querySelector(".services-repo-name")?.textContent === "web",
+  );
+  assert.ok(webHeader);
+  const stopAll = [...webHeader.querySelectorAll<HTMLButtonElement>(".service-bulk-btn")].find(
+    (b) => b.title === "Stop all",
+  );
+  assert.ok(stopAll);
+  click(stopAll);
+  assert.deepEqual(calls.servicesBulk, [{ action: "stopAll", project: "web" }]);
+});
+
+test("an in-flight group bulk action spins only that group's controls", () => {
+  const c = render({
+    visible: true,
+    rows: [runningRow("api"), runningRow("ui")],
+    controls: [],
+    grouped: true,
+    repoGroups: [
+      groupWithControls("ashby", [runningRow("api")], "stopAll"),
+      groupWithControls("web", [runningRow("ui")]),
+    ],
+  });
+
+  const headerFor = (project: string): Element =>
+    [...c.querySelectorAll(".services-repo-header")].find(
+      (h) => h.querySelector(".services-repo-name")?.textContent === project,
+    )!;
+  const ashbyBtns = [
+    ...headerFor("ashby").querySelectorAll<HTMLButtonElement>(".service-bulk-btn"),
+  ];
+  const webBtns = [...headerFor("web").querySelectorAll<HTMLButtonElement>(".service-bulk-btn")];
+
+  // ashby's cluster disables + its Stop all spins; web's stays interactive.
+  assert.ok(
+    ashbyBtns.every((b) => b.disabled),
+    "the acting group's controls disable",
+  );
+  assert.ok(
+    ashbyBtns.find((b) => b.title === "Stop all")?.querySelector("i.fa-spin"),
+    "the acting control spins",
+  );
+  assert.ok(
+    webBtns.every((b) => !b.disabled),
+    "the idle group's controls stay enabled",
+  );
+});
+
+test("the (unknown) bucket header renders no bulk controls", () => {
+  const c = render({
+    visible: true,
+    rows: [runningRow("api"), runningRow("stray")],
+    controls: [],
+    grouped: true,
+    repoGroups: [
+      groupWithControls("ashby", [runningRow("api")]),
+      group("(unknown)", runningRow("stray")), // controls: []
+    ],
+  });
+
+  const unknownHeader = [...c.querySelectorAll(".services-repo-header")].find(
+    (h) => h.querySelector(".services-repo-name")?.textContent === "(unknown)",
+  );
+  assert.ok(unknownHeader);
+  assert.equal(unknownHeader.querySelector(".service-bulk-btn"), null);
 });
 
 test("an in-flight row disables its lifecycle buttons, spins the first, and swallows clicks", () => {
@@ -294,7 +392,10 @@ test("clicking a repo header collapses just that group, and it survives a poll r
     [...c.querySelectorAll(".service-row .branch")].map((n) => n.textContent),
     ["ui"],
   );
-  assert.ok(ashbyHeader.querySelector("i.fa-chevron-right"), "collapsed header shows a right chevron");
+  assert.ok(
+    ashbyHeader.querySelector("i.fa-chevron-right"),
+    "collapsed header shows a right chevron",
+  );
 
   // A background poll pushes a fresh (identical) section; the local collapse
   // state persists because the pane stays mounted.

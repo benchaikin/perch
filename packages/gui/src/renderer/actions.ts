@@ -44,8 +44,8 @@ export function createActions(bridge: () => PerchActions): PerchActions {
     serviceAction(request) {
       bridge().serviceAction(request);
     },
-    servicesBulk(action) {
-      bridge().servicesBulk(action);
+    servicesBulk(action, project) {
+      bridge().servicesBulk(action, project);
     },
     serviceLogs(name) {
       bridge().serviceLogs(name);

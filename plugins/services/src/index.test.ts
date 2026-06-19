@@ -176,6 +176,36 @@ test("services.stopAll stops every running service via PATCH /process/stop/{name
   }
 });
 
+test("services.stopAll scoped to a project only stops that repo's procs", async () => {
+  // `api` belongs to repo `ashby`, `ui` to `web` (explicit `proc.repo`). A scoped
+  // stopAll targets only the named project's live procs; the others are untouched.
+  const server = await fakeServer(["api", "ui"]); // both Running
+  try {
+    const result = (await plugin.capabilities.stopAll!.run({
+      input: { project: "ashby" },
+      ctx: {
+        config: {
+          address: server.address,
+          procs: [
+            { name: "api", command: "run-api", repo: "ashby" },
+            { name: "ui", command: "run-ui", repo: "web" },
+          ],
+        },
+        log: () => {},
+      },
+    })) as { ok: boolean; message: string };
+    assert.equal(result.ok, true);
+    assert.match(result.message, /Stopped 1\/1 service\b/);
+    // Only ashby's `api` is stopped; web's `ui` is left running.
+    assert.deepEqual(
+      server.seen.filter((r) => r.method === "PATCH").map((r) => r.url),
+      ["/process/stop/api"],
+    );
+  } finally {
+    await server.close();
+  }
+});
+
 test("services.startAll starts only the not-running services when the server is up", async () => {
   const server = await fakeServer([
     { name: "api", status: "Running" },
