@@ -135,6 +135,26 @@ flagged=()
 
 note_flag() { flagged+=("$1"); echo "FLAG  $1" >&2; }
 note_reap() { reaped+=("$1"); echo "REAP  $1" >&2; }
+# An in-progress worktree with no PR yet — not actionable, not a flag; just noted
+# so the operator sees why it was left alone (mirrors the daemon's silent skip).
+note_skip() { echo "SKIP  $1" >&2; }
+
+# `gh` itself couldn't run (missing binary / auth / rate-limit / network) — this
+# is NOT "no PR for the branch". Reading it as such would silently skip every
+# merged worktree, so surface it loudly. Reported ONCE per run (a persistent
+# outage would otherwise repeat per worktree). The mirror of land.ts's
+# `ghUnavailable`: a gh failure must never be read as "merged" or "no PR".
+GH_UNAVAILABLE=0
+note_gh_unavailable() {
+  [[ "$GH_UNAVAILABLE" == 1 ]] && return 0
+  GH_UNAVAILABLE=1
+  local reason="$1"
+  if ! command -v gh >/dev/null 2>&1; then
+    reason="gh CLI not found on PATH"
+  fi
+  reason="$(printf '%s' "$reason" | head -n1)"
+  echo "GH-UNAVAILABLE  cannot check PRs: ${reason:-unknown} — merged worktrees can't be reaped this run" >&2
+}
 
 # Fast-forward the local trunk by fetching origin's default branch, ONCE per run
 # and only right before the first reap — so the PR's merge commit is present
@@ -260,11 +280,22 @@ process_record() {
   fi
 
   # --- Guard: PR must be MERGED ---
-  local pr_json state merged_at merge_sha pr_url pr_title pr_number check_count
-  if ! pr_json="$(gh pr view "$branch" --json state,mergedAt,mergeCommit,url,title,number,statusCheckRollup 2>/dev/null)"; then
-    note_flag "$id [$branch] @ $path — no PR found for branch (skipped)"
+  local pr_json pr_err gh_stderr state merged_at merge_sha pr_url pr_title pr_number check_count
+  pr_err="$(mktemp)"
+  if ! pr_json="$(gh pr view "$branch" --json state,mergedAt,mergeCommit,url,title,number,statusCheckRollup 2>"$pr_err")"; then
+    gh_stderr="$(cat "$pr_err")"
+    rm -f "$pr_err"
+    # gh ran and genuinely found no PR for this branch → in-progress/never-opened;
+    # not actionable. Skip silently like the daemon — don't nag about live work.
+    if printf '%s' "$gh_stderr" | grep -qiE 'no (open )?pull requests? found'; then
+      note_skip "$id [$branch] @ $path — no PR yet (in progress)"
+      return 0
+    fi
+    # Anything else means gh couldn't run; never read it as "no PR" / "merged".
+    note_gh_unavailable "$gh_stderr"
     return 0
   fi
+  rm -f "$pr_err"
   state="$(printf '%s' "$pr_json" | jq -r '.state // ""')"
   merged_at="$(printf '%s' "$pr_json" | jq -r '.mergedAt // ""')"
   merge_sha="$(printf '%s' "$pr_json" | jq -r '.mergeCommit.oid // ""')"

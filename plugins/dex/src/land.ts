@@ -77,6 +77,13 @@ export type LandOutcome = z.infer<typeof LandOutcome>;
 export const LandBoard = z.object({
   reaped: z.array(LandOutcome),
   flagged: z.array(LandOutcome),
+  /**
+   * Set when `gh` itself couldn't run this pass (missing binary, expired auth,
+   * rate-limit, network) — distinct from "a branch has no PR". When present, the
+   * pass couldn't determine merge state for any worktree, so nothing is reaped;
+   * it drives a single deduped operator notification rather than a silent no-op.
+   */
+  ghUnavailable: z.string().optional(),
 });
 export type LandBoard = z.infer<typeof LandBoard>;
 
@@ -232,6 +239,31 @@ function parsePrView(json: string): PrView | undefined {
   };
 }
 
+/**
+ * Classify a rejected `gh pr view <branch>` error. `gh` rejects on EVERY
+ * failure — and a genuine "this branch has no PR" (exit 1 with a recognizable
+ * message) is the ONLY one that's a correct silent skip. A missing binary
+ * (ENOENT), expired auth, rate-limit, network blip, or any other stderr means
+ * gh couldn't determine merge state at all, and reading that as "no PR" would
+ * silently skip every merged worktree forever. Fail safe: only an explicit
+ * no-PR message returns true; anything unrecognized is treated as a gh failure.
+ */
+function isNoPrError(err: unknown): boolean {
+  const e = err as { code?: string; stderr?: string; stdout?: string };
+  if (e?.code === "ENOENT") return false; // gh binary not found
+  const text = `${e?.stderr ?? ""}\n${e?.stdout ?? ""}`.toLowerCase();
+  return /no (open )?pull requests? found/.test(text);
+}
+
+/** A short, operator-facing reason for why `gh` couldn't run (for logs + notify). */
+function describeGhFailure(err: unknown): string {
+  const e = err as { code?: string; stderr?: string; message?: string };
+  if (e?.code === "ENOENT") return "gh CLI not found on PATH (set the dex.ghBin setting)";
+  const stderr = (e?.stderr ?? "").trim();
+  if (stderr) return stderr.split("\n")[0]!; // gh's own first error line (auth, rate-limit, …)
+  return String(e?.message ?? err);
+}
+
 /** A dex worktree candidate: its repo root, path, branch, and resolved task id. */
 interface Candidate {
   repo: string;
@@ -301,6 +333,11 @@ export async function runLand(deps: LandDeps): Promise<LandBoard> {
   const git = new GitRunner(deps.gitBin, deps.exec);
   const reaped: LandOutcome[] = [];
   const flagged: LandOutcome[] = [];
+  // The reason `gh` couldn't run, captured from the first gh-execution failure
+  // this pass (ENOENT/auth/rate-limit/network) — NOT a branch's genuine "no PR".
+  // Recorded once so a persistent outage logs/notifies a single time, not per
+  // worktree, and never silently no-ops the whole pass.
+  let ghUnavailable: string | undefined;
   // Repos already freshened this pass — so N merged worktrees in one repo trigger
   // a single fetch, not N. See the freshen step just before each reap.
   const freshenedRepos = new Set<string>();
@@ -331,8 +368,19 @@ export async function runLand(deps: LandDeps): Promise<LandBoard> {
         { cwd: c.path },
       );
       view = parsePrView(json);
-    } catch {
-      // No PR for the branch — in-progress or never opened; not actionable.
+    } catch (err) {
+      if (isNoPrError(err)) {
+        // gh ran and found no PR — in-progress or never opened; not actionable.
+        continue;
+      }
+      // gh itself couldn't run. This is NOT "no PR": reading it as such would
+      // silently skip every merged worktree with zero diagnostics. Never reap on
+      // it; surface the cause once per pass (a persistent outage repeats every
+      // 60s, so log/notify a single time) and move on.
+      if (!ghUnavailable) {
+        ghUnavailable = describeGhFailure(err);
+        deps.log?.(`dex.land: gh unavailable (${ghUnavailable}); cannot check PRs this pass`);
+      }
       continue;
     }
     if (!view) continue;
@@ -407,7 +455,7 @@ export async function runLand(deps: LandDeps): Promise<LandBoard> {
     }
   }
 
-  return { reaped, flagged };
+  return ghUnavailable ? { reaped, flagged, ghUnavailable } : { reaped, flagged };
 }
 
 /**
@@ -612,8 +660,21 @@ export function landNotifications(
   prev: LandBoard | undefined,
   next: LandBoard,
 ): Notification[] {
-  if (prev === undefined) return [];
   const notes: Notification[] = [];
+
+  // gh couldn't run this pass — auto-land can't see merge state, so nothing
+  // reaps. Surface it even on the first poll (it's a standing operational
+  // failure, not a change), deduped to a single banner across the outage.
+  if (next.ghUnavailable) {
+    notes.push({
+      title: "Auto-land paused — gh unavailable",
+      body: `Can't check PR status (${next.ghUnavailable}). Merged dex worktrees won't be reaped until gh runs again.`,
+      level: "warning",
+      dedupeKey: "land:gh-unavailable",
+    });
+  }
+
+  if (prev === undefined) return notes;
 
   for (const o of next.reaped) {
     notes.push({
