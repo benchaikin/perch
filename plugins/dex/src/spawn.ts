@@ -333,6 +333,55 @@ export class DexRunner {
   }
 }
 
+/**
+ * A tiny keyed async mutex: calls sharing a `key` run one at a time (each awaits
+ * the prior call on that key, then becomes the new tail), while different keys run
+ * concurrently. The only synchronization primitive {@link runSpawn} needs to make
+ * a concurrent batch safe — see {@link SpawnLocks}. The stored tail swallows
+ * rejections so one failed section never poisons the next waiter on that key.
+ */
+export class KeyedMutex {
+  private readonly tails = new Map<string, Promise<unknown>>();
+
+  run<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const prior = this.tails.get(key) ?? Promise.resolve();
+    const result = prior.then(fn, fn);
+    this.tails.set(
+      key,
+      result.then(
+        () => {},
+        () => {},
+      ),
+    );
+    return result;
+  }
+}
+
+/**
+ * The locks a batch shares across its concurrent {@link runSpawn} calls so the
+ * racey sections serialize while independent work (fetch, slug derivation) still
+ * overlaps. One per contended domain (see {@link runSpawnBatch}'s docstring for
+ * the WHY behind each):
+ *   - `store` keyed by storage-path — the unlocked `dex start` JSONL rewrite;
+ *   - `repo` keyed by repo — `git worktree add` + the link/exclude git ops that
+ *     contend on `.git/worktrees` + `index.lock`;
+ *   - `terminal` on one fixed key — the terminal launcher, which races regardless
+ *     of repo, so it serializes even across a cross-repo batch.
+ */
+export interface SpawnLocks {
+  store: KeyedMutex;
+  repo: KeyedMutex;
+  terminal: KeyedMutex;
+}
+
+/** A fresh, independent set of {@link SpawnLocks} (the default for a lone spawn). */
+export function createSpawnLocks(): SpawnLocks {
+  return { store: new KeyedMutex(), repo: new KeyedMutex(), terminal: new KeyedMutex() };
+}
+
+/** The fixed key for the single global terminal-launcher lock. */
+const TERMINAL_LOCK_KEY = "terminal";
+
 /** Dependencies for {@link runSpawn} — the seams the action injects, tests stub. */
 export interface SpawnDeps {
   exec: Exec;
@@ -348,6 +397,18 @@ export interface SpawnDeps {
   writeScript?: (label: string, command: string) => string;
   /** Filesystem ops for linking the dex store into the worktree (tests stub it). */
   fs?: FsOps;
+  /**
+   * Max number of {@link runSpawn} calls a batch runs at once (see
+   * {@link runSpawnBatch}); the effective pool clamps to `[1, ready.length]`.
+   * Unused by a lone `runSpawn`. Defaults to 5 at the read site.
+   */
+  maxConcurrency?: number;
+  /**
+   * Locks shared across a batch so concurrent spawns serialize their racey
+   * sections. Defaults to a fresh per-call set, so a lone {@link runSpawn} is
+   * still self-contained (its locks just never contend).
+   */
+  locks?: SpawnLocks;
   log?: (message: string) => void;
 }
 
@@ -513,6 +574,9 @@ export async function runSpawn(input: SpawnInput, deps: SpawnDeps): Promise<Spaw
   }
 
   const dex = new DexRunner(deps.dexBin, deps.exec);
+  // A lone spawn gets its own (never-contending) locks; a batch passes shared ones
+  // so its concurrent runSpawns serialize the racey sections below.
+  const locks = deps.locks ?? createSpawnLocks();
 
   // Resolve the task (name → slug) and its project (the repo its store lives in).
   // An explicit `input.repo` short-circuits the per-store probe: we just need the
@@ -569,9 +633,11 @@ export async function runSpawn(input: SpawnInput, deps: SpawnDeps): Promise<Spaw
   // build) means a launched agent always sits on an in-progress task; the only
   // failure that can now outrun the mark is a worktree-add error on a path the
   // pre-flight didn't see (e.g. a stale registered branch), which `--force` heals
-  // on the eventual re-spawn. NOTE: batch spawns run SEQUENTIALLY (runSpawnBatch)
-  // precisely so these `dex start` writes don't race + clobber each other.
-  const started = await dex.start(id, storagePathOf(resolvedRepo));
+  // on the eventual re-spawn. The per-store lock serializes this unlocked JSONL
+  // rewrite so concurrent batch spawns into one store don't clobber each other's
+  // `started_at` (see runSpawnBatch).
+  const storagePath = storagePathOf(resolvedRepo);
+  const started = await locks.store.run(storagePath, () => dex.start(id, storagePath));
   if (!started.ok) {
     return {
       ok: false,
@@ -594,47 +660,57 @@ export async function runSpawn(input: SpawnInput, deps: SpawnDeps): Promise<Spaw
     );
   }
   const base = freshened ? `origin/${localBase}` : localBase;
-  try {
-    await git.worktreeAdd(resolvedRepo, branch, worktreePath, base);
-  } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    return {
-      ok: false,
-      message: `couldn't create worktree at ${worktreePath} (branch ${branch}): ${detail}`,
-    };
-  }
-
-  // The worktree is a sibling dir with no `.dex`; link the source repo's store in
-  // so the spawned agent's `dex show <id>` (and the user's dex commands) resolve
-  // without a `--storage-path`. Best-effort — never blocks the launch.
-  await linkDexStore(worktreePath, resolvedRepo, fs, deps.log);
-  // …and exclude that link from git, so its lone `?? .dex` never reads as a dirty
-  // tree and blocks auto-land from reaping the worktree once its PR merges.
-  await excludeDexLink(worktreePath, git, fs, deps.log);
+  // Serialize the worktree add + the link/exclude git ops per repo: concurrent
+  // `git worktree add` (and the rev-parse/exclude writes) into one repo contend on
+  // `.git/worktrees` + `index.lock`. The fetch above stays outside the lock so
+  // independent repos' freshens overlap. Returns a failure message, or undefined.
+  const worktreeError = await locks.repo.run(resolvedRepo, async () => {
+    try {
+      await git.worktreeAdd(resolvedRepo, branch, worktreePath, base);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      return `couldn't create worktree at ${worktreePath} (branch ${branch}): ${detail}`;
+    }
+    // The worktree is a sibling dir with no `.dex`; link the source repo's store in
+    // so the spawned agent's `dex show <id>` (and the user's dex commands) resolve
+    // without a `--storage-path`. Best-effort — never blocks the launch.
+    await linkDexStore(worktreePath, resolvedRepo, fs, deps.log);
+    // …and exclude that link from git, so its lone `?? .dex` never reads as a dirty
+    // tree and blocks auto-land from reaping the worktree once its PR merges.
+    await excludeDexLink(worktreePath, git, fs, deps.log);
+    return undefined;
+  });
+  if (worktreeError) return { ok: false, message: worktreeError };
 
   // The task is already marked in-progress (above) and the worktree exists, so
-  // launch the seeded agent.
-  const launched = spawnInTerminal({
-    command: buildClaudeLaunch(worktreePath, bootstrapPrompt(id)),
-    terminal: deps.terminal,
-    label: `dex ${id}`,
-    // Title the agent's window with its dex id (+ name) so a row of agent
-    // terminals is identifiable at a glance and each ties back to its task —
-    // matching the per-task tab color. Falls back to the bare id when the name
-    // has no usable text.
-    title: agentTitle(id, name),
-    // Tint the agent's window tab/header to the task's identity color so it
-    // matches the task's dex row + linked worktree across the fleet (a no-op on
-    // terminals without a tab-color hook).
-    tabColor: dexTaskColorRgb(id),
-    // Tag the window with the worktree path so a later "jump to agent" (the
-    // worktree-open control, keyed by the same path) raises THIS live session
-    // rather than spawning a new shell on top of it.
-    focusMarker: worktreePath,
-    log: deps.log,
-    spawn: deps.spawn,
-    writeScript: deps.writeScript,
-  });
+  // launch the seeded agent. The single global terminal lock serializes the
+  // launcher across the whole batch — the osascript that drives Terminal.app
+  // races regardless of repo, so this one lock is required even cross-repo.
+  const launched = await locks.terminal.run(TERMINAL_LOCK_KEY, () =>
+    Promise.resolve(
+      spawnInTerminal({
+        command: buildClaudeLaunch(worktreePath, bootstrapPrompt(id)),
+        terminal: deps.terminal,
+        label: `dex ${id}`,
+        // Title the agent's window with its dex id (+ name) so a row of agent
+        // terminals is identifiable at a glance and each ties back to its task —
+        // matching the per-task tab color. Falls back to the bare id when the name
+        // has no usable text.
+        title: agentTitle(id, name),
+        // Tint the agent's window tab/header to the task's identity color so it
+        // matches the task's dex row + linked worktree across the fleet (a no-op on
+        // terminals without a tab-color hook).
+        tabColor: dexTaskColorRgb(id),
+        // Tag the window with the worktree path so a later "jump to agent" (the
+        // worktree-open control, keyed by the same path) raises THIS live session
+        // rather than spawning a new shell on top of it.
+        focusMarker: worktreePath,
+        log: deps.log,
+        spawn: deps.spawn,
+        writeScript: deps.writeScript,
+      }),
+    ),
+  );
   if (!launched.ok) {
     return {
       ok: false,
@@ -691,38 +767,61 @@ export interface SpawnBatchResult {
 }
 
 /**
- * Spawn an agent for every ready (unblocked) task in `tasks`, one at a time —
- * the batch counterpart of {@link runSpawn} and the GUI's "spawn all ready"
- * button. Filters to {@link isReadyToSpawn} candidates, runs {@link runSpawn}
- * over them SEQUENTIALLY (each gets its own `dex/<id>-<slug>` worktree + seeded
- * agent), and rolls the per-task outcomes into a summary. Never throws: each
- * task's failure is captured in its own `SpawnResult`, so one bad task doesn't
- * sink the rest.
+ * Spawn an agent for every ready (unblocked) task in `tasks`, up to
+ * `deps.maxConcurrency` at a time — the batch counterpart of {@link runSpawn} and
+ * the GUI's "spawn all ready" button. Filters to {@link isReadyToSpawn}
+ * candidates, runs {@link runSpawn} over them through a bounded worker pool (each
+ * gets its own `dex/<id>-<slug>` worktree + seeded agent), and rolls the per-task
+ * outcomes into a summary. Never throws: each task's failure is captured in its
+ * own `SpawnResult` (and a worker that throws unexpectedly still resolves its slot
+ * as an `ok:false` entry), so one bad task doesn't sink the rest. `results` stays
+ * in board order even though tasks finish out of order, so the GUI toast names the
+ * failed ids correctly.
  *
- * Sequential, NOT `Promise.all`: every `runSpawn` mutates shared, unsynchronized
- * state, all of which races under concurrency —
+ * Bounded, not unbounded `Promise.all`: every `runSpawn` mutates shared,
+ * unsynchronized state that races under concurrency. The pool caps how many run at
+ * once, and {@link SpawnLocks} (shared across the batch) serialize the three
+ * contended domains so raising the cap stays SAFE —
  *   - the per-repo `.dex` store: `dex start` reads the whole JSONL store and
- *     rewrites it (temp-file + rename) with NO lock, so concurrent starts lose
- *     each other's `started_at` writes → tasks that got a worktree + agent still
- *     read as 'ready' (verified: ~half of a parallel batch can be lost);
+ *     rewrites it (temp-file + rename) with NO lock, so concurrent starts would
+ *     lose each other's `started_at` → the per-storage-path `store` lock;
  *   - the repo's `.git/worktrees` + `index.lock`: concurrent `git worktree add`
- *     in one repo contend and some fail → those tasks are left marked in-progress
- *     with no agent;
+ *     in one repo contend and some fail → the per-repo `repo` lock;
  *   - the terminal launcher: concurrent `osascript` to Terminal.app races and
- *     drops windows → "some terminals opened, some didn't".
- * Serializing trades a little latency (spawns are interactive and rare; each
- * launched agent runs detached, so we don't wait on it) for reliability — every
- * step sees the previous task's committed effect.
+ *     drops windows regardless of repo → the single global `terminal` lock.
+ * Because those locks serialize the racey sections per store/repo, a SINGLE-repo
+ * batch (the common case) effectively serializes there and the real throughput win
+ * is CROSS-repo; the cap's guarantee is a ceiling ("never more than N in flight"),
+ * which holds either way. Each launched agent runs detached, so we never wait on it.
  */
 export async function runSpawnBatch(
   tasks: ReadonlyArray<SpawnCandidate>,
   deps: SpawnDeps,
 ): Promise<SpawnBatchResult> {
   const ready = tasks.filter(isReadyToSpawn);
-  const results: SpawnBatchEntry[] = [];
-  for (const t of ready) {
-    results.push({ id: t.id, result: await runSpawn({ id: t.id }, deps) });
-  }
+  // Pre-sized so workers write outcomes by board index, not completion order.
+  const results: SpawnBatchEntry[] = new Array(ready.length);
+  // One shared lock set for the whole batch, so concurrent runSpawns actually
+  // contend (and serialize) on the racey sections rather than each getting its own.
+  const locks = deps.locks ?? createSpawnLocks();
+  const poolSize = Math.max(1, Math.min(deps.maxConcurrency ?? 5, ready.length));
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (let i = next++; i < ready.length; i = next++) {
+      const t = ready[i]!;
+      let result: SpawnResult;
+      try {
+        result = await runSpawn({ id: t.id }, { ...deps, locks });
+      } catch (err) {
+        // runSpawn is contracted never to throw; guard anyway so a rogue rejection
+        // is captured as a failed entry instead of rejecting the whole batch.
+        const detail = err instanceof Error ? err.message : String(err);
+        result = { ok: false, message: `unexpected error spawning ${t.id}: ${detail}` };
+      }
+      results[i] = { id: t.id, result };
+    }
+  };
+  await Promise.all(Array.from({ length: poolSize }, worker));
   const spawned = results.filter((r) => r.result.ok).length;
   const failed = results.length - spawned;
   const failedIds = results.filter((r) => !r.result.ok).map((r) => r.id);

@@ -22,6 +22,7 @@ import {
   GitRunner,
   isReadyToSpawn,
   isValidTaskId,
+  KeyedMutex,
   linkDexStore,
   resolveRepo,
   runSpawn,
@@ -55,10 +56,7 @@ test("branchFor / worktreePathFor: convention with and without a slug", () => {
     worktreePathFor("/work/perch", "abc12", "my-task"),
     "/work/perch-worktrees/abc12-my-task",
   );
-  assert.equal(
-    worktreePathFor("/work/perch", "abc12", ""),
-    "/work/perch-worktrees/abc12-task",
-  );
+  assert.equal(worktreePathFor("/work/perch", "abc12", ""), "/work/perch-worktrees/abc12-task");
 });
 
 test("dexStoreLinkSpec: a `.dex` in the worktree pointing at <repo>/.dex", () => {
@@ -83,9 +81,7 @@ test("linkDexStore: a symlink error is swallowed (best-effort, never throws)", a
 
 test("excludeDexLink: appends `/.dex` to the worktree's info/exclude (once)", async () => {
   const exec: Exec = (_cmd, args) =>
-    args.includes("rev-parse")
-      ? Promise.resolve("/repo/.git/info/exclude\n")
-      : Promise.resolve("");
+    args.includes("rev-parse") ? Promise.resolve("/repo/.git/info/exclude\n") : Promise.resolve("");
   const git = new GitRunner("git", exec);
   const files = new Map<string, string>();
   const fs: FsOps = {
@@ -167,7 +163,16 @@ test("resolveRepo: missing project (no store knew it) is a clean error", () => {
 test("worktreeAddArgs: git -C <repo> worktree add -b <branch> <path> <base>", () => {
   assert.deepEqual(
     worktreeAddArgs("/work/perch", "dex/abc12-x", "/work/perch-worktrees/abc12-x", "main"),
-    ["-C", "/work/perch", "worktree", "add", "-b", "dex/abc12-x", "/work/perch-worktrees/abc12-x", "main"],
+    [
+      "-C",
+      "/work/perch",
+      "worktree",
+      "add",
+      "-b",
+      "dex/abc12-x",
+      "/work/perch-worktrees/abc12-x",
+      "main",
+    ],
   );
 });
 
@@ -192,7 +197,10 @@ test("buildClaudeLaunch: cd's into the quoted path and execs claude with a quote
   const cmd = buildClaudeLaunch("/work/perch-worktrees/abc12-x", bootstrapPrompt("abc12"));
   // The session launches in auto mode so the spawned agent runs without a manual
   // permission-mode toggle.
-  assert.match(cmd, /^cd '\/work\/perch-worktrees\/abc12-x' && exec claude --permission-mode auto '/);
+  assert.match(
+    cmd,
+    /^cd '\/work\/perch-worktrees\/abc12-x' && exec claude --permission-mode auto '/,
+  );
   // The prompt is a single shell-quoted argument; the backticks/quotes inside it
   // are contained by the single-quoting (no shell expansion leaks).
   assert.ok(cmd.includes("Work on dex task abc12."));
@@ -509,10 +517,7 @@ test("runSpawn: links the repo's dex store into the worktree so the agent finds 
     { target: "/work/perch/.dex", linkPath: "/work/perch-worktrees/abc12-task/.dex" },
   ]);
   // …and that link is excluded from git, so its `?? .dex` never blocks auto-land.
-  assert.equal(
-    ff.files.get("/work/perch-worktrees/abc12-task/.git/info/exclude"),
-    "/.dex\n",
-  );
+  assert.equal(ff.files.get("/work/perch-worktrees/abc12-task/.git/info/exclude"), "/.dex\n");
 });
 
 test("runSpawn: doesn't clobber a `.dex` already in the worktree", async () => {
@@ -597,7 +602,8 @@ test("runSpawn: an already-existing worktree is refused BEFORE marking in-progre
 
 test("runSpawn: default branch falls back to main when there's no origin/HEAD", async () => {
   const exec: Exec = (cmd, args) => {
-    if (cmd === "dex" && args.includes("show")) return Promise.resolve(JSON.stringify({ name: "T" }));
+    if (cmd === "dex" && args.includes("show"))
+      return Promise.resolve(JSON.stringify({ name: "T" }));
     if (cmd === "dex") return Promise.resolve("");
     if (cmd === "git" && args[0] === "symbolic-ref") return Promise.reject(new Error("no HEAD"));
     // No origin/HEAD ⇒ no origin to fetch from either, so the freshen fails and
@@ -679,35 +685,143 @@ test("runSpawnBatch: no ready tasks is a clean no-op (nothing launched)", async 
   assert.equal(calls.length, 0); // never probed a store
 });
 
-test("runSpawnBatch: runs spawns SEQUENTIALLY (never two in flight at once)", async () => {
-  // The dex store, git worktree dir, and terminal launcher all race under
-  // concurrency, so the batch must serialize. Prove it: an async exec stub that
-  // yields a microtask on every call tracks how many runSpawns are mid-flight —
-  // sequential ⇒ never more than one. (Under the old `Promise.all` this hit 3.)
+/**
+ * An async `Exec` that records peak concurrency: every call bumps an `active`
+ * counter, yields a microtask (so any overlap becomes observable), then decrements.
+ * Within one `runSpawn` the exec calls are sequential, so the peak `active` count
+ * tracks how many `runSpawn`s are mid-flight at once — i.e. the live pool size.
+ */
+function concurrencyExec(): { exec: Exec; peak: () => number } {
   let active = 0;
   let maxActive = 0;
   const exec: Exec = async (cmd, args) => {
     active += 1;
     maxActive = Math.max(maxActive, active);
-    await Promise.resolve(); // yield, so overlap (if any) is observable
+    await Promise.resolve();
     try {
       if (cmd === "dex" && args.includes("show")) return JSON.stringify({ name: "T" });
       if (cmd === "git" && args[0] === "symbolic-ref") return "origin/main\n";
+      if (cmd === "git" && args.includes("rev-parse")) return `${args[1]}/.git/info/exclude\n`;
       return "";
     } finally {
       active -= 1;
     }
   };
+  return { exec, peak: () => maxActive };
+}
+
+function readyTasks(n: number): SpawnCandidate[] {
+  return Array.from({ length: n }, (_, i) => ({
+    id: `ready${i + 1}`,
+    status: "ready" as const,
+    blockedByCount: 0,
+  }));
+}
+
+test("runSpawnBatch: a bounded pool never exceeds maxConcurrency in flight", async () => {
+  // The store/worktree/terminal races are tamed by per-domain locks, but the cap
+  // is still a hard ceiling: with maxConcurrency 2 over 4 ready tasks, never more
+  // than 2 runSpawns are mid-flight, and all 4 still spawn.
+  const { exec, peak } = concurrencyExec();
   const res = await runSpawnBatch(
-    [
-      { id: "ready1", status: "ready", blockedByCount: 0 },
-      { id: "ready2", status: "ready", blockedByCount: 0 },
-      { id: "ready3", status: "ready", blockedByCount: 0 },
-    ],
+    readyTasks(4),
+    deps(exec, {
+      spawn: fakeSpawn().spawn,
+      writeScript: fakeWriteScript().writeScript,
+      maxConcurrency: 2,
+    }),
+  );
+  assert.equal(res.spawned, 4);
+  assert.equal(peak(), 2, "never more than maxConcurrency in flight");
+});
+
+test("runSpawnBatch: maxConcurrency defaults to 5 when unset", async () => {
+  // Unset ⇒ effective 5: six ready tasks reach a peak of exactly 5 in flight.
+  const { exec, peak } = concurrencyExec();
+  const res = await runSpawnBatch(
+    readyTasks(6),
     deps(exec, { spawn: fakeSpawn().spawn, writeScript: fakeWriteScript().writeScript }),
   );
+  assert.equal(res.spawned, 6);
+  assert.equal(peak(), 5, "default cap of 5 applies");
+});
+
+test("runSpawnBatch: the pool clamps to the ready count when the cap is larger", async () => {
+  // maxConcurrency 10 but only 3 ready ⇒ the pool clamps to 3 (no idle workers).
+  const { exec, peak } = concurrencyExec();
+  const res = await runSpawnBatch(
+    readyTasks(3),
+    deps(exec, {
+      spawn: fakeSpawn().spawn,
+      writeScript: fakeWriteScript().writeScript,
+      maxConcurrency: 10,
+    }),
+  );
   assert.equal(res.spawned, 3);
-  assert.equal(maxActive, 1, "spawns must not overlap");
+  assert.equal(peak(), 3, "pool clamps to the number of ready tasks");
+});
+
+test("runSpawnBatch: results stay in board order despite out-of-order completion", async () => {
+  // Earlier-listed tasks finish LATER (more microtask yields), so completion order
+  // is the reverse of board order — yet `results` (written by index) stays in board
+  // order, so the toast names tasks correctly.
+  const delays: Record<string, number> = { ready1: 6, ready2: 3, ready3: 0 };
+  const exec: Exec = async (cmd, args) => {
+    if (cmd === "dex" && args.includes("show")) {
+      const id = args[args.indexOf("show") + 1]!;
+      for (let i = 0; i < (delays[id] ?? 0); i++) await Promise.resolve();
+      return JSON.stringify({ name: "T" });
+    }
+    // The terminal launch is the last step; record the order tasks actually finish.
+    if (cmd === "git" && args[0] === "symbolic-ref") return "origin/main\n";
+    if (cmd === "git" && args.includes("rev-parse")) return `${args[1]}/.git/info/exclude\n`;
+    return "";
+  };
+  const order: string[] = [];
+  const spawn = (() => {
+    return { on: () => {}, unref: () => {} };
+  }) as unknown as SpawnDeps["spawn"];
+  const writeScript: SpawnDeps["writeScript"] = (label) => {
+    order.push(label.replace("dex ", ""));
+    return "/tmp/fake.sh";
+  };
+  const res = await runSpawnBatch(
+    readyTasks(3),
+    deps(exec, { spawn, writeScript, maxConcurrency: 3 }),
+  );
+
+  assert.equal(res.spawned, 3);
+  assert.deepEqual(
+    res.results.map((r) => r.id),
+    ["ready1", "ready2", "ready3"],
+    "results stay in board order",
+  );
+  // Completion (terminal-launch) order was NOT board order — proving the indexing,
+  // not the finish order, drives `results`.
+  assert.notDeepEqual(order, ["ready1", "ready2", "ready3"]);
+});
+
+test("KeyedMutex: same key serializes, different keys overlap", async () => {
+  const mutex = new KeyedMutex();
+  let active = 0;
+  let peak = 0;
+  const work = async () => {
+    active += 1;
+    peak = Math.max(peak, active);
+    await Promise.resolve();
+    active -= 1;
+  };
+  // Same key ⇒ serialized (peak 1).
+  await Promise.all([mutex.run("a", work), mutex.run("a", work), mutex.run("a", work)]);
+  assert.equal(peak, 1);
+  // A rejection on a key doesn't poison the next waiter on that key.
+  await assert.rejects(mutex.run("a", () => Promise.reject(new Error("boom"))));
+  await assert.doesNotReject(mutex.run("a", () => Promise.resolve()));
+  // Different keys ⇒ overlap.
+  active = 0;
+  peak = 0;
+  await Promise.all([mutex.run("x", work), mutex.run("y", work)]);
+  assert.equal(peak, 2);
 });
 
 test("runSpawnBatch: the summary names which tasks failed (for the GUI toast)", async () => {

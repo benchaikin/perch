@@ -148,6 +148,14 @@ const DexConfig = z.object({
    * edited field for v1; the GUI sibling adds the toggle.
    */
   autoSpawn: z.record(z.string(), z.boolean()).optional(),
+  /**
+   * Max number of agents `spawn-all` launches concurrently; default 5. The batch
+   * runs a bounded worker pool of this size (clamped to the ready count), so a big
+   * board never opens more than N agents at a time. Concurrent spawns are made safe
+   * by per-store/per-repo/global-terminal locks (see `runSpawnBatch`), so raising
+   * this is a ceiling on parallelism, not a re-introduction of the old races.
+   */
+  maxConcurrency: z.number().int().min(1).optional(),
 });
 export type DexConfig = z.infer<typeof DexConfig>;
 
@@ -369,6 +377,17 @@ export default definePlugin({
         "no-CI repos), automatically remove the worktree + branch and complete the task. " +
         "Turn off to only flag merged worktrees as 'ready to land' and reap them by hand.",
       default: true,
+    },
+    {
+      key: "maxConcurrency",
+      type: "number",
+      label: "Max concurrent spawns",
+      description:
+        "How many agents 'spawn all ready' launches at once. The batch never runs " +
+        "more than this many spawns concurrently (clamped to the number of ready " +
+        "tasks). Concurrent spawns are serialized where they'd otherwise race, so " +
+        "this is a ceiling on parallelism.",
+      default: 5,
     },
     {
       key: "dexBin",
@@ -606,12 +625,15 @@ export default definePlugin({
      * board the `tasks` read does, filters to the daemon-side readiness gate
      * (`ready` + no active blockers; in-progress/blocked tasks are skipped, and
      * `runSpawn` itself refuses a task whose worktree already exists), and runs
-     * `runSpawn` over the survivors in parallel. CLI-exposed as `perch dex
-     * spawn-all` (and MCP as `dex_spawn-all`). Returns a `{ spawned, failed }`
-     * summary; never throws.
+     * `runSpawn` over the survivors through a bounded pool of up to
+     * `maxConcurrency` (default 5) at a time — never more — with the racey sections
+     * serialized so the cap is safe to raise. CLI-exposed as `perch dex spawn-all`
+     * (and MCP as `dex_spawn-all`). Returns a `{ spawned, failed }` summary; never
+     * throws.
      */
     "spawn-all": action({
-      summary: "Spawn an agent for every ready (unblocked) dex task, in parallel",
+      summary:
+        "Spawn an agent for every ready (unblocked) dex task, up to maxConcurrency at a time",
       // An optional `project` scopes the launch to one repo's store (the GUI's
       // per-repo launch on a multi-repo board); omitted launches every store's
       // ready tasks, as before.
@@ -629,6 +651,7 @@ export default definePlugin({
           repos: dirs,
           terminal: terminalConfigOf(ctx.global),
           spawn: spawnOpenSpawn,
+          maxConcurrency: cfg.maxConcurrency ?? 5,
           log: ctx.log,
         });
       },
