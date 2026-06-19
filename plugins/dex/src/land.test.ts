@@ -83,8 +83,14 @@ function porcelain(main: string, trees: Array<{ path: string; branch: string }>)
 interface StubOpts {
   /** porcelain for `git -C <repo> worktree list`. */
   worktrees: string;
-  /** gh pr view JSON per branch; a missing branch → gh rejects (no PR). */
+  /** gh pr view JSON per branch; a missing branch → gh rejects with a genuine no-PR stderr. */
   prByBranch: Record<string, string>;
+  /**
+   * Make `gh pr view` fail to RUN (not "no PR"): "enoent" simulates a missing
+   * binary (Node `code === "ENOENT"`); any other string becomes gh's stderr
+   * (e.g. an auth or rate-limit message). Distinct from a branch with no PR.
+   */
+  ghFailure?: "enoent" | string;
   /** `git status --porcelain` dirt per worktree path (default clean = ""). */
   dirtByPath?: Record<string, string>;
   /** perch.dexTask override per worktree path (default unset). */
@@ -148,9 +154,23 @@ function stub(opts: StubOpts): { exec: Exec; calls: Array<{ cmd: string; args: s
       if (args.includes("branch") && args.includes("-D")) return Promise.resolve("");
     }
     if (cmd === "gh") {
+      if (opts.ghFailure === "enoent") {
+        const e = new Error("spawn gh ENOENT") as Error & { code?: string };
+        e.code = "ENOENT";
+        return Promise.reject(e);
+      }
+      if (opts.ghFailure) {
+        const e = new Error("gh failed") as Error & { stderr?: string };
+        e.stderr = opts.ghFailure;
+        return Promise.reject(e);
+      }
       const branch = args[args.indexOf("view") + 1]!;
       const json = opts.prByBranch[branch];
-      return json ? Promise.resolve(json) : Promise.reject(new Error("no PR"));
+      if (json) return Promise.resolve(json);
+      // gh ran and genuinely found no PR for the branch (exit 1 + this stderr).
+      const e = new Error("gh: no PR") as Error & { stderr?: string };
+      e.stderr = `no pull requests found for branch "${branch}"`;
+      return Promise.reject(e);
     }
     if (cmd === "dex") {
       if (args.includes("show")) {
@@ -251,6 +271,51 @@ test("runLand: no PR for the branch → skipped (in-progress, not actionable)", 
   });
   const board = await runLand(deps(exec));
   assert.deepEqual(board, { reaped: [], flagged: [] });
+});
+
+test("runLand: gh not found (ENOENT) → diagnostic, no reap, NOT a silent no-PR skip", async () => {
+  const logs: string[] = [];
+  const { exec, calls } = stub({
+    worktrees: porcelain("/work/perch", [{ path: "/wt/a", branch: "dex/abc12-foo" }]),
+    prByBranch: { "dex/abc12-foo": mergedWithCi }, // would reap if gh could run
+    ghFailure: "enoent",
+  });
+  const board = await runLand(deps(exec, { log: (m) => logs.push(m) }));
+  // A gh failure must never be read as "no PR": nothing reaps, nothing flags…
+  assert.equal(board.reaped.length, 0);
+  assert.equal(board.flagged.length, 0);
+  assert.equal(calls.some((c) => c.args.includes("remove")), false);
+  // …and it surfaces a single, gh-naming diagnostic instead of failing silently.
+  assert.match(board.ghUnavailable ?? "", /gh CLI not found/);
+  assert.ok(logs.some((m) => /gh unavailable/.test(m)));
+});
+
+test("runLand: gh auth/rate-limit failure → diagnostic carrying gh's stderr, no reap", async () => {
+  const { exec, calls } = stub({
+    worktrees: porcelain("/work/perch", [{ path: "/wt/a", branch: "dex/abc12-foo" }]),
+    prByBranch: { "dex/abc12-foo": mergedWithCi },
+    ghFailure: "gh auth login required",
+  });
+  const board = await runLand(deps(exec));
+  assert.equal(board.reaped.length, 0);
+  assert.equal(board.flagged.length, 0);
+  assert.equal(calls.some((c) => c.args.includes("remove")), false);
+  assert.match(board.ghUnavailable ?? "", /auth login required/);
+});
+
+test("runLand: a persistent gh outage records the cause ONCE, not per worktree", async () => {
+  const logs: string[] = [];
+  const { exec } = stub({
+    worktrees: porcelain("/work/perch", [
+      { path: "/wt/a", branch: "dex/abc12-foo" },
+      { path: "/wt/b", branch: "dex/def34-bar" },
+    ]),
+    prByBranch: {},
+    ghFailure: "enoent",
+  });
+  await runLand(deps(exec, { log: (m) => logs.push(m) }));
+  // Two worktrees, one outage → exactly one diagnostic (no per-worktree spam).
+  assert.equal(logs.filter((m) => /gh unavailable/.test(m)).length, 1);
 });
 
 test("runLand: merged but DIRTY tree → flagged, never reaped", async () => {
@@ -617,6 +682,19 @@ test("landNotifications: a reaped worktree announces 'Landed' once", () => {
   assert.equal(notes[0]!.title, "Landed");
   assert.equal(notes[0]!.level, "success");
   assert.equal(notes[0]!.dedupeKey, "land:abc12:reaped");
+});
+
+test("landNotifications: gh-unavailable warns once (even on first poll), deduped", () => {
+  const down: LandBoard = { reaped: [], flagged: [], ghUnavailable: "gh CLI not found on PATH" };
+  // Standing operational failure → surfaced even with no prev (unlike reaped/flagged).
+  const first = landNotifications(undefined, down);
+  assert.equal(first.length, 1);
+  assert.equal(first[0]!.level, "warning");
+  assert.equal(first[0]!.dedupeKey, "land:gh-unavailable");
+  assert.match(first[0]!.body ?? "", /gh CLI not found/);
+  // Still down next poll → re-emitted with the same dedupeKey (the notify layer dedupes).
+  const again = landNotifications(down, down);
+  assert.equal(again.filter((n) => n.dedupeKey === "land:gh-unavailable").length, 1);
 });
 
 test("landNotifications: a NEW flag warns; a persistent one does not re-warn", () => {
