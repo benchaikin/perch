@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { autoSpawnRepos, effectiveDirs, tasksForProject } from "./index.js";
+import { autoSpawnRepos, effectiveDirs, NewInputSchema, tasksForProject } from "./index.js";
 
 test("effectiveDirs: dirs override global.repos when set and non-empty", () => {
   assert.deepEqual(effectiveDirs(["/a", "/b"], { repos: ["/x", "/y"] }), ["/a", "/b"]);
@@ -79,4 +79,21 @@ test("autoSpawnRepos: selection follows dirs order (deterministic spawn loop)", 
     "/repos/beta",
     "/repos/alpha",
   ]);
+});
+
+// Guards the action boundary: a bare `z.object` strips undeclared keys, so the
+// schema — not just the `NewInput` type — must carry `start`/`parentId`, else
+// the "start immediately" and sub-task flags are dropped before `runNew` runs.
+test("NewInputSchema: preserves start and parentId through the action's Zod parse", () => {
+  assert.deepEqual(NewInputSchema.parse({ description: "x", start: true, parentId: "abc12" }), {
+    description: "x",
+    start: true,
+    parentId: "abc12",
+  });
+});
+
+test("NewInputSchema: start and parentId default to undefined when omitted", () => {
+  const parsed = NewInputSchema.parse({ description: "x" });
+  assert.equal(parsed.start, undefined);
+  assert.equal(parsed.parentId, undefined);
 });
