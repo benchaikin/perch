@@ -1095,19 +1095,17 @@ body {
   display: inline-flex;
   gap: 4px;
 }
-/* Top-level bulk buttons: icon + text label (wider than the icon-only row
-   buttons), tinted like the matching row action. Shape (play/stop/rotate) is
-   the non-color cue; `.tint-*` layers the palette color. */
+/* Whole-stack bulk buttons: icon-only square hit targets matching the per-row
+   action buttons, tinted like the matching row action. Shape (play/stop/rotate)
+   is the non-color cue; `.tint-*` layers the palette color. */
 .services-controls .btn.service-bulk-btn {
+  width: 24px;
   height: 20px;
-  padding: 0 6px;
+  padding: 0;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: none;
-  letter-spacing: 0;
+  justify-content: center;
+  font-size: 11px;
   color: var(--muted);
 }
 .services-controls .btn.service-bulk-btn:hover:not(:disabled) {
@@ -1131,17 +1129,34 @@ body {
   flex-direction: column;
   gap: 4px;
 }
+/* The repo header row: the collapsible name/chevron toggle plus this repo's
+   per-repo bulk-control cluster beside it (mirrors .dex-repo-header). A little
+   top space separates each group from the one above. */
+.services-repo-header {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 6px;
+}
+/* The first group sits right under the pane header — no extra top space. */
+.services-repo-group:first-of-type .services-repo-header {
+  margin-top: 0;
+}
+/* The per-repo bulk-control cluster hugs the trailing edge, beside the toggle. */
+.services-repo-actions {
+  flex: 0 0 auto;
+}
 /* Collapsible repo header button (adapted from .pr-repo-header-btn): a clickable
    chevron + repo name + service-count chip that toggles the group's rows, so the
-   Services pane's repo sections read like the PRs/Dex/Worktrees ones. A little
-   top space separates each group from the one above. */
+   Services pane's repo sections read like the PRs/Dex/Worktrees ones. Grows to
+   push the trailing controls to the edge. */
 .services-repo-header-btn {
   appearance: none;
   display: flex;
   align-items: center;
   gap: 6px;
-  width: 100%;
-  margin-top: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
   padding: 3px 2px;
   border: none;
   border-radius: 4px;
@@ -1154,10 +1169,6 @@ body {
   letter-spacing: 0.04em;
   text-align: left;
   -webkit-app-region: no-drag;
-}
-/* The first group sits right under the pane header — no extra top space. */
-.services-repo-group:first-of-type .services-repo-header-btn {
-  margin-top: 0;
 }
 .services-repo-header-btn:hover {
   background: var(--hover-bg);

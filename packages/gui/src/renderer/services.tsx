@@ -1,14 +1,14 @@
 /**
  * The Services panel, as React. A per-process row (health dot, name, status,
- * lifecycle + Logs buttons) and the whole-stack header controls.
+ * lifecycle + Logs buttons) and the per-repo group headers' whole-stack controls.
  * {@link ServicesPane} is the component the panel body renders for the Services
  * tab (see `panel.tsx`).
  *
  * This is a view-layer port: the section is fully derived in the main process
  * ({@link buildServicesSection}) and pushed in `PanelState.services`; the
  * component draws it verbatim. In-flight feedback is read straight from the
- * pushed state (`svc.inFlight` / `section.bulkActing`) — the main process flips
- * those the moment an action starts, so there's no renderer-side optimistic
+ * pushed state (`svc.inFlight` / each group's `bulkActing`) — the main process
+ * flips those the moment an action starts, so there's no renderer-side optimistic
  * state to track. Class names + titles match the old imperative builder so
  * renderer.css keeps matching.
  */
@@ -135,16 +135,19 @@ function ServiceRowEl({ svc }: { svc: ServiceRow }): JSX.Element {
 }
 
 /**
- * One top-level (whole-stack) control button for the Services header. Mirrors
- * the per-row action buttons: a tinted button that disables while any bulk
- * action is in flight, with the active one showing a spinner. Unlike the
- * icon-only per-row buttons, the header controls keep their text label.
+ * One whole-stack control button for a Services group/section header. Mirrors the
+ * icon-only per-row action buttons: a tinted, icon-only button (the label lives on
+ * `title` + `aria-label`) that disables while a bulk action is in flight for its
+ * scope, with the active one showing a spinner. `project` scopes the action to one
+ * repo's services (omitted on the flat fallback acts on the whole stack).
  */
 function ServicesControlEl({
   control,
+  project,
   bulkActing,
 }: {
   control: ServicesControl;
+  project?: string;
   bulkActing?: ServicesBulkAction;
 }): JSX.Element {
   const { icon, tint } = SERVICE_BULK_ICON[control.action];
@@ -160,22 +163,21 @@ function ServicesControlEl({
           ? undefined
           : (e) => {
               e.stopPropagation();
-              window.perch.servicesBulk(control.action);
+              window.perch.servicesBulk(control.action, project);
             }
       }
     >
       <i className={spinning ? "fa-solid fa-circle-notch fa-spin" : `fa-solid fa-${icon}`} />
-      {` ${control.label}`}
     </button>
   );
 }
 
 /**
  * One repo group: a collapsible header (chevron + repo name + service-count chip)
- * over its service rows. Clicking the header toggles just this group's rows. The
- * simple PR-pane pattern (no per-repo controls) — the bulk Start/Stop/Restart-all
- * stays pane-level since it targets the whole process-compose stack, not a repo
- * subset.
+ * plus this repo's whole-stack Start/Stop/Restart-all controls, over its service
+ * rows. Clicking the name toggles just this group's rows; the controls act on only
+ * this repo's services (`group.project`). The `"(unknown)"` bucket carries no
+ * controls (`group.controls` is empty) — it maps to no real project to target.
  */
 function ServicesRepoGroupView({
   group,
@@ -189,19 +191,33 @@ function ServicesRepoGroupView({
   const count = group.rows.length;
   return (
     <div className="services-repo-group">
-      <button
-        className="services-repo-header-btn"
-        title={`${group.project} — ${count} service${count === 1 ? "" : "s"}`}
-        onClick={(e) => {
-          // Toggle this group's rows without propagating.
-          e.stopPropagation();
-          onToggle(group.project);
-        }}
-      >
-        <i className={`fa-solid fa-chevron-${collapsed ? "right" : "down"}`} />
-        <span className="branch services-repo-name">{group.project}</span>
-        <span className="chip muted services-repo-count">{count}</span>
-      </button>
+      <div className="services-repo-header">
+        <button
+          className="services-repo-header-btn"
+          title={`${group.project} — ${count} service${count === 1 ? "" : "s"}`}
+          onClick={(e) => {
+            // Toggle this group's rows without propagating.
+            e.stopPropagation();
+            onToggle(group.project);
+          }}
+        >
+          <i className={`fa-solid fa-chevron-${collapsed ? "right" : "down"}`} />
+          <span className="branch services-repo-name">{group.project}</span>
+          <span className="chip muted services-repo-count">{count}</span>
+        </button>
+        {group.controls.length > 0 ? (
+          <span className="services-controls services-repo-actions">
+            {group.controls.map((control) => (
+              <ServicesControlEl
+                key={control.action}
+                control={control}
+                project={group.project}
+                bulkActing={group.bulkActing}
+              />
+            ))}
+          </span>
+        ) : null}
+      </div>
       {!collapsed && group.rows.map((svc) => <ServiceRowEl key={svc.name} svc={svc} />)}
     </div>
   );
@@ -248,13 +264,16 @@ export function ServicesPane({
   }
 
   if (!section.visible) return null;
-  const hasHeader = showTitle || section.controls.length > 0;
+  // The pane-level (unscoped) controls render only on the flat fallback — when the
+  // rows group by repo, each group header carries its own scoped controls instead.
+  const showPaneControls = !section.grouped && section.controls.length > 0;
+  const hasHeader = showTitle || showPaneControls;
   return (
     <section className="repo-section services-section">
       {hasHeader ? (
         <div className="repo-header services-header">
           {showTitle ? <span>Services</span> : null}
-          {section.controls.length > 0 ? (
+          {showPaneControls ? (
             <span className="services-controls">
               {section.controls.map((control) => (
                 <ServicesControlEl

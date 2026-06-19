@@ -35,8 +35,8 @@ const bridge: PerchBridge = {
   serviceAction(request) {
     ipcRenderer.send(Channels.serviceAction, request);
   },
-  servicesBulk(action) {
-    ipcRenderer.send(Channels.servicesBulk, action);
+  servicesBulk(action, project) {
+    ipcRenderer.send(Channels.servicesBulk, action, project);
   },
   serviceLogs(name) {
     ipcRenderer.send(Channels.serviceLogs, name);

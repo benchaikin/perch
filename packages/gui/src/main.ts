@@ -71,7 +71,12 @@ import {
   type PanelState,
   type PrOverview,
 } from "./panel-state.js";
-import { SERVICES_LIST_ID, type ServiceList, type ServicesBulkAction } from "./services-state.js";
+import {
+  SERVICES_LIST_ID,
+  SERVICES_PANE_SCOPE,
+  type ServiceList,
+  type ServicesBulkAction,
+} from "./services-state.js";
 import { DEX_TASKS_ID, type DexBoard } from "./dex-state.js";
 import { WORKTREES_LIST_ID, type WorktreeList } from "./worktrees-state.js";
 import { AGENTS_LIST_ID, type AgentFleet } from "./agents-state.js";
@@ -563,25 +568,40 @@ const BULK_ACTION_LABEL: Record<ServicesBulkAction, string> = {
 };
 
 /**
- * Invoke a whole-stack action (Start/Stop/Restart all) from the Services header.
- * Marks the bulk action in flight (its header button spins + the cluster
- * disables), invokes `services.<action>`, then lets the `services.list`
- * subscription reflect the new statuses. Surfaces the action's own message as a
- * toast — "Started 3/3 services." or a failure — so the whole-stack outcome is
- * visible. No-op if the daemon is down or a bulk action is already running.
+ * Set/clear the in-flight whole-stack action for a scope (a repo `project`, or
+ * the pane sentinel for the flat list), so only that scope's controls spin. A
+ * fresh `Map` per change keeps `buildInput` an immutable snapshot for `pushState`.
  */
-async function servicesBulk(action: ServicesBulkAction): Promise<void> {
-  if (!client) return;
-  if (buildInput.servicesBulkActing) return;
+function setServicesBulkActing(scope: string, action: ServicesBulkAction | undefined): void {
+  const map = new Map(buildInput.servicesBulkActing ?? []);
+  if (action) map.set(scope, action);
+  else map.delete(scope);
+  buildInput.servicesBulkActing = map;
+}
 
-  buildInput.servicesBulkActing = action;
+/**
+ * Invoke a whole-stack action (Start/Stop/Restart all) from a Services group
+ * header. `project` scopes it to one repo's services (omitted on the flat
+ * fallback acts on the whole stack). Marks the action in flight for that scope
+ * (its button spins + the group's cluster disables), invokes `services.<action>`,
+ * then lets the `services.list` subscription reflect the new statuses. Surfaces
+ * the action's own message as a toast — "Started 3/3 services." or a failure — so
+ * the outcome is visible. No-op if the daemon is down or that scope already has a
+ * bulk action running (a different scope can run concurrently).
+ */
+async function servicesBulk(action: ServicesBulkAction, project?: string): Promise<void> {
+  if (!client) return;
+  const scope = project ?? SERVICES_PANE_SCOPE;
+  if (buildInput.servicesBulkActing?.has(scope)) return;
+
+  setServicesBulkActing(scope, action);
   pushState();
 
   try {
-    const result = (await client.invoke({ id: `services.${action}`, input: {} })) as {
-      ok?: boolean;
-      message?: string;
-    } | null;
+    const result = (await client.invoke({
+      id: `services.${action}`,
+      input: { project },
+    })) as { ok?: boolean; message?: string } | null;
     if (result?.message) {
       showNotice({ tone: result.ok === false ? "bad" : "ok", text: result.message });
     }
@@ -591,7 +611,7 @@ async function servicesBulk(action: ServicesBulkAction): Promise<void> {
       text: `${BULK_ACTION_LABEL[action]} failed: ${errorMessage(err)}`,
     });
   } finally {
-    buildInput.servicesBulkActing = undefined;
+    setServicesBulkActing(scope, undefined);
     pushState();
   }
 }
@@ -1573,7 +1593,7 @@ function registerIpc(): void {
   );
   ipcMain.on(
     Channels.servicesBulk,
-    (_event, action: ServicesBulkAction) => void servicesBulk(action),
+    (_event, action: ServicesBulkAction, project?: string) => void servicesBulk(action, project),
   );
   ipcMain.on(Channels.serviceLogs, (_event, name: string) => void serviceLogs(name));
   ipcMain.on(Channels.worktreeOpen, (_event, path: string) => void openWorktree(path));

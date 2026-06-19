@@ -379,8 +379,12 @@ export interface BuildInput {
   agentFleet?: AgentFleet;
   /** Service names with an in-flight start/stop/restart — their buttons spin. */
   servicesActing?: string[];
-  /** The whole-stack action in flight (Start/Stop/Restart all), if any. */
-  servicesBulkActing?: ServicesBulkAction;
+  /**
+   * The whole-stack action in flight per scope (a repo `project`, or the pane
+   * sentinel for the flat list), so one group's bulk action spins only that
+   * group's controls. Keyed by `project ?? SERVICES_PANE_SCOPE`.
+   */
+  servicesBulkActing?: ReadonlyMap<string, ServicesBulkAction>;
 }
 
 /**

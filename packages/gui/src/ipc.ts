@@ -85,7 +85,9 @@ export const Channels = {
   serviceAction: "perch:service-action",
   /**
    * Renderer → main: invoke a whole-stack action (payload: a
-   * {@link ServicesBulkAction}). Main runs `services.<startAll|stopAll|restartAll>`.
+   * {@link ServicesBulkAction} plus an optional `project` scoping it to one repo's
+   * services on a multi-repo board; omitted targets the whole stack). Main runs
+   * `services.<startAll|stopAll|restartAll>`.
    */
   servicesBulk: "perch:services-bulk",
   /**
@@ -262,8 +264,12 @@ export interface PerchBridge {
   openPr(url: string): void;
   /** Ask the main process to start/stop/restart a service (by name). */
   serviceAction(request: ServiceActionRequest): void;
-  /** Ask the main process to run a whole-stack action (start/stop/restart all). */
-  servicesBulk(action: ServicesBulkAction): void;
+  /**
+   * Ask the main process to run a whole-stack action (start/stop/restart all),
+   * optionally scoped to one `project` (a repo basename) so a multi-repo board's
+   * per-repo control acts on only that repo's services; omitted targets the whole stack.
+   */
+  servicesBulk(action: ServicesBulkAction, project?: string): void;
   /** Ask the main process to open a terminal tailing a service's logs (by name). */
   serviceLogs(name: string): void;
   /** Ask the main process to copy text to the system clipboard. */

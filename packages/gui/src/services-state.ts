@@ -81,18 +81,36 @@ export interface ServiceRow {
 /** A top-level (whole-stack) action the Services header offers. */
 export type ServicesBulkAction = "startAll" | "stopAll" | "restartAll";
 
-/** One top-level control button rendered in the Services section header. */
+/** One top-level control button rendered in a Services group/section header. */
 export interface ServicesControl {
   action: ServicesBulkAction;
   label: string;
 }
 
-/** One repo's service rows, grouped under a per-repo header. */
+/**
+ * Scope key for the unscoped (whole-stack) bulk controls — the flat-fallback
+ * pane cluster when no repo is known to group under, and the key the in-flight
+ * map uses for it. A space-prefixed sentinel that can't collide with a real repo
+ * basename (mirrors `dex-pane`'s `PANE_SCOPE`).
+ */
+export const SERVICES_PANE_SCOPE = " :pane";
+
+/** Bucket label for rows that resolve to no configured repo (see `groupRowsByProject`). */
+const UNKNOWN_PROJECT = "(unknown)";
+
+/** One repo's service rows, grouped under a per-repo header with its own controls. */
 export interface ServicesRepoGroup {
   /** Source project label (a configured repo basename) the rows belong to. */
   project: string;
   /** This project's rows, in the list's order. */
   rows: ServiceRow[];
+  /**
+   * This group's whole-stack controls, scoped to this repo's services. Empty for
+   * the `"(unknown)"` bucket, which has no real project to target the daemon with.
+   */
+  controls: ServicesControl[];
+  /** The whole-stack action in flight for THIS group, if any (its button spins). */
+  bulkActing?: ServicesBulkAction;
 }
 
 /**
@@ -108,9 +126,14 @@ export interface ServicesRepoGroup {
  * configured repo, or a repo seen on a service. The renderer then groups `rows`
  * under collapsible per-repo headers, one per `repoGroups` entry (config order,
  * INCLUDING configured-but-empty repos as empty groups), even for a single repo
- * — the header names which project the services belong to. It is false only when
- * no repo is known at all (an older daemon with no `projects[]` and no
- * per-service `project`); then `repoGroups` is empty and rows render flat.
+ * — the header names which project the services belong to, and each group carries
+ * its OWN `controls` + `bulkActing`. It is false only when no repo is known at all
+ * (an older daemon with no `projects[]` and no per-service `project`); then
+ * `repoGroups` is empty and rows render flat under the section-level `controls`.
+ *
+ * `controls`/`bulkActing` here are the unscoped (whole-stack) cluster the
+ * **flat fallback** renders; when `grouped`, the renderer ignores them in favor
+ * of each group's own scoped controls.
  */
 export interface ServicesSection {
   visible: boolean;
@@ -218,10 +241,17 @@ function configuredRepos(list: ServiceList): string[] {
  * service) is appended in first-appearance order. Within a group rows keep the
  * list's order. A row with no `project` buckets under `"(unknown)"`. Mirrors
  * `dex-state`'s `groupRowsByProject`.
+ *
+ * Each group carries the same `controls` (availability is global, so the trio is
+ * identical per repo) plus its own in-flight `bulkActing`, keyed by project in
+ * `bulkActing`. The `"(unknown)"` bucket gets NO controls — it has no real
+ * project to scope the daemon action to, so we never send it as a target.
  */
 function groupRowsByProject(
   rows: ServiceRow[],
   configured: readonly string[],
+  controls: ServicesControl[],
+  bulkActing: ReadonlyMap<string, ServicesBulkAction>,
 ): ServicesRepoGroup[] {
   const byProject = new Map<string, ServiceRow[]>();
   const order: string[] = [];
@@ -235,8 +265,13 @@ function groupRowsByProject(
     return group;
   };
   for (const project of configured) ensure(project);
-  for (const row of rows) ensure(row.project ?? "(unknown)").push(row);
-  return order.map((project) => ({ project, rows: byProject.get(project)! }));
+  for (const row of rows) ensure(row.project ?? UNKNOWN_PROJECT).push(row);
+  return order.map((project) => ({
+    project,
+    rows: byProject.get(project)!,
+    controls: project === UNKNOWN_PROJECT ? [] : controls,
+    bulkActing: bulkActing.get(project),
+  }));
 }
 
 /**
@@ -274,13 +309,15 @@ export function worstServiceHealth(section: ServicesSection): ServiceHealth {
  * (`visible: false`) only when the list is absent or has no rows — note an
  * unreachable server can still carry configured procs as `stopped` rows, so the
  * section shows (with **Start all**) even when process-compose is down. `acting`
- * is the set of service names with an in-flight per-row action; `bulkActing` is
- * the whole-stack action currently running, if any.
+ * is the set of service names with an in-flight per-row action; `bulkActing` maps
+ * a scope (a repo `project`, or {@link SERVICES_PANE_SCOPE} for the flat cluster)
+ * to the whole-stack action currently running for it, so each group's controls
+ * spin independently.
  */
 export function buildServicesSection(
   list: ServiceList | undefined,
   acting: readonly string[] = [],
-  bulkActing?: ServicesBulkAction,
+  bulkActing: ReadonlyMap<string, ServicesBulkAction> = new Map(),
 ): ServicesSection {
   if (!list || list.services.length === 0) {
     return { visible: false, rows: [], controls: [], grouped: false, repoGroups: [] };
@@ -292,12 +329,13 @@ export function buildServicesSection(
   // single repo (the header names the project). Flat only when no repo is known
   // (an older daemon with no `projects[]` and no per-service `project`).
   const grouped = repos.length > 0;
+  const controls = servicesControls(list.available);
   return {
     visible: true,
     rows,
-    controls: servicesControls(list.available),
-    bulkActing,
+    controls,
+    bulkActing: bulkActing.get(SERVICES_PANE_SCOPE),
     grouped,
-    repoGroups: grouped ? groupRowsByProject(rows, repos) : [],
+    repoGroups: grouped ? groupRowsByProject(rows, repos, controls, bulkActing) : [],
   };
 }

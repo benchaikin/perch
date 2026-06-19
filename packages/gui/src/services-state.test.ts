@@ -8,6 +8,7 @@ import {
   buildServicesSection,
   serviceButtons,
   serviceHealth,
+  SERVICES_PANE_SCOPE,
   toServiceRow,
   worstServiceHealth,
   type ServiceList,
@@ -124,13 +125,54 @@ test("buildServicesSection offers the full bulk trio when the server is up", () 
   );
 });
 
-test("buildServicesSection threads the in-flight bulk action through", () => {
+test("buildServicesSection threads the flat-fallback bulk action through (pane scope)", () => {
+  // No projects[] → flat fallback; the unscoped pane cluster reads its in-flight
+  // action from the pane-scope key.
   const section = buildServicesSection(
     { available: true, services: [{ name: "api", status: "running" }] },
     [],
-    "restartAll",
+    new Map([[SERVICES_PANE_SCOPE, "restartAll"]]),
   );
   assert.equal(section.bulkActing, "restartAll");
+});
+
+test("buildServicesSection: per-group controls + per-scope bulkActing", () => {
+  const list: ServiceList = {
+    available: true,
+    projects: ["ashby", "web"],
+    services: [
+      { name: "api", status: "running", project: "ashby" },
+      { name: "ui", status: "running", project: "web" },
+    ],
+  };
+  // Only `ashby`'s stopAll is in flight.
+  const section = buildServicesSection(list, [], new Map([["ashby", "stopAll"]]));
+  const byProject = new Map(section.repoGroups.map((g) => [g.project, g]));
+  // Every named group carries the full trio (server up); only ashby spins.
+  assert.deepEqual(
+    byProject.get("ashby")!.controls.map((c) => c.action),
+    ["startAll", "stopAll", "restartAll"],
+  );
+  assert.equal(byProject.get("ashby")!.bulkActing, "stopAll");
+  assert.deepEqual(
+    byProject.get("web")!.controls.map((c) => c.action),
+    ["startAll", "stopAll", "restartAll"],
+  );
+  assert.equal(byProject.get("web")!.bulkActing, undefined);
+});
+
+test("buildServicesSection: the (unknown) bucket carries no scoped controls", () => {
+  const list: ServiceList = {
+    available: true,
+    projects: ["ashby"],
+    services: [
+      { name: "api", status: "running", project: "ashby" },
+      { name: "stray", status: "running" }, // no project → "(unknown)"
+    ],
+  };
+  const section = buildServicesSection(list);
+  const unknown = section.repoGroups.find((g) => g.project === "(unknown)")!;
+  assert.deepEqual(unknown.controls, []);
 });
 
 test("buildServicesSection shows rows when available with services", () => {
@@ -253,7 +295,10 @@ test("buildServicesSection: threads project onto each row", () => {
 
 test("worstServiceHealth picks the most severe row (bad > warn > ok > muted)", () => {
   const sec = (...statuses: ServiceList["services"][number]["status"][]) =>
-    buildServicesSection({ available: true, services: statuses.map((s, i) => ({ name: `s${i}`, status: s })) });
+    buildServicesSection({
+      available: true,
+      services: statuses.map((s, i) => ({ name: `s${i}`, status: s })),
+    });
   // A crash dominates everything.
   assert.equal(worstServiceHealth(sec("running", "crashed", "stopped")), "bad");
   // Starting (warn) outranks running/stopped but not a crash.
