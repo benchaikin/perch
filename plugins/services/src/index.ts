@@ -212,17 +212,17 @@ function bulkMessage(verb: string, done: number, total: number): string {
 }
 
 /**
- * The window title for a service's logs terminal: `logs <name>`, trimmed to a
- * readable length, so a row of log windows is self-identifying at a glance.
- * Mirrors `dex`'s {@link agentTitle}/`newTaskTitle` (40-char cap, ellipsis) and
- * stays consistent with the spawn's `label`.
+ * The window title for a service's logs terminal: `<name> logs`, trimmed to a
+ * readable length, so a row of log windows is self-identifying at a glance and
+ * reads naturally ("api logs"). Mirrors `dex`'s {@link agentTitle}/`newTaskTitle`
+ * (40-char cap, ellipsis on the name) and stays consistent with the spawn's `label`.
  */
 export function serviceLogsTitle(name: string, maxNameLength = 40): string {
   const trimmed = name.trim();
   if (!trimmed) return "logs";
   const short =
     trimmed.length > maxNameLength ? `${trimmed.slice(0, maxNameLength - 1).trimEnd()}…` : trimmed;
-  return `logs ${short}`;
+  return `${short} logs`;
 }
 
 export default definePlugin({
@@ -435,7 +435,7 @@ export default definePlugin({
         return spawnInTerminal({
           command,
           terminal,
-          label: `logs ${input.name}`,
+          label: `${input.name} logs`,
           title: serviceLogsTitle(input.name),
           log: ctx.log,
           spawn: logsSpawn,

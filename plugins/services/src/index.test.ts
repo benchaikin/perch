@@ -379,22 +379,24 @@ test("services.logs sets the terminal title to the service name", () => {
     const launched = calls[0]!.args[1] as string;
     const m = /sh (\/\S+\.sh)/.exec(launched);
     assert.ok(m, `expected an 'sh <script>' launch, got: ${launched}`);
-    // The OSC 0 title escape carries the `logs <name>` title for the service.
-    assert.match(readFileSync(m[1]!, "utf8"), /printf '\\033\]0;%s\\007' 'logs api'/);
+    // The OSC 0 title escape carries the `<name> logs` title for the service.
+    assert.match(readFileSync(m[1]!, "utf8"), /printf '\\033\]0;%s\\007' 'api logs'/);
   } finally {
     __setLogsSpawn(undefined);
   }
 });
 
-test("serviceLogsTitle prefixes the service name and trims long names", () => {
-  assert.equal(serviceLogsTitle("api"), "logs api");
-  assert.equal(serviceLogsTitle("  api  "), "logs api");
+test("serviceLogsTitle suffixes the service name and trims long names", () => {
+  assert.equal(serviceLogsTitle("api"), "api logs");
+  assert.equal(serviceLogsTitle("  api  "), "api logs");
   assert.equal(serviceLogsTitle(""), "logs");
   const long = "x".repeat(50);
   const title = serviceLogsTitle(long);
-  assert.ok(title.startsWith("logs "));
-  assert.ok(title.endsWith("…"));
-  assert.equal(title.length, "logs ".length + 40);
+  assert.ok(title.endsWith(" logs"));
+  // With name-first, the ellipsis lands mid-string on the trimmed name portion.
+  const name = title.slice(0, -" logs".length);
+  assert.ok(name.endsWith("…"));
+  assert.equal(title.length, 40 + " logs".length);
 });
 
 test("services.logs falls back to the legacy per-services terminal when no global is set", () => {
