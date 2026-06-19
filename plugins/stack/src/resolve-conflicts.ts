@@ -19,6 +19,7 @@
  */
 import { type spawn as nodeSpawn } from "node:child_process";
 
+import { parseDexTaskId } from "@perch/plugin-worktrees";
 import {
   buildAgentLaunchCommand,
   dexTaskColorRgb,
@@ -155,9 +156,11 @@ export async function runResolveConflicts(
     terminal: deps.terminal,
     label: `resolve ${headRef}`,
     title: agentTitle(input),
-    // Tint the window by the branch's identity color (a stable per-branch hue),
-    // matching how the dex spawn tints by task id.
-    tabColor: dexTaskColorRgb(headRef),
+    // Tint the window by the branch's identity color (a stable per-branch hue).
+    // For a dex-encoded branch, key off the bare task id so the window matches
+    // the dex task's color everywhere else (GUI chip + the dex-spawn terminal);
+    // a non-dex branch falls back to the full headRef, unchanged.
+    tabColor: dexTaskColorRgb(parseDexTaskId(headRef) ?? headRef),
     // Tag the window with the worktree path so a later launch (or a "jump to
     // agent") raises THIS live session rather than opening a new shell on it.
     focusMarker: worktreePath,

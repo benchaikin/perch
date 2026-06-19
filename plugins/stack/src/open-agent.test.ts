@@ -8,8 +8,20 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { dexTaskColorRgb, resolveTabColorCommand, type GlobalTerminalConfig } from "@perch/sdk";
+
 import { agentTitle, runOpenAgent, type OpenAgentDeps } from "./open-agent.js";
 import type { Exec } from "./provider.js";
+
+/** The iTerm2 tab-color escape a given color key resolves to in the launch script. */
+function tabColor(term: GlobalTerminalConfig, key: string): string {
+  return resolveTabColorCommand(term, dexTaskColorRgb(key))!;
+}
+
+/** Escape a literal string for use inside a `RegExp` (the escapes carry `\`, `]`, `;`). */
+function escapeForRegex(literal: string): RegExp {
+  return new RegExp(literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+}
 
 test("agentTitle: uses the PR number when known, else the branch", () => {
   assert.equal(agentTitle({ headRefName: "feat-x", number: 42 }), "agent · #42");
@@ -115,6 +127,32 @@ test("runOpenAgent: happy path — adds the branch worktree, launches claude wit
     script.commands[0]!,
     /\ncd '\/work\/perch-worktrees\/feat-x' && exec claude --permission-mode auto$/,
   );
+});
+
+test("runOpenAgent: a dex PR's terminal is tinted by the bare task id", async () => {
+  const { exec } = execStub();
+  const script = fakeWriteScript();
+  const term: GlobalTerminalConfig = { terminalApp: "iTerm2" };
+  await runOpenAgent(
+    { headRefName: "dex/abc123-fix-login" },
+    deps(exec, { terminal: term, spawn: fakeSpawn().spawn, writeScript: script.writeScript }),
+  );
+  // Colored by the dex task id (matching the GUI chip + dex-spawn terminal),
+  // NOT the full head branch.
+  assert.match(script.commands[0]!, escapeForRegex(tabColor(term, "abc123")));
+  assert.doesNotMatch(script.commands[0]!, escapeForRegex(tabColor(term, "dex/abc123-fix-login")));
+});
+
+test("runOpenAgent: a non-dex PR's terminal is tinted by the full branch", async () => {
+  const { exec } = execStub();
+  const script = fakeWriteScript();
+  const term: GlobalTerminalConfig = { terminalApp: "iTerm2" };
+  await runOpenAgent(
+    { headRefName: "feature/x" },
+    deps(exec, { terminal: term, spawn: fakeSpawn().spawn, writeScript: script.writeScript }),
+  );
+  // No dex id to extract → unchanged from today: keyed off the full head branch.
+  assert.match(script.commands[0]!, escapeForRegex(tabColor(term, "feature/x")));
 });
 
 test("runOpenAgent: reuses an existing worktree for the branch (no add)", async () => {

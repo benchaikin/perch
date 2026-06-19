@@ -9,6 +9,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { dexTaskColorRgb, resolveTabColorCommand, type GlobalTerminalConfig } from "@perch/sdk";
+
 import {
   agentTitle,
   conflictPrompt,
@@ -21,6 +23,16 @@ import {
   type ResolveConflictsDeps,
 } from "./resolve-conflicts.js";
 import type { Exec } from "./provider.js";
+
+/** The iTerm2 tab-color escape a given color key resolves to in the launch script. */
+function tabColor(term: GlobalTerminalConfig, key: string): string {
+  return resolveTabColorCommand(term, dexTaskColorRgb(key))!;
+}
+
+/** Escape a literal string for use inside a `RegExp` (the escapes carry `\`, `]`, `;`). */
+function escapeForRegex(literal: string): RegExp {
+  return new RegExp(literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+}
 
 test("sanitizeBranchForPath: collapses separators into a single path segment", () => {
   assert.equal(sanitizeBranchForPath("dex/abc-foo"), "dex-abc-foo");
@@ -226,6 +238,32 @@ test("runResolveConflicts: a worktree-add failure is a clean error, no launch", 
   assert.equal(res.ok, false);
   assert.match(res.message, /couldn't create worktree/);
   assert.equal(term.calls, 0);
+});
+
+test("runResolveConflicts: a dex PR's terminal is tinted by the bare task id", async () => {
+  const { exec } = execStub();
+  const script = fakeWriteScript();
+  const term: GlobalTerminalConfig = { terminalApp: "iTerm2" };
+  await runResolveConflicts(
+    { headRefName: "dex/abc123-fix-login", baseRefName: "main" },
+    deps(exec, { terminal: term, spawn: fakeSpawn().spawn, writeScript: script.writeScript }),
+  );
+  // Colored by the dex task id (matching the GUI chip + dex-spawn terminal),
+  // NOT the full head branch.
+  assert.match(script.commands[0]!, escapeForRegex(tabColor(term, "abc123")));
+  assert.doesNotMatch(script.commands[0]!, escapeForRegex(tabColor(term, "dex/abc123-fix-login")));
+});
+
+test("runResolveConflicts: a non-dex PR's terminal is tinted by the full branch", async () => {
+  const { exec } = execStub();
+  const script = fakeWriteScript();
+  const term: GlobalTerminalConfig = { terminalApp: "iTerm2" };
+  await runResolveConflicts(
+    { headRefName: "feature/x", baseRefName: "main" },
+    deps(exec, { terminal: term, spawn: fakeSpawn().spawn, writeScript: script.writeScript }),
+  );
+  // No dex id to extract → unchanged from today: keyed off the full head branch.
+  assert.match(script.commands[0]!, escapeForRegex(tabColor(term, "feature/x")));
 });
 
 test("runResolveConflicts: stacked PR rebases onto its parent layer, not trunk", async () => {
