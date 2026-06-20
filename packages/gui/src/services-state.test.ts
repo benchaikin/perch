@@ -179,6 +179,24 @@ test("buildServicesSection: the (unknown) bucket carries no scoped controls", ()
   assert.deepEqual(unknown.controls, []);
 });
 
+test("buildServicesSection: an empty configured repo carries no whole-stack controls", () => {
+  const list: ServiceList = {
+    available: true,
+    projects: ["ashby", "perch"], // `perch` is configured but has zero services
+    services: [{ name: "api", status: "running", project: "ashby" }],
+  };
+  const section = buildServicesSection(list);
+  const byProject = new Map(section.repoGroups.map((g) => [g.project, g]));
+  // The non-empty sibling keeps the full trio (server up).
+  assert.deepEqual(
+    byProject.get("ashby")!.controls.map((c) => c.action),
+    ["startAll", "stopAll", "restartAll"],
+  );
+  // The empty repo renders a header-only group — nothing to start/stop/restart.
+  assert.deepEqual(byProject.get("perch")!.rows, []);
+  assert.deepEqual(byProject.get("perch")!.controls, []);
+});
+
 test("buildServicesSection shows rows when available with services", () => {
   const list: ServiceList = {
     available: true,

@@ -260,7 +260,9 @@ function configuredRepos(list: ServiceList): string[] {
  * Each group carries the same `controls` (availability is global, so the trio is
  * identical per repo) plus its own in-flight `bulkActing`, keyed by project in
  * `bulkActing`. The `"(unknown)"` bucket gets NO controls — it has no real
- * project to scope the daemon action to, so we never send it as a target.
+ * project to scope the daemon action to, so we never send it as a target. An
+ * EMPTY group (zero rows) likewise gets none: a configured repo with no services
+ * has nothing for whole-stack Start/Stop/Restart-all to act on.
  */
 function groupRowsByProject(
   rows: ServiceRow[],
@@ -281,12 +283,15 @@ function groupRowsByProject(
   };
   for (const project of configured) ensure(project);
   for (const row of rows) ensure(row.project ?? UNKNOWN_PROJECT).push(row);
-  return order.map((project) => ({
-    project,
-    rows: byProject.get(project)!,
-    controls: project === UNKNOWN_PROJECT ? [] : controls,
-    bulkActing: bulkActing.get(project),
-  }));
+  return order.map((project) => {
+    const rows = byProject.get(project)!;
+    return {
+      project,
+      rows,
+      controls: project === UNKNOWN_PROJECT || rows.length === 0 ? [] : controls,
+      bulkActing: bulkActing.get(project),
+    };
+  });
 }
 
 /**
