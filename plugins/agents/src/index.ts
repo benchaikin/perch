@@ -175,7 +175,7 @@ export default definePlugin({
       summary: "Live Claude Code agent fleet (running / blocked / idle / ended)",
       input: z.object({}).default({}),
       output: AgentFleet,
-      refresh: { every: "5s", on: ["focus"] },
+      refresh: { every: "5s", idleEvery: "30s", on: ["focus"] },
       view: { kind: "list", title: "Agents" },
       expose: { mcp: true },
       run: (): AgentFleet => {

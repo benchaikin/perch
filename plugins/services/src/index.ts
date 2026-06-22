@@ -269,7 +269,7 @@ export default definePlugin({
       summary: "Live process-compose service statuses (running/crashed/…)",
       input: z.object({}).default({}),
       output: ServiceList,
-      refresh: { every: "5s", on: ["focus"] },
+      refresh: { every: "5s", idleEvery: "30s", on: ["focus"] },
       view: { kind: "list", title: "Services" },
       expose: { mcp: true },
       // Pass the configured procs (each tagged with its resolved repo) so they

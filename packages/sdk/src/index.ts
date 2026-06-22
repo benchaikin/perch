@@ -15,6 +15,13 @@ import { z } from "zod";
 export type RefreshPolicy = {
   /** Poll interval, e.g. "60s", "5m". */
   every?: string;
+  /**
+   * Slower poll interval used when only a persistent (notify-driven) interest
+   * holds the poller open — i.e. no GUI client is subscribed (panel closed or
+   * hidden). The daemon swaps back to {@link every} the moment a client
+   * subscribes. Omit to keep one interval regardless of subscribers.
+   */
+  idleEvery?: string;
   /** Event triggers that force a refresh. */
   on?: Array<"focus" | "manual">;
 };

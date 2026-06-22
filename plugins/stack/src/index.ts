@@ -275,7 +275,7 @@ export default definePlugin({
       summary: "Your open PRs across all configured repos, with stacks grouped",
       input: z.object({}).default({}),
       output: PrOverview,
-      refresh: { every: "60s", on: ["focus"] },
+      refresh: { every: "60s", idleEvery: "300s", on: ["focus"] },
       view: { kind: "list", title: "My PRs" },
       expose: { mcp: true },
       run: ({ ctx }) =>
