@@ -112,6 +112,81 @@ test("a throwing notify hook does not break polling", async () => {
   assert.ok(polls >= 2, "polling continued past a throwing notify hook");
 });
 
+test("a poll slower than its interval never overlaps with the next poll", async () => {
+  // `run` takes ~40ms while the interval is only 10ms. With setInterval this
+  // would queue overlapping invocations; with self-rescheduling setTimeout each
+  // poll finishes before the next is armed, so concurrency stays at one.
+  let inFlight = 0;
+  let maxInFlight = 0;
+  let completed = 0;
+  const plugin = definePlugin({
+    id: "demo",
+    capabilities: {
+      slow: asCap(
+        read({
+          summary: "slow read",
+          output: z.object({ n: z.number() }),
+          refresh: { every: "10ms" },
+          run: async () => {
+            inFlight += 1;
+            maxInFlight = Math.max(maxInFlight, inFlight);
+            await new Promise((r) => setTimeout(r, 40));
+            inFlight -= 1;
+            completed += 1;
+            return { n: completed };
+          },
+        }),
+      ),
+    },
+  });
+
+  const { registry, deps } = harness(plugin);
+  const scheduler = new Scheduler(deps, createEventBus(), new NotificationService());
+  const entry = registry.get("demo.slow") as RegisteredCapability;
+  scheduler.armPersistent(entry, undefined);
+
+  await waitFor(() => completed >= 3, 2_000);
+  scheduler.stop();
+
+  assert.ok(completed >= 3, "expected several polls to complete");
+  assert.equal(maxInFlight, 1, "polls must never overlap");
+});
+
+test("stop() prevents an in-flight slow poll from rescheduling", async () => {
+  let started = 0;
+  const plugin = definePlugin({
+    id: "demo",
+    capabilities: {
+      slow: asCap(
+        read({
+          summary: "slow read",
+          output: z.object({ n: z.number() }),
+          refresh: { every: "10ms" },
+          run: async () => {
+            started += 1;
+            await new Promise((r) => setTimeout(r, 30));
+            return { n: started };
+          },
+        }),
+      ),
+    },
+  });
+
+  const { registry, deps } = harness(plugin);
+  const scheduler = new Scheduler(deps, createEventBus(), new NotificationService());
+  const entry = registry.get("demo.slow") as RegisteredCapability;
+  scheduler.armPersistent(entry, undefined);
+
+  // Stop while the first poll is mid-flight.
+  await waitFor(() => started >= 1);
+  scheduler.stop();
+  const afterStop = started;
+
+  // Give the in-flight poll time to finish and (wrongly) re-arm if it could.
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(started, afterStop, "no further polls after stop()");
+});
+
 test("armNotifyReads arms a persistent poller for a notify-read with no subscriber", () => {
   const plugin = definePlugin({
     id: "demo",
