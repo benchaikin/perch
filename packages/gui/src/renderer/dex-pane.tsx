@@ -1329,7 +1329,11 @@ function DexAutoSpawnToggle({
             }
       }
     >
-      <i className={`fa-solid fa-${on ? "robot" : "hand"}`} />
+      <i
+        className={
+          inFlight ? "fa-solid fa-circle-notch fa-spin" : `fa-solid fa-${on ? "robot" : "hand"}`
+        }
+      />
     </button>
   );
 }
