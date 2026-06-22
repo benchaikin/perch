@@ -1334,6 +1334,7 @@ function DexAutoSpawnToggle({
           inFlight ? "fa-solid fa-circle-notch fa-spin" : `fa-solid fa-${on ? "robot" : "hand"}`
         }
       />
+      <span className="dex-auto-spawn-label">{on ? "Auto" : "Manual"}</span>
     </button>
   );
 }
@@ -1773,9 +1774,9 @@ function DexRepoHeader({
         <span className="branch dex-repo-name">{group.project}</span>
         <span className="chip muted dex-repo-count">{count}</span>
       </button>
+      <DexAutoSpawnToggle project={group.project} enabled={group.autoSpawn} />
       <span className="dex-repo-actions">
         <DexNewButton scope={group.project} />
-        <DexAutoSpawnToggle project={group.project} enabled={group.autoSpawn} />
         {readyCount > 0 && <DexSpawnAllButton count={readyCount} project={group.project} />}
         {showCollapseAll && <DexCollapseAllButton epicIds={epicIds} />}
       </span>
