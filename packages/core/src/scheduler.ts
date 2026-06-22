@@ -17,7 +17,12 @@ import type { NotificationService } from "./notifications.js";
 import type { RegisteredCapability } from "./registry.js";
 
 interface Poller {
-  timer: ReturnType<typeof setInterval>;
+  /**
+   * Handle for the pending next poll. Reassigned on each cycle because polling
+   * self-reschedules via `setTimeout` (see `#makePoller`); `undefined` for a
+   * read with no `refresh.every`.
+   */
+  timer: ReturnType<typeof setTimeout> | undefined;
   /** Number of active subscribers sharing this poller. */
   refs: number;
   /** The validated input passed to the read. */
@@ -28,6 +33,12 @@ interface Poller {
    * `refs` drops to zero, so notifications keep firing with no client attached.
    */
   persistent: boolean;
+  /**
+   * Set when the poller is torn down. Because each poll re-arms the next timer
+   * only after it finishes, clearing the timer cannot stop a poll already in
+   * flight; this flag tells that in-flight poll not to reschedule itself.
+   */
+  stopped: boolean;
 }
 
 /** Owns refresh timers and refcounts for active read subscriptions. */
@@ -66,7 +77,7 @@ export class Scheduler {
     for (const [mapKey, poller] of this.#pollers) {
       const id = this.#splitId(mapKey);
       if (id === pluginId || id.startsWith(prefix)) {
-        if (poller.timer) clearInterval(poller.timer);
+        this.#teardown(poller);
         this.#pollers.delete(mapKey);
         removed += 1;
       }
@@ -157,25 +168,44 @@ export class Scheduler {
     return armed;
   }
 
-  /** Build a poller (starting its interval timer if the read declares one). */
+  /**
+   * Build a poller, arming a self-rescheduling timer if the read declares an
+   * interval. Each poll runs to completion and only then schedules the next one
+   * a full interval later, so polls never overlap and the idle gap matches the
+   * declared interval regardless of how long a poll takes.
+   */
   #makePoller(
     entry: RegisteredCapability,
     input: unknown,
     key: string,
     persistent: boolean,
   ): Poller {
+    // No interval: still track the ref so unsubscribe is symmetric.
+    const poller: Poller = { timer: undefined, refs: 1, input, persistent, stopped: false };
     const every = entry.cap.kind === "read" ? entry.cap.refresh?.every : undefined;
     if (every) {
       const intervalMs = parseDuration(every);
-      const timer = setInterval(() => {
-        void this.#poll(entry, input, key);
-      }, intervalMs);
-      // Don't keep the event loop alive solely for polling.
-      timer.unref?.();
-      return { timer, refs: 1, input, persistent };
+      const schedule = (): ReturnType<typeof setTimeout> => {
+        const timer = setTimeout(async () => {
+          await this.#poll(entry, input, key);
+          if (!poller.stopped) poller.timer = schedule();
+        }, intervalMs);
+        // Don't keep the event loop alive solely for polling.
+        timer.unref?.();
+        return timer;
+      };
+      poller.timer = schedule();
     }
-    // No interval: still track the ref so unsubscribe is symmetric.
-    return { timer: undefined as never, refs: 1, input, persistent };
+    return poller;
+  }
+
+  /**
+   * Stop a poller's timer and mark it stopped so an in-flight poll won't re-arm
+   * the next one. Does not remove it from `#pollers` — callers handle that.
+   */
+  #teardown(poller: Poller): void {
+    poller.stopped = true;
+    if (poller.timer) clearTimeout(poller.timer);
   }
 
   /**
@@ -189,7 +219,7 @@ export class Scheduler {
     if (!poller) return;
     poller.refs -= 1;
     if (poller.refs <= 0 && !poller.persistent) {
-      if (poller.timer) clearInterval(poller.timer);
+      this.#teardown(poller);
       this.#pollers.delete(mapKey);
     }
   }
@@ -244,7 +274,7 @@ export class Scheduler {
   /** Stop and clear all timers (shutdown). */
   stop(): void {
     for (const poller of this.#pollers.values()) {
-      if (poller.timer) clearInterval(poller.timer);
+      this.#teardown(poller);
     }
     this.#pollers.clear();
   }
