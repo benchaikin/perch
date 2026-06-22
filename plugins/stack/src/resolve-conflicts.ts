@@ -24,6 +24,7 @@ import {
   buildAgentLaunchCommand,
   dexTaskColorRgb,
   spawnInTerminal,
+  type GlobalAgentConfig,
   type GlobalTerminalConfig,
 } from "@perch/sdk";
 
@@ -113,6 +114,8 @@ export interface ResolveConflictsDeps {
   gitBin: string;
   /** The terminal preference (from `terminalConfigOf(ctx.global)`). */
   terminal: GlobalTerminalConfig;
+  /** The agent-spawn defaults — model + permission mode (from `agentConfigOf(ctx.global)`). */
+  agent?: GlobalAgentConfig;
   /** Injected terminal spawn (tests stub it). */
   spawn?: typeof nodeSpawn;
   /** Injected script writer for the terminal launcher (tests stub it). */
@@ -152,7 +155,7 @@ export async function runResolveConflicts(
   const { worktreePath, reused } = resolved;
 
   const launched = spawnInTerminal({
-    command: buildAgentLaunchCommand(worktreePath, conflictPrompt(input)),
+    command: buildAgentLaunchCommand(worktreePath, conflictPrompt(input), deps.agent),
     terminal: deps.terminal,
     label: `resolve ${headRef}`,
     title: agentTitle(input),

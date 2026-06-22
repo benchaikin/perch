@@ -18,6 +18,7 @@ import {
   buildAgentLaunchCommand,
   dexTaskColorRgb,
   spawnInTerminal,
+  type GlobalAgentConfig,
   type GlobalTerminalConfig,
 } from "@perch/sdk";
 
@@ -141,10 +142,15 @@ export function bootstrapPrompt(id: string): string {
  * point of spawning it is to let it run.
  *
  * Delegates to the SDK's {@link buildAgentLaunchCommand} so every agent-spawn
- * flow (dex spawn, stack resolve-conflicts) shares one launch command.
+ * flow (dex spawn, stack resolve-conflicts) shares one launch command. The
+ * configured `agent` defaults (model + permission mode) thread straight through.
  */
-export function buildClaudeLaunch(worktreePath: string, prompt: string): string {
-  return buildAgentLaunchCommand(worktreePath, prompt);
+export function buildClaudeLaunch(
+  worktreePath: string,
+  prompt: string,
+  agent?: GlobalAgentConfig,
+): string {
+  return buildAgentLaunchCommand(worktreePath, prompt, agent);
 }
 
 /**
@@ -411,6 +417,8 @@ export interface SpawnDeps {
   repos: string[];
   /** The terminal preference (from `terminalConfigOf(ctx.global)`). */
   terminal: GlobalTerminalConfig;
+  /** The agent-spawn defaults — model + permission mode (from `agentConfigOf(ctx.global)`). */
+  agent?: GlobalAgentConfig;
   /** Injected terminal spawn (tests stub it). */
   spawn?: typeof nodeSpawn;
   /** Injected script writer for the terminal launcher (tests stub it). */
@@ -709,7 +717,7 @@ export async function runSpawn(input: SpawnInput, deps: SpawnDeps): Promise<Spaw
   const launched = await locks.terminal.run(TERMINAL_LOCK_KEY, () =>
     Promise.resolve(
       spawnInTerminal({
-        command: buildClaudeLaunch(worktreePath, bootstrapPrompt(id)),
+        command: buildClaudeLaunch(worktreePath, bootstrapPrompt(id), deps.agent),
         terminal: deps.terminal,
         label: `dex ${id}`,
         // Title the agent's window with its dex id (+ name) so a row of agent

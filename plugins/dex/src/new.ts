@@ -20,7 +20,12 @@
  */
 import type { spawn as nodeSpawn } from "node:child_process";
 
-import { buildAgentLaunchCommand, spawnInTerminal, type GlobalTerminalConfig } from "@perch/sdk";
+import {
+  buildAgentLaunchCommand,
+  spawnInTerminal,
+  type GlobalAgentConfig,
+  type GlobalTerminalConfig,
+} from "@perch/sdk";
 
 import { resolveRepo } from "./spawn.js";
 
@@ -72,6 +77,8 @@ export interface NewDeps {
   cwd: string;
   /** The terminal preference (from `terminalConfigOf(ctx.global)`). */
   terminal: GlobalTerminalConfig;
+  /** The agent-spawn defaults — model + permission mode (from `agentConfigOf(ctx.global)`). */
+  agent?: GlobalAgentConfig;
   /** Injected terminal spawn (tests stub it). */
   spawn?: typeof nodeSpawn;
   /** Injected script writer for the terminal launcher (tests stub it). */
@@ -245,7 +252,11 @@ export async function runNew(input: NewInput, deps: NewDeps): Promise<NewResult>
   const dir = resolved.repo ?? deps.cwd;
 
   const launched = spawnInTerminal({
-    command: buildAgentLaunchCommand(dir, newTaskPrompt(description, input.start, input.parentId)),
+    command: buildAgentLaunchCommand(
+      dir,
+      newTaskPrompt(description, input.start, input.parentId),
+      deps.agent,
+    ),
     terminal: deps.terminal,
     label: "dex new",
     // Title the window with a description snippet so a row of author windows is

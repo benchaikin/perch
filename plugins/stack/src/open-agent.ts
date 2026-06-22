@@ -19,6 +19,7 @@ import {
   buildAgentLaunchCommand,
   dexTaskColorRgb,
   spawnInTerminal,
+  type GlobalAgentConfig,
   type GlobalTerminalConfig,
 } from "@perch/sdk";
 
@@ -65,6 +66,8 @@ export interface OpenAgentDeps {
   gitBin: string;
   /** The terminal preference (from `terminalConfigOf(ctx.global)`). */
   terminal: GlobalTerminalConfig;
+  /** The agent-spawn defaults — model + permission mode (from `agentConfigOf(ctx.global)`). */
+  agent?: GlobalAgentConfig;
   /** Injected terminal spawn (tests stub it). */
   spawn?: typeof nodeSpawn;
   /** Injected script writer for the terminal launcher (tests stub it). */
@@ -106,9 +109,9 @@ export async function runOpenAgent(
 
   const launched = spawnInTerminal({
     // No prompt — buildAgentLaunchCommand emits `cd … && exec claude
-    // --permission-mode auto` with nothing after it, dropping straight into a
-    // live interactive session.
-    command: buildAgentLaunchCommand(worktreePath),
+    // --permission-mode <mode>` (the configured mode, default auto) with nothing
+    // after it, dropping straight into a live interactive session.
+    command: buildAgentLaunchCommand(worktreePath, undefined, deps.agent),
     terminal: deps.terminal,
     label: `agent ${headRef}`,
     title: agentTitle(input),
