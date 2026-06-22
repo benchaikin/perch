@@ -250,11 +250,16 @@ async function enrichWithGhStack(
     const overlaps = group.layers.some((pr) => trackedBranches.has(pr.headRefName));
     if (!overlaps) return group;
 
+    // Apply gh-stack's authoritative needsRebase to each layer IN PLACE, then
+    // reorder the same PrInfo references — deliberately NOT copying (`{...pr}`).
+    // `overviewForRepo` runs the per-PR comment fetch concurrently with this
+    // enrichment, mutating `humanReviewCommentCount` on these same objects; a
+    // shallow copy here would freeze a pre-count snapshot and silently drop the
+    // badge on a tracked stack. Mutating in place keeps both writes visible.
+    for (const pr of group.layers) {
+      pr.needsRebase = needsRebaseByBranch.get(pr.headRefName) ?? pr.needsRebase;
+    }
     const layers = [...group.layers]
-      .map((pr) => ({
-        ...pr,
-        needsRebase: needsRebaseByBranch.get(pr.headRefName) ?? pr.needsRebase,
-      }))
       // Authoritative ordering: known branches by gh-stack order, then the rest.
       .sort((a, b) => {
         const ia = order.get(a.headRefName) ?? Number.MAX_SAFE_INTEGER;
