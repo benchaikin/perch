@@ -19,7 +19,7 @@ import { z } from "@perch/sdk";
 
 import { allChains } from "./chains.js";
 import {
-  fetchCurrentUserLogin,
+  cachedCurrentUserLogin,
   fetchHumanReviewCommentCount,
   rollupToCiStatus,
   parseStackView,
@@ -366,11 +366,12 @@ export async function buildPrOverview(options: PrOverviewOptions = {}): Promise<
   const reviewBotIgnore = options.reviewBotIgnore ?? [];
   const targets = resolveTargets(options.repos, options.cwd);
 
-  // Resolve the authenticated GitHub user's login ONCE per overview build (it's
-  // stable per host) so we can exclude the author's own review comments from
-  // the per-PR badge count. Best-effort: `undefined` on any gh failure → no
-  // self-exclusion (current behavior), never breaks the overview.
-  const me = await fetchCurrentUserLogin(exec, options.cwd ? { cwd: options.cwd } : undefined);
+  // Resolve the authenticated GitHub user's login so we can exclude the author's
+  // own review comments from the per-PR badge count. It's stable per host, so
+  // it's cached once per daemon run rather than re-fetched on every 60s poll.
+  // Best-effort: `undefined` on any gh failure → no self-exclusion (current
+  // behavior), never breaks the overview.
+  const me = await cachedCurrentUserLogin(exec, options.cwd ? { cwd: options.cwd } : undefined);
 
   const repos = await Promise.all(
     targets.map((target) =>
