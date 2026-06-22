@@ -4,7 +4,7 @@
  * (rather than any `plugins[id]`). Today that's just the shared terminal
  * preference (defined in `@perch/sdk`); more global settings slot in here.
  */
-import { TERMINAL_SETTINGS_FIELDS, type SettingsField } from "@perch/sdk";
+import { AGENT_SETTINGS_FIELDS, TERMINAL_SETTINGS_FIELDS, type SettingsField } from "@perch/sdk";
 
 /**
  * Reserved descriptor id for the global section. Not a real plugin — the GUI
@@ -27,5 +27,6 @@ export function globalSettingsFields(): SettingsField[] {
         "Local repo directories Perch watches (shared by the PRs, Worktrees, and Dex panels).",
     },
     ...TERMINAL_SETTINGS_FIELDS,
+    ...AGENT_SETTINGS_FIELDS,
   ];
 }

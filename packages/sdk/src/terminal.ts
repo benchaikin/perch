@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import type { DexRgb } from "./dex-color.js";
-import type { SettingsField } from "./index.js";
+import type { SettingsField, SettingsFieldOption } from "./index.js";
 
 /**
  * The default macOS launcher template. `{cmd}` is replaced with the command to
@@ -170,6 +170,89 @@ export const TERMINAL_SETTINGS_FIELDS: SettingsField[] = [
 export function terminalConfigOf(global: unknown): GlobalTerminalConfig {
   const g = global && typeof global === "object" ? (global as Record<string, unknown>) : {};
   const parsed = GlobalTerminalConfig.safeParse(g.terminal ?? {});
+  return parsed.success ? parsed.data : {};
+}
+
+/** The cross-plugin agent-spawn preference (lives at `global.agent`). */
+export const GlobalAgentConfig = z.object({
+  /** A {@link AGENT_MODEL_OPTIONS} value passed as `claude --model`; empty ⇒ inherit. */
+  model: z.string().optional(),
+  /** A {@link AGENT_PERMISSION_MODE_OPTIONS} value passed as `claude --permission-mode`. */
+  permissionMode: z.string().optional(),
+});
+export type GlobalAgentConfig = z.infer<typeof GlobalAgentConfig>;
+
+/**
+ * The empty sentinel meaning "emit no `--model`" — the spawned `claude` inherits
+ * whatever model the user's own Claude config defaults to. The default choice in
+ * {@link AGENT_MODEL_OPTIONS} so today's behavior (no `--model`) is preserved.
+ */
+export const AGENT_MODEL_DEFAULT = "";
+
+/**
+ * The canonical model choices for a spawned agent — the documented `claude --model`
+ * aliases (the CLI accepts these or a full model id; we offer the stable aliases).
+ * Shared so Settings and the new-task dialog pick from the exact same list, and so
+ * {@link buildAgentLaunchCommand} can whitelist against it. The empty sentinel
+ * ({@link AGENT_MODEL_DEFAULT}) emits no flag.
+ */
+export const AGENT_MODEL_OPTIONS: SettingsFieldOption[] = [
+  { value: AGENT_MODEL_DEFAULT, label: "Use default (inherit Claude config)" },
+  { value: "opus", label: "Opus" },
+  { value: "sonnet", label: "Sonnet" },
+  { value: "haiku", label: "Haiku" },
+  { value: "fable", label: "Fable" },
+];
+
+/** The default permission mode — `auto`, preserving today's spawn behavior. */
+export const AGENT_PERMISSION_MODE_DEFAULT = "auto";
+
+/**
+ * The canonical permission-mode choices for a spawned agent — the values
+ * `claude --permission-mode` accepts. Shared + whitelisted the same way as
+ * {@link AGENT_MODEL_OPTIONS}; defaults to {@link AGENT_PERMISSION_MODE_DEFAULT}.
+ */
+export const AGENT_PERMISSION_MODE_OPTIONS: SettingsFieldOption[] = [
+  { value: "auto", label: "Auto" },
+  { value: "default", label: "Default (prompt for permission)" },
+  { value: "acceptEdits", label: "Accept edits" },
+  { value: "plan", label: "Plan" },
+  { value: "dontAsk", label: "Don't ask" },
+  { value: "bypassPermissions", label: "Bypass permissions" },
+];
+
+/**
+ * The settings fields the "General" tab renders for the agent-spawn preference.
+ * Shared so the descriptor and {@link buildAgentLaunchCommand} never drift. Keyed
+ * under `agent.*` (the General tab writes to `global.agent`).
+ */
+export const AGENT_SETTINGS_FIELDS: SettingsField[] = [
+  {
+    key: "agent.model",
+    type: "enum",
+    label: "Agent model",
+    description:
+      "The model Perch passes to every agent it spawns (dex work-agents, the dex-new author, " +
+      "and the stack agent sessions). Leave on the default to inherit your own Claude config.",
+    default: AGENT_MODEL_DEFAULT,
+    options: AGENT_MODEL_OPTIONS,
+  },
+  {
+    key: "agent.permissionMode",
+    type: "enum",
+    label: "Agent permission mode",
+    description:
+      "The permission mode Perch starts every spawned agent in. Auto lets a freshly-spawned " +
+      "agent act without first toggling its mode by hand.",
+    default: AGENT_PERMISSION_MODE_DEFAULT,
+    options: AGENT_PERMISSION_MODE_OPTIONS,
+  },
+];
+
+/** Narrow `ctx.global` to the agent settings at `global.agent`; {} on miss. */
+export function agentConfigOf(global: unknown): GlobalAgentConfig {
+  const g = global && typeof global === "object" ? (global as Record<string, unknown>) : {};
+  const parsed = GlobalAgentConfig.safeParse(g.agent ?? {});
   return parsed.success ? parsed.data : {};
 }
 
@@ -354,11 +437,49 @@ export function shellQuote(word: string): string {
  * Shared by every "spawn an agent in a worktree" flow (the dex spawn, the stack
  * resolve-conflicts action, the free-form open-agent action) so the launch
  * command stays identical across them.
+ *
+ * `options` carries the user-configured defaults (from {@link agentConfigOf}).
+ * Both fields are WHITELISTED against the canonical option lists before they land
+ * in the shell command — an out-of-list model is dropped (no `--model`), an
+ * out-of-list/unset mode falls back to `auto`. With no options, the command is
+ * byte-identical to today: `cd … && exec claude --permission-mode auto`.
  */
-export function buildAgentLaunchCommand(worktreePath: string, prompt?: string): string {
-  const base = `cd ${shellQuote(worktreePath)} && exec claude --permission-mode auto`;
+export function buildAgentLaunchCommand(
+  worktreePath: string,
+  prompt?: string,
+  options?: GlobalAgentConfig,
+): string {
+  const model = whitelistAgentModel(options?.model);
+  const permissionMode = whitelistAgentPermissionMode(options?.permissionMode);
+  const flags = model
+    ? `--model ${model} --permission-mode ${permissionMode}`
+    : `--permission-mode ${permissionMode}`;
+  const base = `cd ${shellQuote(worktreePath)} && exec claude ${flags}`;
   const seed = prompt?.trim();
   return seed ? `${base} ${shellQuote(seed)}` : base;
+}
+
+/**
+ * The configured model if it's a known {@link AGENT_MODEL_OPTIONS} value (other
+ * than the empty inherit-sentinel), else `undefined` — so a stale/free-text value
+ * can never be interpolated into `claude --model <x>`; it just emits no flag.
+ */
+function whitelistAgentModel(model: string | undefined): string | undefined {
+  if (!model) return undefined;
+  return AGENT_MODEL_OPTIONS.some((o) => o.value !== AGENT_MODEL_DEFAULT && o.value === model)
+    ? model
+    : undefined;
+}
+
+/**
+ * The configured permission mode if it's a known {@link AGENT_PERMISSION_MODE_OPTIONS}
+ * value, else {@link AGENT_PERMISSION_MODE_DEFAULT} (`auto`) — so an unset or
+ * out-of-list mode can never reach `claude --permission-mode <y>`.
+ */
+function whitelistAgentPermissionMode(mode: string | undefined): string {
+  return AGENT_PERMISSION_MODE_OPTIONS.some((o) => o.value === mode)
+    ? (mode as string)
+    : AGENT_PERMISSION_MODE_DEFAULT;
 }
 
 /**

@@ -212,6 +212,11 @@ test("buildClaudeLaunch: single quotes in the path/prompt are POSIX-escaped", ()
   assert.equal(cmd, `cd '/it'\\''s/here' && exec claude --permission-mode auto 'say '\\''hi'\\'''`);
 });
 
+test("buildClaudeLaunch: threads the configured agent model + permission mode", () => {
+  const cmd = buildClaudeLaunch("/w", "go", { model: "opus", permissionMode: "plan" });
+  assert.equal(cmd, "cd '/w' && exec claude --model opus --permission-mode plan 'go'");
+});
+
 test("agentTitle: `dex <id> · <name>`, bare id when the name is blank, truncated when long", () => {
   assert.equal(agentTitle("abc12", "Fix login"), "dex abc12 · Fix login");
   // No usable name → just the id (still self-identifying via the branch's id).
@@ -454,6 +459,29 @@ test("runSpawn: happy path — finds the task's store, creates the worktree, lau
   const startIdx = calls.indexOf(start);
   const worktreeIdx = calls.findIndex((c) => c.cmd === "git" && c.args.includes("worktree"));
   assert.ok(startIdx < worktreeIdx);
+});
+
+test("runSpawn: threads the configured agent model + permission mode into the launch", async () => {
+  const { exec } = execStub({
+    tasks: { "/work/perch/.dex": { name: "Add the spawn action" } },
+    defaultBranch: "main",
+  });
+  const term = fakeSpawn();
+  const script = fakeWriteScript();
+  const res = await runSpawn(
+    { id: "abc12" },
+    deps(exec, {
+      spawn: term.spawn,
+      writeScript: script.writeScript,
+      agent: { model: "sonnet", permissionMode: "plan" },
+    }),
+  );
+
+  assert.equal(res.ok, true);
+  assert.match(
+    script.commands[0]!,
+    /\ncd '\/work\/perch-worktrees\/abc12-add-the-spawn-action' && exec claude --model sonnet --permission-mode plan '/,
+  );
 });
 
 test("runSpawn: a failed origin fetch falls back to the local base, still spawns", async () => {

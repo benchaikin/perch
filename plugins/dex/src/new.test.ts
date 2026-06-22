@@ -204,6 +204,23 @@ test("runNew: happy path — launches an auto-mode agent in the sole repo with t
   assert.ok(script.commands[0]!.includes("Add a logout button"));
 });
 
+test("runNew: threads the configured agent model + permission mode into the launch", async () => {
+  const script = fakeWriteScript();
+  const res = await runNew(
+    { description: "Add a logout button" },
+    deps({
+      spawn: fakeSpawn().spawn,
+      writeScript: script.writeScript,
+      agent: { model: "opus", permissionMode: "acceptEdits" },
+    }),
+  );
+  assert.equal(res.ok, true);
+  assert.match(
+    script.commands[0]!,
+    /\ncd '\/work\/perch' && exec claude --model opus --permission-mode acceptEdits '/,
+  );
+});
+
 test("runNew: start mode seeds the worker-spawning prompt and a distinct success message", async () => {
   const script = fakeWriteScript();
   const res = await runNew(

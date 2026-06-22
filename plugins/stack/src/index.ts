@@ -7,6 +7,7 @@
  */
 import {
   action,
+  agentConfigOf,
   definePlugin,
   read,
   reposOf,
@@ -367,6 +368,7 @@ export default definePlugin({
           repoDir: cwd ?? process.cwd(),
           gitBin: "git",
           terminal: terminalConfigOf(ctx.global),
+          agent: agentConfigOf(ctx.global),
           log: ctx.log,
         });
       },
@@ -400,6 +402,7 @@ export default definePlugin({
           repoDir: cwd ?? process.cwd(),
           gitBin: "git",
           terminal: terminalConfigOf(ctx.global),
+          agent: agentConfigOf(ctx.global),
           log: ctx.log,
         });
       },

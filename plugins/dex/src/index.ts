@@ -18,6 +18,7 @@ import type { spawn as nodeSpawn } from "node:child_process";
 
 import {
   action,
+  agentConfigOf,
   definePlugin,
   read,
   reposOf,
@@ -369,6 +370,7 @@ async function autoSpawnReadyRepos(
     gitBin: cfg.gitBin ?? "git",
     repos,
     terminal: terminalConfigOf(ctx.global),
+    agent: agentConfigOf(ctx.global),
     spawn: spawnOpenSpawn,
     log: ctx.log,
   };
@@ -491,6 +493,7 @@ export default definePlugin({
           gitBin: cfg.gitBin ?? "git",
           repos,
           terminal: terminalConfigOf(ctx.global),
+          agent: agentConfigOf(ctx.global),
           spawn: spawnOpenSpawn,
           log: ctx.log,
         });
@@ -628,6 +631,7 @@ export default definePlugin({
           // the daemon's own cwd, whose `.dex` store `dex.tasks` reads in that case.
           cwd: process.cwd(),
           terminal: terminalConfigOf(ctx.global),
+          agent: agentConfigOf(ctx.global),
           spawn: spawnOpenSpawn,
           log: ctx.log,
         });
@@ -724,6 +728,7 @@ export default definePlugin({
           gitBin: cfg.gitBin ?? "git",
           repos: dirs,
           terminal: terminalConfigOf(ctx.global),
+          agent: agentConfigOf(ctx.global),
           spawn: spawnOpenSpawn,
           maxConcurrency: cfg.maxConcurrency ?? 5,
           log: ctx.log,
