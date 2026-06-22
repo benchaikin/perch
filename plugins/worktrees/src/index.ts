@@ -159,7 +159,7 @@ export default definePlugin({
       summary: "Git worktrees with branch, dirty state, and ahead/behind",
       input: z.object({}).default({}),
       output: Worktrees,
-      refresh: { every: "10s", on: ["focus"] },
+      refresh: { every: "10s", idleEvery: "60s", on: ["focus"] },
       view: { kind: "list", title: "Worktrees" },
       expose: { mcp: true },
       run: async ({ ctx }): Promise<Worktrees> => {

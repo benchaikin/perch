@@ -359,3 +359,68 @@ test("a persistent poller survives unsubscribe of a client sharing its key", () 
   assert.equal(scheduler.hasPersistentPoller(entry.id, key), true);
   scheduler.stop();
 });
+
+test("a persistent poller transitions between normal and idle intervals as refs change", () => {
+  const plugin = definePlugin({
+    id: "demo",
+    capabilities: {
+      watched: asCap(
+        read({
+          summary: "has idle interval",
+          output: z.object({ n: z.number() }),
+          refresh: { every: "60s", idleEvery: "300s" },
+          run: () => ({ n: 1 }),
+          notify: () => [],
+        }),
+      ),
+    },
+  });
+
+  const { registry, deps } = harness(plugin);
+  const scheduler = new Scheduler(deps, createEventBus(), new NotificationService());
+  const entry = registry.get("demo.watched") as RegisteredCapability;
+
+  // No client subscribed, only persistent interest → idle interval.
+  scheduler.armPersistent(entry, undefined);
+  assert.equal(scheduler.pollerIntervalMs(entry.id, "null"), 300_000);
+
+  // A GUI client subscribes → switch to the fast interval immediately.
+  const key = scheduler.subscribe(entry, undefined);
+  assert.equal(scheduler.pollerIntervalMs(entry.id, key), 60_000);
+
+  // The client leaves but persistent interest remains → back to idle.
+  scheduler.unsubscribe(entry.id, key);
+  assert.equal(scheduler.pollerIntervalMs(entry.id, key), 300_000);
+
+  scheduler.stop();
+});
+
+test("a read without idleEvery keeps one interval regardless of subscribers", () => {
+  const plugin = definePlugin({
+    id: "demo",
+    capabilities: {
+      watched: asCap(
+        read({
+          summary: "no idle interval",
+          output: z.object({ n: z.number() }),
+          refresh: { every: "60s" },
+          run: () => ({ n: 1 }),
+          notify: () => [],
+        }),
+      ),
+    },
+  });
+
+  const { registry, deps } = harness(plugin);
+  const scheduler = new Scheduler(deps, createEventBus(), new NotificationService());
+  const entry = registry.get("demo.watched") as RegisteredCapability;
+
+  scheduler.armPersistent(entry, undefined);
+  assert.equal(scheduler.pollerIntervalMs(entry.id, "null"), 60_000);
+  const key = scheduler.subscribe(entry, undefined);
+  assert.equal(scheduler.pollerIntervalMs(entry.id, key), 60_000);
+  scheduler.unsubscribe(entry.id, key);
+  assert.equal(scheduler.pollerIntervalMs(entry.id, key), 60_000);
+
+  scheduler.stop();
+});

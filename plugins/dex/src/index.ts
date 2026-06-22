@@ -446,7 +446,7 @@ export default definePlugin({
       summary: "Open dex tasks (epics → tasks → subtasks) with derived status",
       input: z.object({}).default({}),
       output: DexBoard,
-      refresh: { every: "30s", on: ["focus"] },
+      refresh: { every: "30s", idleEvery: "120s", on: ["focus"] },
       view: { kind: "list", title: "Dex" },
       expose: { mcp: true },
       run: async ({ ctx }): Promise<DexBoard> => {
@@ -746,7 +746,7 @@ export default definePlugin({
       summary: "Auto-land merged dex worktrees (reap worktree + branch, complete the task)",
       input: z.object({}).default({}),
       output: LandBoard,
-      refresh: { every: "60s", on: ["focus"] },
+      refresh: { every: "60s", idleEvery: "120s", on: ["focus"] },
       run: async ({ ctx }): Promise<LandBoard> => {
         if (landing) {
           ctx.log("dex.land: a previous pass is still running; skipping this poll");

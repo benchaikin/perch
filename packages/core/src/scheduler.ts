@@ -29,6 +29,8 @@ interface Poller {
   refs: number;
   /** The validated input passed to the read. */
   input: unknown;
+  /** The input key this poller is bound to (needed to re-arm its own timer). */
+  key: string;
   /**
    * Whether a persistent (notify-driven) interest is holding this poller open
    * independent of client subscriptions. Such a poller stays armed even when
@@ -41,6 +43,20 @@ interface Poller {
    * flight; this flag tells that in-flight poll not to reschedule itself.
    */
   stopped: boolean;
+  /**
+   * Normal poll interval (ms) used while a GUI client is subscribed
+   * (`refs > 0`); `undefined` for a read with no `refresh.every`.
+   */
+  everyMs: number | undefined;
+  /**
+   * Slower poll interval (ms) used while only persistent interest holds the
+   * poller open (`refs === 0`). Falls back to {@link everyMs} when the read
+   * declares no `refresh.idleEvery`.
+   */
+  idleMs: number | undefined;
+  /** Interval (ms) the currently-armed timer is using, so we re-arm only when
+   *  the desired interval actually changes. */
+  currentMs: number | undefined;
 }
 
 /** Owns refresh timers and refcounts for active read subscriptions. */
@@ -103,6 +119,9 @@ export class Scheduler {
     const existing = this.#pollers.get(mapKey);
     if (existing) {
       existing.refs += 1;
+      // First GUI client on an idling persistent poller → switch to the fast
+      // interval right away rather than waiting out the idle one.
+      this.#retune(existing);
       return key;
     }
 
@@ -135,6 +154,8 @@ export class Scheduler {
     const poller = this.#makePoller(entry, input, key, true);
     poller.refs = 0;
     this.#pollers.set(mapKey, poller);
+    // With no client subscribed, drop to the idle interval immediately.
+    this.#retune(poller);
     return key;
   }
 
@@ -182,8 +203,7 @@ export class Scheduler {
   poke(id: string): void {
     for (const [mapKey, poller] of this.#pollers) {
       if (this.#splitId(mapKey) !== id) continue;
-      const key = mapKey.slice(mapKey.indexOf(" ") + 1);
-      void this.#poll(poller.entry, poller.input, key);
+      void this.#poll(poller.entry, poller.input, poller.key);
     }
   }
 
@@ -200,22 +220,67 @@ export class Scheduler {
     persistent: boolean,
   ): Poller {
     // No interval: still track the ref so unsubscribe is symmetric.
-    const poller: Poller = { entry, timer: undefined, refs: 1, input, persistent, stopped: false };
-    const every = entry.cap.kind === "read" ? entry.cap.refresh?.every : undefined;
-    if (every) {
-      const intervalMs = parseDuration(every);
-      const schedule = (): ReturnType<typeof setTimeout> => {
-        const timer = setTimeout(async () => {
-          await this.#poll(entry, input, key);
-          if (!poller.stopped) poller.timer = schedule();
-        }, intervalMs);
-        // Don't keep the event loop alive solely for polling.
-        timer.unref?.();
-        return timer;
-      };
-      poller.timer = schedule();
+    const poller: Poller = {
+      entry,
+      timer: undefined,
+      refs: 1,
+      input,
+      key,
+      persistent,
+      stopped: false,
+      everyMs: undefined,
+      idleMs: undefined,
+      currentMs: undefined,
+    };
+    const refresh = entry.cap.kind === "read" ? entry.cap.refresh : undefined;
+    if (refresh?.every) {
+      poller.everyMs = parseDuration(refresh.every);
+      poller.idleMs = refresh.idleEvery ? parseDuration(refresh.idleEvery) : poller.everyMs;
+      this.#arm(poller);
     }
     return poller;
+  }
+
+  /**
+   * The interval (ms) the poller should currently use: the fast {@link
+   * Poller.everyMs} while a GUI client is subscribed, or the slower {@link
+   * Poller.idleMs} when only persistent interest holds it open. `undefined` for
+   * a read with no `refresh.every`.
+   */
+  #desiredIntervalMs(poller: Poller): number | undefined {
+    if (poller.everyMs === undefined) return undefined;
+    return poller.refs > 0 ? poller.everyMs : (poller.idleMs ?? poller.everyMs);
+  }
+
+  /**
+   * Arm the next poll using the poller's currently-desired interval. The timer
+   * re-arms itself after each poll, so a poll always re-reads `refs` and adapts
+   * the interval on the next cycle.
+   */
+  #arm(poller: Poller): void {
+    const intervalMs = this.#desiredIntervalMs(poller);
+    if (intervalMs === undefined) return;
+    poller.currentMs = intervalMs;
+    const timer = setTimeout(async () => {
+      await this.#poll(poller.entry, poller.input, poller.key);
+      if (!poller.stopped) this.#arm(poller);
+    }, intervalMs);
+    // Don't keep the event loop alive solely for polling.
+    timer.unref?.();
+    poller.timer = timer;
+  }
+
+  /**
+   * Re-arm a poller's timer when its desired interval changed because `refs`
+   * crossed the subscribed/idle boundary. Resets the pending delay to the new
+   * interval so a switch takes effect immediately rather than after the old
+   * interval elapses. No-op when the interval is unchanged.
+   */
+  #retune(poller: Poller): void {
+    if (poller.stopped || poller.everyMs === undefined) return;
+    if (this.#desiredIntervalMs(poller) === poller.currentMs) return;
+    if (poller.timer) clearTimeout(poller.timer);
+    this.#arm(poller);
   }
 
   /**
@@ -240,6 +305,9 @@ export class Scheduler {
     if (poller.refs <= 0 && !poller.persistent) {
       this.#teardown(poller);
       this.#pollers.delete(mapKey);
+    } else {
+      // Last GUI client left a persistent poller → drop to the idle interval.
+      this.#retune(poller);
     }
   }
 
@@ -251,6 +319,14 @@ export class Scheduler {
   /** Whether a persistent poller is armed for `(id, key)` (test helper). */
   hasPersistentPoller(id: string, key: string): boolean {
     return this.#pollers.get(this.#key(id, key))?.persistent === true;
+  }
+
+  /**
+   * The interval (ms) the poller for `(id, key)` is currently armed at, or
+   * `undefined` if there is no poller / it has no interval (test helper).
+   */
+  pollerIntervalMs(id: string, key: string): number | undefined {
+    return this.#pollers.get(this.#key(id, key))?.currentMs;
   }
 
   async #poll(entry: RegisteredCapability, input: unknown, key: string): Promise<void> {
