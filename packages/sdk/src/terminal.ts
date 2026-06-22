@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 
+import { AGENT_MODEL_DEFAULT, AGENT_MODEL_OPTIONS } from "./agent-models.js";
 import type { DexRgb } from "./dex-color.js";
 import type { SettingsField, SettingsFieldOption } from "./index.js";
 
@@ -181,28 +182,6 @@ export const GlobalAgentConfig = z.object({
   permissionMode: z.string().optional(),
 });
 export type GlobalAgentConfig = z.infer<typeof GlobalAgentConfig>;
-
-/**
- * The empty sentinel meaning "emit no `--model`" — the spawned `claude` inherits
- * whatever model the user's own Claude config defaults to. The default choice in
- * {@link AGENT_MODEL_OPTIONS} so today's behavior (no `--model`) is preserved.
- */
-export const AGENT_MODEL_DEFAULT = "";
-
-/**
- * The canonical model choices for a spawned agent — the documented `claude --model`
- * aliases (the CLI accepts these or a full model id; we offer the stable aliases).
- * Shared so Settings and the new-task dialog pick from the exact same list, and so
- * {@link buildAgentLaunchCommand} can whitelist against it. The empty sentinel
- * ({@link AGENT_MODEL_DEFAULT}) emits no flag.
- */
-export const AGENT_MODEL_OPTIONS: SettingsFieldOption[] = [
-  { value: AGENT_MODEL_DEFAULT, label: "Use default (inherit Claude config)" },
-  { value: "opus", label: "Opus" },
-  { value: "sonnet", label: "Sonnet" },
-  { value: "haiku", label: "Haiku" },
-  { value: "fable", label: "Fable" },
-];
 
 /** The default permission mode — `auto`, preserving today's spawn behavior. */
 export const AGENT_PERMISSION_MODE_DEFAULT = "auto";

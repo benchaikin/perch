@@ -340,10 +340,16 @@ export {
   type DexTaskColor,
 } from "./dex-color.js";
 
+/**
+ * The canonical agent-model list. Also published as the dependency-free
+ * `@perch/sdk/agent-models` subpath, so the browser renderer (the dex new-task
+ * dialog's model picker) can import it without pulling the node-only terminal
+ * launcher into its bundle.
+ */
+export { AGENT_MODEL_DEFAULT, AGENT_MODEL_OPTIONS } from "./agent-models.js";
+
 /** Shared terminal launcher + the cross-plugin terminal setting. */
 export {
-  AGENT_MODEL_DEFAULT,
-  AGENT_MODEL_OPTIONS,
   AGENT_PERMISSION_MODE_DEFAULT,
   AGENT_PERMISSION_MODE_OPTIONS,
   AGENT_SETTINGS_FIELDS,

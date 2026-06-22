@@ -207,8 +207,9 @@ const EditInputSchema = z.object({
  * The `dex.new` action input: a free-form description, with an optional target
  * (a `project` basename the GUI passes, or an explicit `repo` path) so the author
  * agent's `dex create` lands in the right store. `start` regains the worker
- * handoff in the seeded prompt; `parentId` nests the new task under a parent.
- * Both must be declared here — a bare `z.object` strips undeclared keys, so
+ * handoff in the seeded prompt; `parentId` nests the new task under a parent;
+ * `agentModel` overrides the author agent's model for this one creation.
+ * All must be declared here — a bare `z.object` strips undeclared keys, so
  * omitting them silently drops the flags before `runNew` sees them.
  */
 export const NewInputSchema = z.object({
@@ -217,6 +218,7 @@ export const NewInputSchema = z.object({
   repo: z.string().optional(),
   start: z.boolean().optional(),
   parentId: z.string().optional(),
+  agentModel: z.string().optional(),
 });
 
 /**
