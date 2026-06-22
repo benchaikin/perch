@@ -46,6 +46,7 @@ import type { DexCompleteRequest, DexEditRequest } from "../ipc.js";
 // mirroring `dex.ts` — pulling in `DEFAULT_DEX_VIEW_MODE` as a value would bundle
 // the whole module (and its `node:fs` import) into the renderer.
 import type { DexViewMode, DialogSize } from "../window-state.js";
+import { AGENT_MODEL_DEFAULT, AGENT_MODEL_OPTIONS } from "@perch/sdk/agent-options";
 import { dexTaskColor } from "@perch/sdk/dex-color";
 import { useActions } from "./actions.js";
 import { CopyChip } from "./copy-chip.js";
@@ -1006,6 +1007,9 @@ function DexNewDialog({
   const { setComposing, savedDialogSize } = useDexContext();
   const [draft, setDraft] = useState("");
   const [project, setProject] = useState<string | undefined>(undefined);
+  // The per-task model override for this spawn; the empty sentinel means "use the
+  // configured default" (the daemon falls back to global.agent.model).
+  const [model, setModel] = useState<string>(AGENT_MODEL_DEFAULT);
   // Which action is launching (so only that button spins), or undefined when idle.
   const [pending, setPending] = useState<"add" | "start" | undefined>(undefined);
   const inFlight = pending !== undefined;
@@ -1057,11 +1061,12 @@ function DexNewDialog({
     setPending(start ? "start" : "add");
     try {
       // A sub-task pins the store to its parent's project and threads `parentId`; a
-      // top-level task omits `parentId` entirely, so its payload is unchanged.
+      // top-level task omits `parentId` entirely, so its payload is unchanged. The
+      // model override rides along on both (empty ⇒ the daemon uses the default).
       await actions.dexNew(
         parent
-          ? { description, project: parent.project, start, parentId: parent.id }
-          : { description, project: newTaskTargetProject(projects, project), start },
+          ? { description, project: parent.project, start, parentId: parent.id, model }
+          : { description, project: newTaskTargetProject(projects, project), start, model },
       );
       setComposing(undefined);
     } catch {
@@ -1114,6 +1119,22 @@ function DexNewDialog({
             ))}
           </select>
         )}
+        {/* Per-task model override; "Use default" inherits global.agent.model. The
+            options are the SDK's canonical list so they never drift from the
+            settings descriptor + the daemon's shell-side whitelist. */}
+        <select
+          className="dex-new-model"
+          disabled={inFlight}
+          title="Model for the author agent"
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+        >
+          {AGENT_MODEL_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
         {/* Author the task AND immediately spawn a worker agent on it. */}
         <button
           className="btn btn-sm dex-new-start"

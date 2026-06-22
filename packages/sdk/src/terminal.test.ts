@@ -8,12 +8,15 @@ import { test } from "node:test";
 
 import { dexTaskColorRgb } from "./dex-color.js";
 import {
+  agentConfigOf,
   applyTemplate,
   buildAgentLaunchCommand,
   DEFAULT_TERMINAL,
   FOCUS_OR_SPAWN_TEMPLATES,
   focusableApp,
   focusTitleLiteral,
+  resolveAgentModel,
+  resolveAgentPermissionMode,
   resolveSpawnTemplate,
   resolveTabColorCommand,
   resolveTerminalTemplate,
@@ -44,6 +47,75 @@ test("buildAgentLaunchCommand: an empty/whitespace prompt is treated as no promp
     "cd '/w' && exec claude --permission-mode auto",
   );
   assert.equal(buildAgentLaunchCommand("/w", ""), "cd '/w' && exec claude --permission-mode auto");
+});
+
+test("buildAgentLaunchCommand: empty options ⇒ byte-identical to today's default", () => {
+  // The backward-compat guard: an options object whose fields are all unset must
+  // reproduce the exact legacy command (no --model, --permission-mode auto).
+  assert.equal(
+    buildAgentLaunchCommand("/w", "go", {}),
+    "cd '/w' && exec claude --permission-mode auto 'go'",
+  );
+});
+
+test("buildAgentLaunchCommand: a configured model emits --model before --permission-mode", () => {
+  assert.equal(
+    buildAgentLaunchCommand("/w", "go", { model: "opus" }),
+    "cd '/w' && exec claude --model opus --permission-mode auto 'go'",
+  );
+});
+
+test("buildAgentLaunchCommand: a configured permission mode replaces auto", () => {
+  assert.equal(
+    buildAgentLaunchCommand("/w", "go", { permissionMode: "plan" }),
+    "cd '/w' && exec claude --permission-mode plan 'go'",
+  );
+});
+
+test("buildAgentLaunchCommand: model + mode together, no prompt", () => {
+  assert.equal(
+    buildAgentLaunchCommand("/w", undefined, { model: "sonnet", permissionMode: "acceptEdits" }),
+    "cd '/w' && exec claude --model sonnet --permission-mode acceptEdits",
+  );
+});
+
+test("buildAgentLaunchCommand: out-of-whitelist values are rejected, not interpolated", () => {
+  // Free text (and the empty default sentinel) must never reach the shell: an
+  // unknown model drops the --model flag; an unknown mode falls back to auto.
+  assert.equal(
+    buildAgentLaunchCommand("/w", "go", {
+      model: "evil; rm -rf /",
+      permissionMode: "bogus",
+    }),
+    "cd '/w' && exec claude --permission-mode auto 'go'",
+  );
+});
+
+test("resolveAgentModel: whitelists aliases, rejects sentinel/unknown/free text", () => {
+  assert.equal(resolveAgentModel("opus"), "opus");
+  assert.equal(resolveAgentModel("  haiku  "), "haiku");
+  assert.equal(resolveAgentModel(""), "");
+  assert.equal(resolveAgentModel(undefined), "");
+  assert.equal(resolveAgentModel("gpt-4"), "");
+  assert.equal(resolveAgentModel("opus; echo hi"), "");
+});
+
+test("resolveAgentPermissionMode: whitelists modes, falls back to auto", () => {
+  assert.equal(resolveAgentPermissionMode("plan"), "plan");
+  assert.equal(resolveAgentPermissionMode(undefined), "auto");
+  assert.equal(resolveAgentPermissionMode(""), "auto");
+  assert.equal(resolveAgentPermissionMode("rm -rf"), "auto");
+});
+
+test("agentConfigOf: narrows global.agent, {} on miss or malformed", () => {
+  assert.deepEqual(agentConfigOf({ agent: { model: "opus", permissionMode: "plan" } }), {
+    model: "opus",
+    permissionMode: "plan",
+  });
+  assert.deepEqual(agentConfigOf({}), {});
+  assert.deepEqual(agentConfigOf(undefined), {});
+  // A wrong-typed field fails the parse → safe empty config (no throw).
+  assert.deepEqual(agentConfigOf({ agent: { model: 42 } }), {});
 });
 
 test("resolveTerminalTemplate: chosen app picks its preset", () => {

@@ -17,8 +17,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 
+import {
+  AGENT_MODEL_DEFAULT,
+  AGENT_MODEL_OPTIONS,
+  AGENT_PERMISSION_MODE_DEFAULT,
+  AGENT_PERMISSION_MODE_OPTIONS,
+} from "./agent-options.js";
 import type { DexRgb } from "./dex-color.js";
 import type { SettingsField } from "./index.js";
+
+export {
+  AGENT_MODEL_DEFAULT,
+  AGENT_MODEL_OPTIONS,
+  AGENT_PERMISSION_MODE_DEFAULT,
+  AGENT_PERMISSION_MODE_OPTIONS,
+} from "./agent-options.js";
 
 /**
  * The default macOS launcher template. `{cmd}` is replaced with the command to
@@ -171,6 +184,82 @@ export function terminalConfigOf(global: unknown): GlobalTerminalConfig {
   const g = global && typeof global === "object" ? (global as Record<string, unknown>) : {};
   const parsed = GlobalTerminalConfig.safeParse(g.terminal ?? {});
   return parsed.success ? parsed.data : {};
+}
+
+/**
+ * The cross-plugin default for spawned AGENTS (lives at `global.agent`): which
+ * `claude --model` and `--permission-mode` every Perch-launched agent starts
+ * with. Read it from `ctx.global` via {@link agentConfigOf} and feed the result
+ * to {@link buildAgentLaunchCommand}. An empty/unset `model` means "inherit the
+ * user's own Claude config" (no `--model` flag); an unset `permissionMode` means
+ * today's `auto`.
+ */
+export const GlobalAgentConfig = z.object({
+  /** The `claude --model` alias/id; empty/unset ⇒ inherit Claude's config (no --model). */
+  model: z.string().optional(),
+  /** The `claude --permission-mode`; unset ⇒ "auto" (today's behavior). */
+  permissionMode: z.string().optional(),
+});
+export type GlobalAgentConfig = z.infer<typeof GlobalAgentConfig>;
+
+/**
+ * The settings fields the "General" tab renders for the agent defaults. Shared so
+ * the descriptor and the launcher never drift, mirroring
+ * {@link TERMINAL_SETTINGS_FIELDS}. Keyed under `agent.*` (the General tab writes
+ * to `global.agent`).
+ */
+export const AGENT_SETTINGS_FIELDS: SettingsField[] = [
+  {
+    key: "agent.model",
+    type: "enum",
+    label: "Agent model",
+    description:
+      "The Claude model Perch launches spawned agents with (dex spawn, dex new, stack flows). " +
+      "Leave on Use default to inherit your own Claude config.",
+    default: AGENT_MODEL_DEFAULT,
+    options: AGENT_MODEL_OPTIONS,
+  },
+  {
+    key: "agent.permissionMode",
+    type: "enum",
+    label: "Agent permission mode",
+    description: "The permission mode every spawned agent starts in.",
+    default: AGENT_PERMISSION_MODE_DEFAULT,
+    options: AGENT_PERMISSION_MODE_OPTIONS,
+  },
+];
+
+/** Narrow `ctx.global` to the agent settings at `global.agent`; {} on miss. */
+export function agentConfigOf(global: unknown): GlobalAgentConfig {
+  const g = global && typeof global === "object" ? (global as Record<string, unknown>) : {};
+  const parsed = GlobalAgentConfig.safeParse(g.agent ?? {});
+  return parsed.success ? parsed.data : {};
+}
+
+const AGENT_MODEL_VALUES = new Set(AGENT_MODEL_OPTIONS.map((o) => o.value));
+const AGENT_PERMISSION_MODE_VALUES = new Set(AGENT_PERMISSION_MODE_OPTIONS.map((o) => o.value));
+
+/**
+ * The validated `--model` token to launch with, or `""` (emit no `--model`) for
+ * the default sentinel, an unset value, OR anything outside
+ * {@link AGENT_MODEL_OPTIONS}. WHITELISTING here is a security boundary: the
+ * result is interpolated into `exec claude --model <x>`, so free text is rejected
+ * rather than passed to the shell.
+ */
+export function resolveAgentModel(model?: string): string {
+  const m = model?.trim() ?? "";
+  return m && m !== AGENT_MODEL_DEFAULT && AGENT_MODEL_VALUES.has(m) ? m : "";
+}
+
+/**
+ * The validated `--permission-mode` token to launch with, falling back to
+ * {@link AGENT_PERMISSION_MODE_DEFAULT} for an unset value OR anything outside
+ * {@link AGENT_PERMISSION_MODE_OPTIONS}. Same whitelist-before-shell boundary as
+ * {@link resolveAgentModel}.
+ */
+export function resolveAgentPermissionMode(mode?: string): string {
+  const m = mode?.trim() ?? "";
+  return m && AGENT_PERMISSION_MODE_VALUES.has(m) ? m : AGENT_PERMISSION_MODE_DEFAULT;
 }
 
 /**
@@ -340,23 +429,52 @@ export function shellQuote(word: string): string {
   return `'${word.replaceAll("'", `'\\''`)}'`;
 }
 
+/** The resolved model + permission mode a launch should use; both optional. */
+export interface AgentLaunchOptions {
+  /**
+   * The `claude --model` alias/id to launch with. Omitted/empty/out-of-whitelist
+   * ⇒ NO `--model` flag (inherit the user's Claude config). Validated via
+   * {@link resolveAgentModel}.
+   */
+  model?: string;
+  /**
+   * The `claude --permission-mode` to launch with. Omitted/out-of-whitelist ⇒
+   * `auto` (today's behavior). Validated via {@link resolveAgentPermissionMode}.
+   */
+  permissionMode?: string;
+}
+
 /**
  * The inner command a spawned agent's terminal runs: `cd` into the worktree and
  * `exec` an interactive `claude` seeded with `prompt`. The path and prompt are
  * shell-quoted, and `exec` replaces the launcher's `sh` so Ctrl-C reaches
- * `claude` directly. `--permission-mode auto` lets a freshly-spawned agent act
- * without first toggling its mode by hand (the whole point of spawning it).
+ * `claude` directly. The permission mode (default `auto`) lets a freshly-spawned
+ * agent act without first toggling its mode by hand (the whole point of spawning
+ * it); a `--model` flag is emitted only when one is configured.
+ *
+ * `options` carries the resolved model + mode (from {@link agentConfigOf}, plus
+ * any per-call override). It is BACKWARD-COMPATIBLE: with `options` omitted (or
+ * its fields unset/out-of-whitelist) the command is byte-identical to before —
+ * `exec claude --permission-mode auto`, no `--model`. Both values are whitelisted
+ * before interpolation, so out-of-list free text can never reach the shell.
  *
  * When `prompt` is omitted or empty, no prompt arg is appended at all (not an
- * empty quoted string) — the agent drops into a live, agenda-free auto-mode
- * session waiting for the user (the `stack.open-agent` flow).
+ * empty quoted string) — the agent drops into a live, agenda-free session waiting
+ * for the user (the `stack.open-agent` flow).
  *
  * Shared by every "spawn an agent in a worktree" flow (the dex spawn, the stack
  * resolve-conflicts action, the free-form open-agent action) so the launch
  * command stays identical across them.
  */
-export function buildAgentLaunchCommand(worktreePath: string, prompt?: string): string {
-  const base = `cd ${shellQuote(worktreePath)} && exec claude --permission-mode auto`;
+export function buildAgentLaunchCommand(
+  worktreePath: string,
+  prompt?: string,
+  options?: AgentLaunchOptions,
+): string {
+  const mode = resolveAgentPermissionMode(options?.permissionMode);
+  const model = resolveAgentModel(options?.model);
+  const modelFlag = model ? `--model ${model} ` : "";
+  const base = `cd ${shellQuote(worktreePath)} && exec claude ${modelFlag}--permission-mode ${mode}`;
   const seed = prompt?.trim();
   return seed ? `${base} ${shellQuote(seed)}` : base;
 }

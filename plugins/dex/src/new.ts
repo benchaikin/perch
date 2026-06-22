@@ -20,7 +20,12 @@
  */
 import type { spawn as nodeSpawn } from "node:child_process";
 
-import { buildAgentLaunchCommand, spawnInTerminal, type GlobalTerminalConfig } from "@perch/sdk";
+import {
+  buildAgentLaunchCommand,
+  spawnInTerminal,
+  type GlobalAgentConfig,
+  type GlobalTerminalConfig,
+} from "@perch/sdk";
 
 import { resolveRepo } from "./spawn.js";
 
@@ -50,6 +55,13 @@ export interface NewInput {
    * task row's "new sub-task" control. Omitted authors a top-level task.
    */
   parentId?: string;
+  /**
+   * Per-spawn model override from the new-task dialog's picker — the `claude
+   * --model` alias the author agent launches with for THIS creation. Empty/unset
+   * (the dialog's "Use default") falls back to the configured `deps.agent` model;
+   * an out-of-whitelist value is rejected by {@link buildAgentLaunchCommand}.
+   */
+  model?: string;
 }
 
 /** The `dex.new` action result, surfaced to every projected surface. */
@@ -72,6 +84,13 @@ export interface NewDeps {
   cwd: string;
   /** The terminal preference (from `terminalConfigOf(ctx.global)`). */
   terminal: GlobalTerminalConfig;
+  /**
+   * The default agent model + permission mode the author agent launches with
+   * (from `agentConfigOf(ctx.global)`). Read at spawn time so a hot-reloaded
+   * perch.json change takes effect on the next launch. Omitted ⇒ today's default
+   * (`--permission-mode auto`, no `--model`).
+   */
+  agent?: GlobalAgentConfig;
   /** Injected terminal spawn (tests stub it). */
   spawn?: typeof nodeSpawn;
   /** Injected script writer for the terminal launcher (tests stub it). */
@@ -244,8 +263,20 @@ export async function runNew(input: NewInput, deps: NewDeps): Promise<NewResult>
   if ("error" in resolved) return { ok: false, message: resolved.error };
   const dir = resolved.repo ?? deps.cwd;
 
+  // The dialog's per-task model picker overrides the configured default for THIS
+  // spawn; "Use default" (empty/unset) falls back to `deps.agent`'s model. The
+  // permission mode always comes from the global default — it has no per-task control.
+  const agent = {
+    model: input.model?.trim() || deps.agent?.model,
+    permissionMode: deps.agent?.permissionMode,
+  };
+
   const launched = spawnInTerminal({
-    command: buildAgentLaunchCommand(dir, newTaskPrompt(description, input.start, input.parentId)),
+    command: buildAgentLaunchCommand(
+      dir,
+      newTaskPrompt(description, input.start, input.parentId),
+      agent,
+    ),
     terminal: deps.terminal,
     label: "dex new",
     // Title the window with a description snippet so a row of author windows is

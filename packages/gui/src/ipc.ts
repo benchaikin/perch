@@ -299,6 +299,12 @@ export interface DexNewRequest {
    * authors a top-level task, resolved by `project` as before.
    */
   parentId?: string;
+  /**
+   * Per-spawn model override from the dialog's picker — the `claude --model` alias
+   * the author agent launches with. Omitted/empty ("Use default") inherits the
+   * configured `global.agent.model`; an out-of-whitelist value is ignored daemon-side.
+   */
+  model?: string;
 }
 
 /**

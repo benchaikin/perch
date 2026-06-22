@@ -212,6 +212,11 @@ test("buildClaudeLaunch: single quotes in the path/prompt are POSIX-escaped", ()
   assert.equal(cmd, `cd '/it'\\''s/here' && exec claude --permission-mode auto 'say '\\''hi'\\'''`);
 });
 
+test("buildClaudeLaunch: threads the configured agent model + permission mode through", () => {
+  const cmd = buildClaudeLaunch("/work/wt", "go", { model: "opus", permissionMode: "plan" });
+  assert.equal(cmd, "cd '/work/wt' && exec claude --model opus --permission-mode plan 'go'");
+});
+
 test("agentTitle: `dex <id> · <name>`, bare id when the name is blank, truncated when long", () => {
   assert.equal(agentTitle("abc12", "Fix login"), "dex abc12 · Fix login");
   // No usable name → just the id (still self-identifying via the branch's id).

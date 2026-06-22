@@ -340,15 +340,24 @@ export {
   type DexTaskColor,
 } from "./dex-color.js";
 
-/** Shared terminal launcher + the cross-plugin terminal setting. */
+/** Shared terminal launcher + the cross-plugin terminal & agent settings. */
 export {
+  AGENT_MODEL_DEFAULT,
+  AGENT_MODEL_OPTIONS,
+  AGENT_PERMISSION_MODE_DEFAULT,
+  AGENT_PERMISSION_MODE_OPTIONS,
+  AGENT_SETTINGS_FIELDS,
+  agentConfigOf,
   applyTemplate,
   buildAgentLaunchCommand,
   DEFAULT_TERMINAL,
   focusableApp,
   FOCUS_OR_SPAWN_TEMPLATES,
   focusTitleLiteral,
+  GlobalAgentConfig,
   GlobalTerminalConfig,
+  resolveAgentModel,
+  resolveAgentPermissionMode,
   resolveSpawnTemplate,
   resolveTabColorCommand,
   resolveTerminalTemplate,
@@ -360,6 +369,7 @@ export {
   TERMINAL_TAB_COLOR,
   TERMINAL_TITLE,
   terminalConfigOf,
+  type AgentLaunchOptions,
   type SpawnInTerminalOptions,
   type TerminalApp,
 } from "./terminal.js";

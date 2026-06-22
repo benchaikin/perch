@@ -225,6 +225,40 @@ test("runNew: a parentId threads `dex create --parent` into the seeded prompt", 
   assert.match(script.commands[0]!, /dex create --parent epic42/);
 });
 
+test("runNew: the per-task model override emits --model; mode comes from the agent default", async () => {
+  const script = fakeWriteScript();
+  const res = await runNew(
+    { description: "Add a thing", model: "opus" },
+    deps({
+      spawn: fakeSpawn().spawn,
+      writeScript: script.writeScript,
+      agent: { permissionMode: "plan" },
+    }),
+  );
+  assert.equal(res.ok, true);
+  assert.match(
+    script.commands[0]!,
+    /\ncd '\/work\/perch' && exec claude --model opus --permission-mode plan '/,
+  );
+});
+
+test("runNew: an empty model override falls back to the configured agent default", async () => {
+  const script = fakeWriteScript();
+  const res = await runNew(
+    { description: "Add a thing", model: "" },
+    deps({
+      spawn: fakeSpawn().spawn,
+      writeScript: script.writeScript,
+      agent: { model: "sonnet" },
+    }),
+  );
+  assert.equal(res.ok, true);
+  assert.match(
+    script.commands[0]!,
+    /\ncd '\/work\/perch' && exec claude --model sonnet --permission-mode auto '/,
+  );
+});
+
 test("runNew: an explicit project targets that repo's directory", async () => {
   const script = fakeWriteScript();
   const res = await runNew(

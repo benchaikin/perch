@@ -904,7 +904,8 @@ body {
   margin-left: 0;
   padding: 3px 12px;
 }
-.dex-new-project {
+.dex-new-project,
+.dex-new-model {
   font: inherit;
   font-size: 11px;
   color: var(--fg);
@@ -912,6 +913,11 @@ body {
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 2px 4px;
+}
+/* The model select always renders, so it carries the auto-margin that keeps the
+   selectors hugging the left while the action buttons hug the right (the project
+   select, when present, sits to its left). */
+.dex-new-model {
   margin-right: auto;
 }
 
