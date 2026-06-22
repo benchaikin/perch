@@ -330,33 +330,38 @@ async function overviewForRepo(
     }
   }
 
-  // Per-PR enrichment: count human inline review comments. Best-effort and
-  // isolated — one PR's failed comment fetch defaults to 0 (it can't fail the
-  // overview). This adds one `gh api` call per open PR; the PR set is already
-  // scoped to `--author @me` so the fan-out stays small in practice. `me` (the
-  // authenticated login, resolved once per overview) drops the author's own
-  // comments from the tally.
-  await Promise.all(
-    prs.map(async (pr) => {
-      pr.humanReviewCommentCount = await fetchHumanReviewCommentCount(
-        exec,
-        pr.number,
-        reviewBotIgnore,
-        execOpts,
-        undefined,
-        me,
-      );
-    }),
-  );
+  const groups = groupPrs(prs);
 
-  let groups = groupPrs(prs);
+  // Run the two independent post-fetch enrichments concurrently. The per-PR
+  // comment counts mutate individual PrInfo objects while gh-stack enrichment
+  // only reorders/annotates at the group level, so they share no data and need
+  // no ordering between them.
+  const [, enriched] = await Promise.all([
+    // Per-PR enrichment: count human inline review comments. Best-effort and
+    // isolated — one PR's failed comment fetch defaults to 0 (it can't fail the
+    // overview). This adds one `gh api` call per open PR; the PR set is already
+    // scoped to `--author @me` so the fan-out stays small in practice. `me` (the
+    // authenticated login, resolved once per overview) drops the author's own
+    // comments from the tally.
+    Promise.all(
+      prs.map(async (pr) => {
+        pr.humanReviewCommentCount = await fetchHumanReviewCommentCount(
+          exec,
+          pr.number,
+          reviewBotIgnore,
+          execOpts,
+          undefined,
+          me,
+        );
+      }),
+    ),
+    // gh-stack enrichment: only when this repo locally tracks a stack.
+    groups.some((g) => g.kind === "stack") && hasGhStack(target.cwd)
+      ? enrichWithGhStack(groups, exec, execOpts, log)
+      : Promise.resolve(groups),
+  ]);
 
-  // gh-stack enrichment: only when this repo locally tracks a stack.
-  if (groups.some((g) => g.kind === "stack") && hasGhStack(target.cwd)) {
-    groups = await enrichWithGhStack(groups, exec, execOpts, log);
-  }
-
-  return { name: target.name, path: target.path, groups };
+  return { name: target.name, path: target.path, groups: enriched };
 }
 
 /** Build the cross-repo {@link PrOverview}. */
