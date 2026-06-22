@@ -307,7 +307,7 @@ export async function fetchHumanReviewCommentCount(
     const path = `repos/${repo ?? "{owner}/{repo}"}/pulls/${prNumber}/comments`;
     const out = await exec(
       "gh",
-      ["api", "--paginate", path, "--jq", "[.[] | {login: .user.login, type: .user.type}]"],
+      ["api", "--cache", "30s", "--paginate", path, "--jq", "[.[] | {login: .user.login, type: .user.type}]"],
       execOpts,
     );
     // `--jq` over `--paginate` emits one JSON array per page; concatenate them.
