@@ -515,6 +515,9 @@ test("fetchHumanReviewCommentCount shells gh api and counts humans across pages"
   assert.equal(count, 2);
   assert.ok(calledArgs.includes("api"));
   assert.ok(calledArgs.some((a) => a.includes("/pulls/142/comments")));
+  // HTTP-level caching: a 30s TTL (shorter than the 60s poll) so manual
+  // refreshes within the window hit gh's local cache instead of GitHub.
+  assert.deepEqual(calledArgs.slice(0, 3), ["api", "--cache", "30s"]);
 });
 
 test("fetchHumanReviewCommentCount threads `me` through to exclude my own comments", async () => {

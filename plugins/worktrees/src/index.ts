@@ -159,6 +159,8 @@ export default definePlugin({
       summary: "Git worktrees with branch, dirty state, and ahead/behind",
       input: z.object({}).default({}),
       output: Worktrees,
+      // Background (panel-closed) polling drops to 60s — worktree state barely
+      // changes when nobody's acting on it.
       refresh: { every: "10s", idleEvery: "60s", on: ["focus"] },
       view: { kind: "list", title: "Worktrees" },
       expose: { mcp: true },

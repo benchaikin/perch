@@ -269,6 +269,8 @@ export default definePlugin({
       summary: "Live process-compose service statuses (running/crashed/…)",
       input: z.object({}).default({}),
       output: ServiceList,
+      // Background (panel-closed) polling drops to 30s — a crash notification
+      // within 30s is plenty when nobody's watching the live status.
       refresh: { every: "5s", idleEvery: "30s", on: ["focus"] },
       view: { kind: "list", title: "Services" },
       expose: { mcp: true },

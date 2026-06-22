@@ -233,6 +233,30 @@ test("gh-stack enrichment marks the matching group tracked + applies needsRebase
   );
 });
 
+test("comment counts survive gh-stack enrichment (run concurrently, mutate in place)", async () => {
+  // Both enrichments run concurrently and mutate the same PrInfo objects: the
+  // comment fetch sets humanReviewCommentCount; gh-stack sets needsRebase +
+  // reorders. A tracked stack must end up with BOTH applied — a regression here
+  // (e.g. a shallow copy in enrichment) would drop the badges.
+  const { exec } = fakeExec({
+    "/work/a": {
+      prs: REPO_A_PRS,
+      stackView: REPO_A_STACK_VIEW,
+      comments: {
+        11: comments({ login: "carol", type: "User" }),
+        12: comments({ login: "dave", type: "User" }, { login: "erin", type: "User" }),
+      },
+    },
+  });
+  const overview = await buildPrOverview({ repos: ["/work/a"], exec, hasGhStack: () => true });
+  const stack = stackGroups(overview.repos[0]!.groups)[0]!;
+  assert.equal(stack.tracked, true); // gh-stack enrichment applied …
+  assert.equal(stack.layers.find((l) => l.number === 12)!.needsRebase, true); // … with needsRebase …
+  // … AND the concurrently-fetched comment counts are preserved.
+  assert.equal(stack.layers.find((l) => l.number === 11)!.humanReviewCommentCount, 1);
+  assert.equal(stack.layers.find((l) => l.number === 12)!.humanReviewCommentCount, 2);
+});
+
 test("enrichment is resilient: gh stack view failure leaves base-ref grouping", async () => {
   const { exec } = fakeExec({ "/work/a": { prs: REPO_A_PRS } }); // no stackView → rejects
   const overview = await buildPrOverview({

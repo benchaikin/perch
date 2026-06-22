@@ -341,6 +341,10 @@ export async function fetchHumanReviewCommentCount(
 ): Promise<number> {
   try {
     const path = `repos/${repo ?? "{owner}/{repo}"}/pulls/${prNumber}/comments`;
+    // `--cache 30s`: review comments rarely change between polls, so let gh
+    // serve a local cached response within the TTL. The 30s window is shorter
+    // than the 60s poll, so a normal poll always re-hits GitHub (cache expired)
+    // while a manual Refresh / re-subscribe within the window returns instantly.
     const out = await exec(
       "gh",
       ["api", "--cache", "30s", "--paginate", path, "--jq", "[.[] | {login: .user.login, type: .user.type}]"],

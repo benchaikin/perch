@@ -275,6 +275,8 @@ export default definePlugin({
       summary: "Your open PRs across all configured repos, with stacks grouped",
       input: z.object({}).default({}),
       output: PrOverview,
+      // Background (panel-closed) polling drops to 5min: PR status changes don't
+      // need 60s resolution when nobody's looking, and it frees API headroom.
       refresh: { every: "60s", idleEvery: "300s", on: ["focus"] },
       view: { kind: "list", title: "My PRs" },
       expose: { mcp: true },

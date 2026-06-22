@@ -175,6 +175,8 @@ export default definePlugin({
       summary: "Live Claude Code agent fleet (running / blocked / idle / ended)",
       input: z.object({}).default({}),
       output: AgentFleet,
+      // Background (panel-closed) polling drops to 30s — the live fleet only
+      // needs 5s resolution while someone's actually watching it.
       refresh: { every: "5s", idleEvery: "30s", on: ["focus"] },
       view: { kind: "list", title: "Agents" },
       expose: { mcp: true },
