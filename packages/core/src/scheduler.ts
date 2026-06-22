@@ -17,6 +17,8 @@ import type { NotificationService } from "./notifications.js";
 import type { RegisteredCapability } from "./registry.js";
 
 interface Poller {
+  /** The read capability this poller refreshes (needed to re-poll on poke). */
+  entry: RegisteredCapability;
   /**
    * Handle for the pending next poll. Reassigned on each cycle because polling
    * self-reschedules via `setTimeout` (see `#makePoller`); `undefined` for a
@@ -169,6 +171,23 @@ export class Scheduler {
   }
 
   /**
+   * Force an immediate poll of every active poller for capability `id`, outside
+   * its normal timer interval. This is the action→read reactivity primitive: a
+   * mutation can refresh the reads that depend on its outcome the moment it
+   * lands, rather than waiting for the next tick. Fire-and-forget — each poll
+   * runs in the background and emits on the event bus when done; the timer-driven
+   * cycle is untouched. A capability with no active poller (nothing subscribed,
+   * no persistent interest) is silently a no-op.
+   */
+  poke(id: string): void {
+    for (const [mapKey, poller] of this.#pollers) {
+      if (this.#splitId(mapKey) !== id) continue;
+      const key = mapKey.slice(mapKey.indexOf(" ") + 1);
+      void this.#poll(poller.entry, poller.input, key);
+    }
+  }
+
+  /**
    * Build a poller, arming a self-rescheduling timer if the read declares an
    * interval. Each poll runs to completion and only then schedules the next one
    * a full interval later, so polls never overlap and the idle gap matches the
@@ -181,7 +200,7 @@ export class Scheduler {
     persistent: boolean,
   ): Poller {
     // No interval: still track the ref so unsubscribe is symmetric.
-    const poller: Poller = { timer: undefined, refs: 1, input, persistent, stopped: false };
+    const poller: Poller = { entry, timer: undefined, refs: 1, input, persistent, stopped: false };
     const every = entry.cap.kind === "read" ? entry.cap.refresh?.every : undefined;
     if (every) {
       const intervalMs = parseDuration(every);

@@ -18,7 +18,11 @@ import {
 import { Cache, inputKey } from "./cache.js";
 import { getConfig, updateConfig, validateRepoPath } from "./config-store.js";
 import type { EventBus } from "./event-bus.js";
-import { GLOBAL_SETTINGS_ID, GLOBAL_SETTINGS_NAME, globalSettingsFields } from "./global-settings.js";
+import {
+  GLOBAL_SETTINGS_ID,
+  GLOBAL_SETTINGS_NAME,
+  globalSettingsFields,
+} from "./global-settings.js";
 import { invokeCapability, type InvokerDeps } from "./invoker.js";
 import { Registry, type RegisteredCapability } from "./registry.js";
 import type { DeliveredNotification } from "./notifications.js";
@@ -175,10 +179,22 @@ class ClientConnection {
       return this.#deps.registry.list();
     });
 
-    this.#conn.onRequest(Methods.capabilityInvoke, (params: InvokeParams): Promise<unknown> => {
-      const entry = this.#requireCapability(params.id);
-      return invokeCapability(this.#deps.invoker, entry, params.input);
-    });
+    this.#conn.onRequest(
+      Methods.capabilityInvoke,
+      async (params: InvokeParams): Promise<unknown> => {
+        const entry = this.#requireCapability(params.id);
+        const result = await invokeCapability(this.#deps.invoker, entry, params.input);
+        // After a successful action, immediately refresh the reads it declares it
+        // invalidates so action→read reactivity fires in seconds, not at the next
+        // poll. Reads can't invalidate; only actions carry `invalidates`.
+        if (entry.cap.kind === "action" && entry.cap.invalidates) {
+          for (const readId of entry.cap.invalidates) {
+            this.#deps.scheduler.poke(readId);
+          }
+        }
+        return result;
+      },
+    );
 
     this.#conn.onRequest(
       Methods.capabilitySubscribe,
@@ -260,7 +276,11 @@ class ClientConnection {
         const current = readConfigPath(globalConfig, field.key);
         return { ...field, value: current === undefined ? field.default : current };
       });
-      descriptors.push({ pluginId: GLOBAL_SETTINGS_ID, name: GLOBAL_SETTINGS_NAME, fields: globalFields });
+      descriptors.push({
+        pluginId: GLOBAL_SETTINGS_ID,
+        name: GLOBAL_SETTINGS_NAME,
+        fields: globalFields,
+      });
       return descriptors;
     });
 

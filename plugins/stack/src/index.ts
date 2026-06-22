@@ -455,6 +455,9 @@ export default definePlugin({
      */
     "merge-pr": action({
       summary: "Merge a single mergeable PR by number (gh pr merge)",
+      // A merge is the front of the land→reap→auto-spawn chain; poke the daemon's
+      // land janitor so it runs immediately instead of at its next poll.
+      invalidates: ["dex.land"],
       // `number` is required (the PR to merge); `headRefName` is accepted for
       // parity with the other per-PR actions (the GUI passes it) but the merge
       // keys off `number`.

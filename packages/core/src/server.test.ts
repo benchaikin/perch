@@ -120,3 +120,68 @@ test("integration: registry.list, capability.invoke, subscribe over a real socke
     await client.sendRequest(Methods.capabilityUnsubscribe, { id: "demo.echo", input: { n: 5 } });
   });
 });
+
+test("integration: a successful action pokes the reads it invalidates", async () => {
+  // `counter` returns an increasing value, so any re-poll produces a fresh,
+  // distinguishable update. Its interval is long enough never to fire during the
+  // test, so a second update can only come from the action's `invalidates` poke.
+  let counter = 0;
+  const poking = definePlugin({
+    id: "poking",
+    capabilities: {
+      counter: asCap(
+        read({
+          summary: "increasing counter",
+          output: z.object({ n: z.number() }),
+          refresh: { every: "1h" },
+          run: () => ({ n: ++counter }),
+        }),
+      ),
+      bump: asCap(
+        action({
+          summary: "bump the counter read",
+          invalidates: ["poking.counter"],
+          run: () => ({ ok: true }),
+        }),
+      ),
+    },
+  });
+
+  const socketPath = tempSocketPath();
+  const daemon: RunningDaemon = await startDaemon({ pluginDefs: [poking], socketPath });
+  const client: MessageConnection = await connectClient(socketPath);
+
+  after(async () => {
+    client.dispose();
+    await daemon.stop();
+  });
+
+  const updates: UpdateNotification[] = [];
+  client.onNotification(Notifications.capabilityUpdate, (n: UpdateNotification) => {
+    updates.push(n);
+  });
+
+  const sub = (await client.sendRequest(Methods.capabilitySubscribe, {
+    id: "poking.counter",
+  })) as { current: { n: number } };
+  assert.deepEqual(sub.current, { n: 1 });
+
+  // Invoking the action should poke `poking.counter`, producing a fresh update.
+  await client.sendRequest(Methods.capabilityInvoke, { id: "poking.bump" });
+
+  await waitFor(() => updates.some((u) => (u.data as { n: number }).n >= 2));
+  assert.ok(
+    updates.some((u) => u.id === "poking.counter" && (u.data as { n: number }).n >= 2),
+    "the action's invalidates poked the counter read",
+  );
+
+  await client.sendRequest(Methods.capabilityUnsubscribe, { id: "poking.counter" });
+});
+
+/** Wait until `predicate` holds or `timeoutMs` elapses; resolves either way. */
+async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+  const start = Date.now();
+  while (!predicate() && Date.now() - start < timeoutMs) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
