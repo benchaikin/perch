@@ -222,6 +222,114 @@ test("armNotifyReads arms a persistent poller for a notify-read with no subscrib
   scheduler.stop();
 });
 
+test("poke forces an immediate poll outside the timer interval", async () => {
+  // A long interval guarantees the timer never fires during the test — any poll
+  // we observe must have come from poke().
+  let polls = 0;
+  const plugin = definePlugin({
+    id: "demo",
+    capabilities: {
+      slow: asCap(
+        read({
+          summary: "long interval",
+          output: z.object({ n: z.number() }),
+          refresh: { every: "1h" },
+          run: () => ({ n: ++polls }),
+        }),
+      ),
+    },
+  });
+
+  const { registry, deps } = harness(plugin);
+  const bus = createEventBus();
+  const emitted: unknown[] = [];
+  bus.on((e) => emitted.push(e.data));
+  const scheduler = new Scheduler(deps, bus, new NotificationService());
+  const entry = registry.get("demo.slow") as RegisteredCapability;
+  scheduler.armPersistent(entry, undefined);
+
+  scheduler.poke("demo.slow");
+  await waitFor(() => emitted.length >= 1);
+  scheduler.stop();
+
+  assert.equal(polls, 1, "poke ran exactly one immediate poll");
+  assert.deepEqual(emitted, [{ n: 1 }], "poke emitted the fresh value on the bus");
+});
+
+test("poke runs the notify hook so subscribed clients get the update", async () => {
+  let counter = 0;
+  const delivered: DeliveredNotification[] = [];
+  const plugin = definePlugin({
+    id: "demo",
+    capabilities: {
+      ticker: asCap(
+        read({
+          summary: "long interval with notify",
+          output: z.object({ n: z.number() }),
+          refresh: { every: "1h" },
+          run: () => ({ n: ++counter }),
+          notify: ({ prev, next }): Notification[] => {
+            if (prev === undefined || prev.n === next.n) return [];
+            return [{ title: `now ${next.n}`, dedupeKey: `n-${next.n}` }];
+          },
+        }),
+      ),
+    },
+  });
+
+  const { registry, deps } = harness(plugin);
+  const bus = createEventBus();
+  let emits = 0;
+  bus.on(() => (emits += 1));
+  const notifications = new NotificationService();
+  notifications.addSink({ deliver: (n) => delivered.push(n) });
+  const scheduler = new Scheduler(deps, bus, notifications);
+  const entry = registry.get("demo.ticker") as RegisteredCapability;
+  scheduler.armPersistent(entry, undefined);
+
+  // First poke primes the cache (prev undefined → no notification); only after it
+  // has settled (cache written, emit fired) does the second poke see the change.
+  scheduler.poke("demo.ticker");
+  await waitFor(() => emits >= 1);
+  scheduler.poke("demo.ticker");
+  await waitFor(() => delivered.length >= 1);
+  scheduler.stop();
+  notifications.stop();
+
+  assert.ok(delivered.length >= 1, "poke triggered the notify hook");
+  assert.equal(delivered[0]!.source, "demo.ticker");
+});
+
+test("poke is a no-op for a capability with no active poller", async () => {
+  const plugin = definePlugin({
+    id: "demo",
+    capabilities: {
+      idle: asCap(
+        read({
+          summary: "never subscribed",
+          output: z.object({ n: z.number() }),
+          refresh: { every: "1h" },
+          run: () => ({ n: 1 }),
+        }),
+      ),
+    },
+  });
+
+  const { deps } = harness(plugin);
+  const bus = createEventBus();
+  const emitted: unknown[] = [];
+  bus.on((e) => emitted.push(e.data));
+  const scheduler = new Scheduler(deps, bus, new NotificationService());
+
+  // Nothing subscribed or armed → no poller → poke does nothing (and never throws).
+  scheduler.poke("demo.idle");
+  scheduler.poke("demo.unknown");
+  await new Promise((r) => setTimeout(r, 20));
+  scheduler.stop();
+
+  assert.deepEqual(emitted, [], "poke without a poller emits nothing");
+});
+
 test("a persistent poller survives unsubscribe of a client sharing its key", () => {
   const plugin = definePlugin({
     id: "demo",

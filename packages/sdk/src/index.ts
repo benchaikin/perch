@@ -107,6 +107,15 @@ export type ActionDef<I, Cfg, R = void> = {
   input?: z.ZodType<I>;
   view?: ViewHint;
   expose?: Expose;
+  /**
+   * Read capability ids to refresh immediately after this action succeeds. The
+   * daemon pokes each (an out-of-band poll) so a read that depends on this
+   * mutation's outcome updates in seconds rather than waiting for its next timer
+   * tick. Declarative and co-located with the action so the action→read
+   * relationship lives in one place. Unknown ids and reads with no active poller
+   * are simply ignored.
+   */
+  invalidates?: string[];
   /** May return a small result (e.g. an outcome) for clients to surface. */
   run: (args: { input: I; ctx: CapabilityContext<Cfg> }) => Promise<R> | R;
 };

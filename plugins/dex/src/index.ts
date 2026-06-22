@@ -474,6 +474,8 @@ export default definePlugin({
       summary: "Create a worktree for a dex task and launch a seeded agent",
       input: SpawnInputSchema,
       expose: { mcp: true },
+      // A new worktree should appear on the board immediately, not at the next poll.
+      invalidates: ["worktrees.list"],
       run: ({ input, ctx }): Promise<SpawnResult> => {
         const cfg = configOf(ctx.config);
         // `dirs` overrides the shared `global.repos` (same precedence as the read);
@@ -509,6 +511,8 @@ export default definePlugin({
       summary: "Delete a dex task from the store that holds it",
       input: DeleteInputSchema,
       expose: { mcp: true },
+      // A deleted task should vanish from the board immediately.
+      invalidates: ["dex.tasks"],
       run: ({ input, ctx }): Promise<DeleteResult> => {
         const cfg = configOf(ctx.config);
         // Same repo precedence as `dex.tasks`/`dex.spawn`: `dirs` → global.repos.
@@ -543,6 +547,8 @@ export default definePlugin({
       summary: "Edit a dex task's name/description/priority in the store that holds it",
       input: EditInputSchema,
       expose: { mcp: true },
+      // Edited metadata should reflect on the board immediately.
+      invalidates: ["dex.tasks"],
       run: ({ input, ctx }): Promise<EditResult> => {
         const cfg = configOf(ctx.config);
         // Same repo precedence as `dex.tasks`/`dex.spawn`/`dex.delete`.
@@ -576,6 +582,8 @@ export default definePlugin({
       summary: "Mark a dex task complete in the store that holds it",
       input: CompleteInputSchema,
       expose: { mcp: true },
+      // A completed task should vanish from the board immediately.
+      invalidates: ["dex.tasks"],
       run: ({ input, ctx }): Promise<CompleteResult> => {
         const cfg = configOf(ctx.config);
         // Same repo precedence as `dex.tasks`/`dex.spawn`/`dex.delete`/`dex.edit`.
@@ -637,6 +645,8 @@ export default definePlugin({
       summary: "Make one dex task depend on (be blocked by) another",
       input: BlockerInputSchema,
       expose: { mcp: true },
+      // A new dependency edge changes readiness; reflect it on the board at once.
+      invalidates: ["dex.tasks"],
       run: ({ input, ctx }): Promise<BlockerResult> => {
         const cfg = configOf(ctx.config);
         // Same repo precedence as `dex.tasks`/`dex.spawn`/`dex.delete`.
@@ -662,6 +672,8 @@ export default definePlugin({
       summary: "Remove a blocker (dependency) from one dex task",
       input: BlockerInputSchema,
       expose: { mcp: true },
+      // Removing a dependency edge changes readiness; reflect it on the board at once.
+      invalidates: ["dex.tasks"],
       run: ({ input, ctx }): Promise<BlockerResult> => {
         const cfg = configOf(ctx.config);
         const repos = effectiveDirs(cfg.dirs ?? [], ctx.global);
@@ -690,6 +702,8 @@ export default definePlugin({
     "spawn-all": action({
       summary:
         "Spawn an agent for every ready (unblocked) dex task, up to maxConcurrency at a time",
+      // New worktrees should appear on the board immediately, not at the next poll.
+      invalidates: ["worktrees.list"],
       // An optional `project` scopes the launch to one repo's store (the GUI's
       // per-repo launch on a multi-repo board); omitted launches every store's
       // ready tasks, as before.
