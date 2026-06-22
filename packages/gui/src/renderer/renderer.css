@@ -904,6 +904,7 @@ body {
   margin-left: 0;
   padding: 3px 12px;
 }
+.dex-new-model,
 .dex-new-project {
   font: inherit;
   font-size: 11px;
@@ -912,6 +913,10 @@ body {
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 2px 4px;
+}
+/* The trailing selector carries the auto-margin that pushes the action buttons to
+   the right edge, so it works whether or not the project selector is present. */
+.dex-new-controls select:last-of-type {
   margin-right: auto;
 }
 

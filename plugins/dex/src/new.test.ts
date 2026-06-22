@@ -221,6 +221,51 @@ test("runNew: threads the configured agent model + permission mode into the laun
   );
 });
 
+test("runNew: a per-task agentModel override wins over the configured default", async () => {
+  const script = fakeWriteScript();
+  const res = await runNew(
+    { description: "Add a logout button", agentModel: "sonnet" },
+    deps({
+      spawn: fakeSpawn().spawn,
+      writeScript: script.writeScript,
+      agent: { model: "opus", permissionMode: "acceptEdits" },
+    }),
+  );
+  assert.equal(res.ok, true);
+  // The per-task pick replaces the configured model but keeps the permission mode.
+  assert.match(
+    script.commands[0]!,
+    /\ncd '\/work\/perch' && exec claude --model sonnet --permission-mode acceptEdits '/,
+  );
+});
+
+test("runNew: an empty agentModel falls through to the configured default", async () => {
+  const script = fakeWriteScript();
+  const res = await runNew(
+    { description: "Add a logout button", agentModel: "" },
+    deps({
+      spawn: fakeSpawn().spawn,
+      writeScript: script.writeScript,
+      agent: { model: "opus" },
+    }),
+  );
+  assert.equal(res.ok, true);
+  assert.match(script.commands[0]!, /exec claude --model opus --permission-mode auto '/);
+});
+
+test("runNew: an invalid agentModel is rejected — no --model reaches the shell", async () => {
+  const script = fakeWriteScript();
+  const res = await runNew(
+    { description: "Add a logout button", agentModel: "evil; rm -rf /" },
+    deps({ spawn: fakeSpawn().spawn, writeScript: script.writeScript }),
+  );
+  assert.equal(res.ok, true);
+  // The out-of-whitelist value is dropped, not interpolated — auto mode, no --model.
+  assert.match(script.commands[0]!, /\ncd '\/work\/perch' && exec claude --permission-mode auto '/);
+  assert.doesNotMatch(script.commands[0]!, /--model/);
+  assert.ok(!script.commands[0]!.includes("rm -rf"));
+});
+
 test("runNew: start mode seeds the worker-spawning prompt and a distinct success message", async () => {
   const script = fakeWriteScript();
   const res = await runNew(

@@ -55,6 +55,14 @@ export interface NewInput {
    * task row's "new sub-task" control. Omitted authors a top-level task.
    */
   parentId?: string;
+  /**
+   * A per-task override for the author agent's model (an `AGENT_MODEL_OPTIONS`
+   * value from the new-task dialog's picker). Wins over the configured
+   * `global.agent.model` default; empty/"Use default" falls through to that
+   * default. Whitelisted inside {@link buildAgentLaunchCommand}, so an out-of-list
+   * value never reaches the shell — it simply emits no `--model`.
+   */
+  agentModel?: string;
 }
 
 /** The `dex.new` action result, surfaced to every projected surface. */
@@ -251,11 +259,20 @@ export async function runNew(input: NewInput, deps: NewDeps): Promise<NewResult>
   if ("error" in resolved) return { ok: false, message: resolved.error };
   const dir = resolved.repo ?? deps.cwd;
 
+  // A per-task model override (from the dialog's picker) wins over the configured
+  // default while keeping the rest of the agent config (permission mode); an
+  // empty/"Use default" pick falls through to `deps.agent`. The override is
+  // whitelisted inside buildAgentLaunchCommand, so an out-of-list value can never
+  // reach the shell — it just emits no `--model`.
+  const agent: GlobalAgentConfig | undefined = input.agentModel?.trim()
+    ? { ...deps.agent, model: input.agentModel.trim() }
+    : deps.agent;
+
   const launched = spawnInTerminal({
     command: buildAgentLaunchCommand(
       dir,
       newTaskPrompt(description, input.start, input.parentId),
-      deps.agent,
+      agent,
     ),
     terminal: deps.terminal,
     label: "dex new",

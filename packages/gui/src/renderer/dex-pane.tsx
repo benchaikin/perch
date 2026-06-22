@@ -47,6 +47,7 @@ import type { DexCompleteRequest, DexEditRequest } from "../ipc.js";
 // the whole module (and its `node:fs` import) into the renderer.
 import type { DexViewMode, DialogSize } from "../window-state.js";
 import { dexTaskColor } from "@perch/sdk/dex-color";
+import { AGENT_MODEL_DEFAULT, AGENT_MODEL_OPTIONS } from "@perch/sdk/agent-models";
 import { useActions } from "./actions.js";
 import { CopyChip } from "./copy-chip.js";
 import { DEX_STATUS_LABEL, DexTaskDot } from "./dex-task-chip.js";
@@ -1006,6 +1007,9 @@ function DexNewDialog({
   const { setComposing, savedDialogSize } = useDexContext();
   const [draft, setDraft] = useState("");
   const [project, setProject] = useState<string | undefined>(undefined);
+  // The author agent's model for THIS creation; the empty default inherits the
+  // configured `global.agent.model` (the daemon falls through when it's unset).
+  const [agentModel, setAgentModel] = useState<string>(AGENT_MODEL_DEFAULT);
   // Which action is launching (so only that button spins), or undefined when idle.
   const [pending, setPending] = useState<"add" | "start" | undefined>(undefined);
   const inFlight = pending !== undefined;
@@ -1058,10 +1062,24 @@ function DexNewDialog({
     try {
       // A sub-task pins the store to its parent's project and threads `parentId`; a
       // top-level task omits `parentId` entirely, so its payload is unchanged.
+      // An empty pick ("Use default") rides as undefined so the daemon inherits the
+      // configured default rather than seeing an explicit empty override.
+      const agentModelOverride = agentModel || undefined;
       await actions.dexNew(
         parent
-          ? { description, project: parent.project, start, parentId: parent.id }
-          : { description, project: newTaskTargetProject(projects, project), start },
+          ? {
+              description,
+              project: parent.project,
+              start,
+              parentId: parent.id,
+              agentModel: agentModelOverride,
+            }
+          : {
+              description,
+              project: newTaskTargetProject(projects, project),
+              start,
+              agentModel: agentModelOverride,
+            },
       );
       setComposing(undefined);
     } catch {
@@ -1096,6 +1114,22 @@ function DexNewDialog({
         }}
       />
       <div className="dex-new-controls">
+        {/* The author agent's model for this one creation. Unlike the project
+            selector, it's useful with a single repo, so it always shows; the
+            first option ("Use default") inherits the configured agent model. */}
+        <select
+          className="dex-new-model"
+          disabled={inFlight}
+          title="Author agent model"
+          value={agentModel}
+          onChange={(e) => setAgentModel(e.target.value)}
+        >
+          {AGENT_MODEL_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
         {/* A project selector only when several repos' tasks share the board, so the
             target store is unambiguous; one (or zero) project needs no choice. A
             sub-task is locked to its parent's store, so it never offers one. */}
