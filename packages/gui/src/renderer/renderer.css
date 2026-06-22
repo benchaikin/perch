@@ -859,7 +859,7 @@ body {
    off-screen (the backdrop pads 16px each side → 32px). `overflow: auto` is what makes
    the `resize` grabber appear on a block element. */
 .dex-new-dialog {
-  width: 420px;
+  width: 500px;
   min-width: 320px;
   min-height: 200px;
   max-width: min(720px, calc(100vw - 32px));
