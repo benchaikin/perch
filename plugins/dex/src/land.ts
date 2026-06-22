@@ -364,6 +364,8 @@ export async function runLand(deps: LandDeps): Promise<LandBoard> {
           "pr",
           "view",
           c.branch,
+          "--cache",
+          "15s",
           "--json",
           "state,mergedAt,mergeCommit,url,title,number,statusCheckRollup",
         ],
