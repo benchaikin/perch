@@ -455,7 +455,8 @@ export default definePlugin({
         // `dirs` overrides the shared `global.repos`; falls back to it, then to
         // the daemon's cwd-resolved store when both are empty.
         const dirs = effectiveDirs(cfg.dirs ?? [], ctx.global);
-        return fetchBoard(provider, dirs, cfg.showCompleted ?? false, ctx.log);
+        const board = await fetchBoard(provider, dirs, cfg.showCompleted ?? false, ctx.log);
+        return { ...board, autoSpawn: cfg.autoSpawn };
       },
       // Announce tasks newly blocked, or freshly ready (unblocked) so an agent can
       // pick them up. `prev`/`next` are validated DexBoards; skip the first poll.
