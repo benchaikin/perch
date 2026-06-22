@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  __resetCachedMe,
+  cachedCurrentUserLogin,
   countHumanReviewComments,
   fetchCurrentUserLogin,
   fetchHumanReviewCommentCount,
@@ -466,6 +468,31 @@ test("fetchCurrentUserLogin returns undefined on gh error or empty output", asyn
   assert.equal(await fetchCurrentUserLogin(failing, undefined), undefined);
   const empty: Exec = () => Promise.resolve("\n");
   assert.equal(await fetchCurrentUserLogin(empty, undefined), undefined);
+});
+
+test("cachedCurrentUserLogin resolves once, then memoizes (including failures)", async () => {
+  __resetCachedMe();
+  let calls = 0;
+  const exec: Exec = () => {
+    calls += 1;
+    return Promise.resolve("octocat\n");
+  };
+  assert.equal(await cachedCurrentUserLogin(exec, undefined), "octocat");
+  assert.equal(await cachedCurrentUserLogin(exec, undefined), "octocat");
+  assert.equal(calls, 1); // second call served from cache.
+
+  // The cached `undefined` failure is sticky too — no retry storm on a flake.
+  __resetCachedMe();
+  let failCalls = 0;
+  const failing: Exec = () => {
+    failCalls += 1;
+    return Promise.reject(new Error("gh: not authenticated"));
+  };
+  assert.equal(await cachedCurrentUserLogin(failing, undefined), undefined);
+  assert.equal(await cachedCurrentUserLogin(failing, undefined), undefined);
+  assert.equal(failCalls, 1);
+
+  __resetCachedMe(); // leave module state clean for any later case.
 });
 
 test("fetchHumanReviewCommentCount shells gh api and counts humans across pages", async () => {

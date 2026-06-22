@@ -284,6 +284,42 @@ export async function fetchCurrentUserLogin(
 }
 
 /**
+ * Module-level cache of the authenticated login. It is stable per GitHub host —
+ * it never changes across polls — so we resolve it once per daemon run instead
+ * of spawning a `gh` subprocess on every 60s overview build. `meFetched` (rather
+ * than a non-`undefined` check) caches the `undefined` failure result too, so a
+ * transient `gh` error doesn't make every subsequent poll retry the lookup.
+ *
+ * The cache lives for the daemon's lifetime: a daemon restart re-resolves it, so
+ * re-authenticating with a different account is picked up on restart. Tests clear
+ * it via {@link __resetCachedMe}.
+ */
+let cachedMe: string | undefined;
+let meFetched = false;
+
+/**
+ * Cached variant of {@link fetchCurrentUserLogin}: resolves the login on the
+ * first call and returns the memoized value thereafter. `exec`/`opts` are only
+ * used on the resolving call — the login is host-global, so a later call with a
+ * different repo `cwd` reuses the same cached value.
+ */
+export async function cachedCurrentUserLogin(
+  exec: Exec,
+  opts: ExecOptions | undefined,
+): Promise<string | undefined> {
+  if (meFetched) return cachedMe;
+  cachedMe = await fetchCurrentUserLogin(exec, opts);
+  meFetched = true;
+  return cachedMe;
+}
+
+/** Test seam: clear the cached login so each case resolves it afresh. */
+export function __resetCachedMe(): void {
+  cachedMe = undefined;
+  meFetched = false;
+}
+
+/**
  * Fetch the count of human-authored inline review comments for one PR,
  * best-effort. Shells `gh api repos/{owner}/{repo}/pulls/{number}/comments`
  * (the "pull request review comments" endpoint — comments on specific lines,

@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { beforeEach, test } from "node:test";
 
+import { __resetCachedMe } from "./gh-provider.js";
 import { buildPrOverview, PrGroup } from "./prs.js";
 import type { Exec, ExecOptions } from "./provider.js";
+
+// The authenticated-login cache is module-level (it lives for the daemon's
+// lifetime), so clear it between cases or one test's resolved `me` would leak
+// into the next.
+beforeEach(() => __resetCachedMe());
 
 /** A repo with one standalone PR + a 2-PR stack (feat-a ← feat-b). */
 const REPO_A_PRS = JSON.stringify([
@@ -315,6 +321,23 @@ test("when the gh-user lookup fails, my own comments are still counted (back-com
   );
   const overview = await buildPrOverview({ repos: ["/work/a"], exec, hasGhStack: () => false });
   assert.equal(prGroups(overview.repos[0]!.groups)[0]!.pr.humanReviewCommentCount, 2);
+});
+
+test("resolves the authed login once per daemon run, reusing it across builds", async () => {
+  const { exec, calls } = fakeExec({ "/work/a": { prs: REPO_A_PRS } });
+  const userCalls = () => calls.filter((c) => c.args[0] === "api" && c.args[1] === "user").length;
+
+  await buildPrOverview({ repos: ["/work/a"], exec, hasGhStack: () => false });
+  assert.equal(userCalls(), 1);
+
+  // A second build reuses the cached login — no further `gh api user` spawn.
+  await buildPrOverview({ repos: ["/work/a"], exec, hasGhStack: () => false });
+  assert.equal(userCalls(), 1);
+
+  // The test seam clears the cache so the next build resolves it afresh.
+  __resetCachedMe();
+  await buildPrOverview({ repos: ["/work/a"], exec, hasGhStack: () => false });
+  assert.equal(userCalls(), 2);
 });
 
 test("a failed comment fetch defaults the count to 0 without failing the overview", async () => {
