@@ -1,57 +1,5 @@
-/* The palette follows the OS appearance via prefers-color-scheme (no JS needed;
-   Electron renderers honor it and switch live when the system theme toggles).
-   --ok is a vivid, saturated green and --warn amber; --bad is a vivid,
-   high-saturation red (not the old salmon). The ok/bad pair is tuned together
-   for a red-green color-deficient viewer: the green is a deep, saturated true
-   green and the red a warm true red, kept apart in both hue and luminance (not
-   relying only on the red/green hue that deuteranopia confuses).
-   --ok-rgb / --bad-rgb mirror their hex for the rgba tint fills below.
-   Dark is the default; the light palette overrides it under prefers-color-scheme. */
-:root {
-  --bg: #1e1e1e;
-  --fg: #e6e6e6;
-  --fg-rgb: 230, 230, 230;
-  --muted: #8a8a8a;
-  --rule: #333;
-  --chip-bg: #2a2a2a;
-  --hover-bg: #2a2a2a;
-  --hover-bg-strong: #333;
-  --ok: #22c55e;
-  --ok-rgb: 34, 197, 94;
-  --warn: #d7ba7d;
-  --warn-rgb: 215, 186, 125;
-  --bad: #e01e37;
-  --bad-rgb: 224, 30, 55;
-  --accent: #4a9eff;
-  --accent-rgb: 74, 158, 255;
-  /* Body text for the dex detail view: a warm, slightly-yellowed off-white
-     (softer than the near-pure --fg) so long task bodies are easier on the eyes. */
-  --detail-fg: #e8e0cd;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #f5f5f5;
-    --fg: #1d1d1f;
-    --fg-rgb: 29, 29, 31;
-    --muted: #6b6b70;
-    --rule: #d2d2d7;
-    --chip-bg: #e8e8ec;
-    --hover-bg: #e8e8ec;
-    --hover-bg-strong: #dcdce1;
-    --ok: #15803d;
-    --ok-rgb: 21, 128, 61;
-    --warn: #9a6b00;
-    --warn-rgb: 154, 107, 0;
-    --bad: #d70015;
-    --bad-rgb: 215, 0, 21;
-    --accent: #0a66d6;
-    --accent-rgb: 10, 102, 214;
-    /* Warm near-black for the detail body in light mode (the off-white only
-       makes sense on a dark background). */
-    --detail-fg: #33302a;
-  }
-}
+/* The GUI palette lives in the shared theme.css (linked first by index.html) as
+   one Solarized token set — this file only consumes those var(--token)s. */
 
 * {
   box-sizing: border-box;
@@ -622,7 +570,7 @@ body {
 }
 .dex-row.dex-drop-target {
   box-shadow: inset 0 0 0 2px var(--accent);
-  background: rgba(74, 158, 255, 0.14);
+  background: rgba(var(--accent-rgb), 0.14);
   border-radius: 4px;
 }
 
@@ -838,7 +786,7 @@ body {
   align-items: center;
   justify-content: center;
   padding: 16px;
-  background: rgba(0, 0, 0, 0.45);
+  background: rgba(var(--shadow-rgb), 0.45);
 }
 .dialog {
   display: flex;
@@ -850,7 +798,7 @@ body {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 8px 28px rgba(var(--shadow-rgb), 0.35);
 }
 /* The header row: the dialog's title on the left, the corner ✗ close on the right. */
 .dialog-header-row {

@@ -348,6 +348,9 @@ export {
  */
 export { AGENT_MODEL_DEFAULT, AGENT_MODEL_OPTIONS } from "./agent-models.js";
 
+/** The cross-plugin GUI theme preference (System / Light / Dark). */
+export { THEME_DEFAULT, THEME_SETTINGS_FIELDS, themeSourceOf, type ThemeSource } from "./theme.js";
+
 /** Shared terminal launcher + the cross-plugin terminal setting. */
 export {
   AGENT_PERMISSION_MODE_DEFAULT,
