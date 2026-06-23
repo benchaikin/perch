@@ -33,6 +33,7 @@ import {
   socketPath as defaultSocketPath,
   type NotificationPayload,
 } from "@perch/core";
+import { themeModeOf } from "@perch/sdk";
 import { GENERAL_TAB_ID } from "./settings/settings-tabs.js";
 import { DaemonUnavailableError, PerchClient } from "@perch/cli";
 import { shouldShowNotification, toNotifyOptions } from "./notify.js";
@@ -306,7 +307,9 @@ async function waitForSocket(path: string, timeoutMs: number): Promise<boolean> 
 async function connect(): Promise<void> {
   const socket = process.env.PERCH_SOCKET ?? defaultSocketPath();
   try {
-    client = await PerchClient.connect(socket);
+    // Reuse a client an earlier startup step already opened (e.g. the pre-window
+    // theme read) so we don't open a second connection.
+    if (!client) client = await PerchClient.connect(socket);
   } catch (err) {
     if (err instanceof DaemonUnavailableError) {
       // No daemon reachable: spawn the bundled one (once), wait briefly for it to
@@ -327,6 +330,10 @@ async function connect(): Promise<void> {
   }
 
   buildInput.daemonUp = true;
+
+  // Apply the saved theme now in case the daemon was just spawned (so the
+  // pre-window read found no daemon and left the default in place).
+  await applyTheme();
 
   // Live updates: refresh the view-model whenever a matching update arrives.
   client.onUpdate((note) => {
@@ -452,8 +459,30 @@ async function refresh(): Promise<void> {
  * availability) and re-subscribe to `stack.prs`, which may have been added or
  * removed by the config change.
  */
+/**
+ * Force the app's color scheme from the global `theme` setting (System/Light/Dark).
+ * Setting `nativeTheme.themeSource` overrides the OS `prefers-color-scheme` for
+ * every renderer — the existing CSS media queries honor it, so no renderer code
+ * changes. Apply before window creation (so the initial `backgroundColor` matches)
+ * and again on a config hot-reload (so a Settings change re-themes live). A
+ * missing/unknown value resolves to "system", preserving the prior behavior.
+ */
+async function applyTheme(): Promise<void> {
+  const c = await ensureClient();
+  if (!c) return;
+  try {
+    const config = await c.configGet();
+    nativeTheme.themeSource = themeModeOf(config.global);
+  } catch (err) {
+    console.error(`[theme] apply failed: ${errorMessage(err)}`);
+  }
+}
+
 async function reloadFromRegistry(): Promise<void> {
   if (!client) return;
+  // A config edit may have changed `global.theme` — re-apply it so a Settings
+  // change re-themes every window live, without a restart.
+  await applyTheme();
   try {
     const caps = await client.registryList();
     buildInput.syncAvailable = caps.some((c) => c.id === STACK_SYNC_ID);
@@ -1802,13 +1831,17 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.on("second-instance", () => showPanel());
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     // macOS: set the app icon (which notification banners use) to the bird,
     // then keep the app out of the Dock — it's a menu-bar utility.
     app.dock?.setIcon(notificationIcon());
     app.dock?.hide();
     registerIpc();
     createTray();
+    // Force the saved theme before any window is built so the initial
+    // `backgroundColor` resolves under the chosen scheme (no light/dark flash).
+    // No-op when the daemon isn't up yet; connect() re-applies once it is.
+    await applyTheme();
     // Preload the (hidden) panel so its renderer is ready before the first open
     // (instant first paint) and so renderer errors surface immediately.
     panel = createPanel();

@@ -326,6 +326,9 @@ export { z };
 /** Shared repo list + the cross-plugin `global.repos` setting. */
 export { GlobalReposConfig, reposOf } from "./repos.js";
 
+/** Shared GUI theme preference — the cross-plugin `global.theme` setting. */
+export { THEME_DEFAULT, THEME_SETTINGS_FIELDS, themeModeOf, type ThemeMode } from "./theme.js";
+
 /**
  * Shared dex-task identity colors (stable id → color). Also published as the
  * dependency-free `@perch/sdk/dex-color` subpath, so the browser renderer can
