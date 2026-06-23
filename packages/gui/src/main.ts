@@ -30,9 +30,11 @@ import {
 } from "electron";
 import {
   configPath as defaultConfigPath,
+  loadConfig,
   socketPath as defaultSocketPath,
   type NotificationPayload,
 } from "@perch/core";
+import { themeSourceOf } from "@perch/sdk";
 import { GENERAL_TAB_ID } from "./settings/settings-tabs.js";
 import { DaemonUnavailableError, PerchClient } from "@perch/cli";
 import { shouldShowNotification, toNotifyOptions } from "./notify.js";
@@ -302,6 +304,17 @@ async function waitForSocket(path: string, timeoutMs: number): Promise<boolean> 
   }
 }
 
+/**
+ * Force the app appearance to the persisted `global.theme` (System/Light/Dark)
+ * by setting `nativeTheme.themeSource`, which flips `prefers-color-scheme` for
+ * every renderer live — so the centralized Solarized tokens resolve under the
+ * chosen mode in both the panel and Settings windows. "system" (the default, and
+ * the fallback for a missing/unknown value) tracks the OS appearance live.
+ */
+function applyThemeFromConfig(config: { global?: unknown } | null | undefined): void {
+  nativeTheme.themeSource = themeSourceOf(config?.global);
+}
+
 /** Connect to perchd, subscribe to `stack.prs`, and detect Sync availability. */
 async function connect(): Promise<void> {
   const socket = process.env.PERCH_SOCKET ?? defaultSocketPath();
@@ -454,6 +467,10 @@ async function refresh(): Promise<void> {
  */
 async function reloadFromRegistry(): Promise<void> {
   if (!client) return;
+  // Keep the appearance in lockstep with `global.theme` on any reload that does
+  // reach us (a settings change that also touches a plugin). The General-tab write
+  // path applies a theme-only change directly, since that alone doesn't broadcast.
+  applyThemeFromConfig(await client.configGet().catch(() => null));
   try {
     const caps = await client.registryList();
     buildInput.syncAvailable = caps.some((c) => c.id === STACK_SYNC_ID);
@@ -1271,7 +1288,8 @@ function createPanel(): BrowserWindow {
     alwaysOnTop: true,
     // Non-activating: clicking the panel doesn't steal focus from the editor.
     focusable: true,
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1e1e1e" : "#f5f5f5",
+    // Solarized base03 / base3 — matches theme.css's --bg so there's no pre-paint flash.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#002b36" : "#fdf6e3",
     webPreferences: {
       preload: join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -1552,7 +1570,11 @@ async function setFieldFlow(
     request.pluginId === GENERAL_TAB_ID
       ? buildGlobalConfigPatch(request.key, request.value)
       : buildConfigPatch(request.pluginId, request.key, request.value);
-  await c.configUpdate({ patch });
+  const updated = await c.configUpdate({ patch });
+  // A global-only edit (e.g. the theme) doesn't change the plugin set, so the
+  // daemon's reload skips the `registry.changed` broadcast — apply the theme here,
+  // off the write itself, so a General-tab change re-themes every window instantly.
+  if (request.pluginId === GENERAL_TAB_ID) applyThemeFromConfig(updated);
   const plugins = await c.settingsDescribe();
   return { plugins, daemonUp: true };
 }
@@ -1625,7 +1647,8 @@ function showSettingsWindow(): void {
     show: false,
     resizable: true,
     fullscreenable: false,
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1e1e1e" : "#f5f5f5",
+    // Solarized base03 / base3 — matches theme.css's --bg so there's no pre-paint flash.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#002b36" : "#fdf6e3",
     webPreferences: {
       preload: join(__dirname, "settings-preload.cjs"),
       contextIsolation: true,
@@ -1802,13 +1825,18 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.on("second-instance", () => showPanel());
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     // macOS: set the app icon (which notification banners use) to the bird,
     // then keep the app out of the Dock — it's a menu-bar utility.
     app.dock?.setIcon(notificationIcon());
     app.dock?.hide();
     registerIpc();
     createTray();
+    // Apply the persisted theme BEFORE creating any window, so the window's
+    // initial backgroundColor (driven by nativeTheme.shouldUseDarkColors) matches
+    // the forced mode and there's no flash. Read straight from perch.json on disk
+    // so this doesn't wait on the daemon connection.
+    applyThemeFromConfig(await loadConfig().catch(() => null));
     // Preload the (hidden) panel so its renderer is ready before the first open
     // (instant first paint) and so renderer errors surface immediately.
     panel = createPanel();
