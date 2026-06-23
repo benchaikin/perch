@@ -999,9 +999,11 @@ export function Dialog({
 function DexNewDialog({
   projects,
   parent,
+  autoSpawn,
 }: {
   projects: string[];
   parent?: DexNewParent;
+  autoSpawn: Record<string, boolean>;
 }): JSX.Element {
   const actions = useActions();
   const { setComposing, savedDialogSize } = useDexContext();
@@ -1034,6 +1036,13 @@ function DexNewDialog({
   // single-store board the name is unknown (the daemon resolves the sole repo),
   // so degrade to a plain label rather than "Add a task to undefined repository".
   const targetProject = newTaskTargetProject(projects, project);
+  // Hide "Add task and start immediately" when the live target repo is in Auto:
+  // the daemon already auto-spawns a worker on every ready task there, so the
+  // button would only promise something that happens regardless. A sub-task lands
+  // in its parent's store, so gate on that; a single-store/cwd board resolves to
+  // undefined (no Auto toggle) and counts as Manual, keeping the button visible.
+  const targetKey = parent ? parent.project : targetProject;
+  const targetIsAuto = targetKey !== undefined && autoSpawn[targetKey] === true;
   const header = parent ? (
     <>
       Add a sub-task to <span className="dex-new-header-repo">{parent.name}</span>
@@ -1148,25 +1157,28 @@ function DexNewDialog({
             ))}
           </select>
         )}
-        {/* Author the task AND immediately spawn a worker agent on it. */}
-        <button
-          className="btn btn-sm dex-new-start"
-          disabled={!canSubmit}
-          title={
-            pending === "start"
-              ? "Spawning the author agent…"
-              : "Add task and start an agent working it"
-          }
-          aria-label="Add task and start immediately"
-          onClick={() => void submit(true)}
-        >
-          <i
-            className={
-              pending === "start" ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-rocket"
+        {/* Author the task AND immediately spawn a worker agent on it. Hidden when
+            the target repo is in Auto, where the daemon spawns a worker anyway. */}
+        {!targetIsAuto && (
+          <button
+            className="btn btn-sm dex-new-start"
+            disabled={!canSubmit}
+            title={
+              pending === "start"
+                ? "Spawning the author agent…"
+                : "Add task and start an agent working it"
             }
-          />{" "}
-          Add task and start immediately
-        </button>
+            aria-label="Add task and start immediately"
+            onClick={() => void submit(true)}
+          >
+            <i
+              className={
+                pending === "start" ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-rocket"
+              }
+            />{" "}
+            Add task and start immediately
+          </button>
+        )}
         {/* The default action — what Enter triggers: author the task only. */}
         <button
           className="btn btn-sm btn-primary dex-new-submit"
@@ -2262,9 +2274,13 @@ function DexSectionBody({ section }: { section: DexSection }): JSX.Element {
       <DexNewDialog
         projects={[]}
         parent={{ id: parentRow.id, name: parentRow.name, project: parentRow.project }}
+        autoSpawn={section.autoSpawn}
       />
     ) : (
-      <DexNewDialog projects={composing === PANE_SCOPE ? dexProjects(section) : [composing]} />
+      <DexNewDialog
+        projects={composing === PANE_SCOPE ? dexProjects(section) : [composing]}
+        autoSpawn={section.autoSpawn}
+      />
     );
 
   // Multi-repo board: a per-repo collapsible group, each with its own header +

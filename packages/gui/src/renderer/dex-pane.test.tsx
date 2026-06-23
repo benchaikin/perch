@@ -1096,6 +1096,88 @@ test("Enter triggers the plain Add task path only (never starts an agent)", () =
   assert.equal(dexNewCalls[0]!.start, false, "Enter never starts an agent");
 });
 
+test("an Auto-mode target repo hides 'Add task and start immediately' (Manual keeps it)", () => {
+  // An Auto repo's daemon already spawns a worker on every ready task, so the
+  // start button would only promise something that happens regardless. A repo's
+  // own + arms a dialog bound to that repo (no project picker), so its mode alone
+  // governs visibility.
+  const auto = render(
+    <DexPane
+      section={multiRepoSection([row({ id: "a1", name: "A", project: "alpha" })], ["alpha"], {
+        alpha: true,
+      })}
+    />,
+  );
+  fireEvent.click(auto.container.querySelector(".dex-new")!);
+  const autoDialog = auto.container.querySelector(".dex-new-dialog")!;
+  assert.ok(autoDialog.querySelector(".dex-new-submit"), "Add task is always offered");
+  assert.equal(
+    autoDialog.querySelector(".dex-new-start"),
+    null,
+    "an Auto repo hides the start button",
+  );
+
+  const manual = render(
+    <DexPane
+      section={multiRepoSection([row({ id: "b1", name: "B", project: "beta" })], ["beta"], {
+        beta: false,
+      })}
+    />,
+  );
+  fireEvent.click(manual.container.querySelector(".dex-new")!);
+  assert.ok(
+    manual.container.querySelector(".dex-new-dialog")!.querySelector(".dex-new-start"),
+    "a Manual repo keeps the start button",
+  );
+});
+
+test("the start button tracks the live target project as the select switches (no remount)", () => {
+  // Single board carrying tasks from two repos: alpha is Auto, beta is Manual. The
+  // pane-level dialog offers a project picker, and the start button must follow it.
+  const base = section([
+    row({ id: "a1", name: "Alpha one", project: "alpha" }),
+    row({ id: "b1", name: "Beta one", project: "beta" }),
+  ]);
+  const { container } = render(<DexPane section={{ ...base, autoSpawn: { alpha: true } }} />);
+  fireEvent.click(container.querySelector(".dex-new")!);
+  const dialog = container.querySelector(".dex-new-dialog")!;
+  const textarea = dialog.querySelector(".dex-new-input") as HTMLTextAreaElement;
+  fireEvent.change(textarea, { target: { value: "some work" } });
+
+  // Defaulting to the first project (alpha, Auto) hides the start button.
+  assert.equal(dialog.querySelector(".dex-new-start"), null, "the Auto default hides the button");
+
+  // Switching the target to beta (Manual) brings it back, without resetting the draft.
+  fireEvent.change(dialog.querySelector(".dex-new-project")!, { target: { value: "beta" } });
+  assert.ok(
+    dialog.querySelector(".dex-new-start"),
+    "switching to a Manual target shows the button",
+  );
+  assert.equal(
+    (dialog.querySelector(".dex-new-input") as HTMLTextAreaElement).value,
+    "some work",
+    "the draft survives the target switch (the textarea is not remounted)",
+  );
+});
+
+test("a sub-task dialog hides the start button when the parent's repo is Auto", () => {
+  const { container } = render(
+    <DexPane
+      section={section([row({ id: "p", name: "Parent", project: "beta" })], {
+        project: "beta",
+        enabled: true,
+      })}
+    />,
+  );
+  fireEvent.click(container.querySelector(".dex-row .dex-new-subtask")!);
+  const dialog = container.querySelector(".dex-new-dialog")!;
+  assert.equal(
+    dialog.querySelector(".dex-new-start"),
+    null,
+    "the parent's Auto repo hides the sub-task start button",
+  );
+});
+
 test("the + control also arms the composer on an empty board (author the first task)", () => {
   const { container } = render(<DexPane section={section([])} />);
   // The empty board still shows the header + its New-task control.
