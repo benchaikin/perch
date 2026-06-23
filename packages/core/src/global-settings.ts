@@ -1,6 +1,6 @@
 /**
  * The "global" (cross-plugin) settings descriptor — the fields the GUI's
- * General tab renders, edited into perch.json's top-level `global` section
+ * General tab renders, edited into perch.yaml's top-level `global` section
  * (rather than any `plugins[id]`). Today that's just the shared terminal
  * preference (defined in `@perch/sdk`); more global settings slot in here.
  */

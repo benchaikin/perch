@@ -5,7 +5,7 @@
  * the panel "sticky" across opens and restarts.
  *
  * Stored as a tiny JSON `{ width, height }` file in the app's userData dir
- * rather than in `perch.json` — it's GUI-local UI state, not user-facing
+ * rather than in `perch.yaml` — it's GUI-local UI state, not user-facing
  * configuration, so it shouldn't clutter the config the user hand-edits.
  */
 import { readFileSync, writeFileSync } from "node:fs";

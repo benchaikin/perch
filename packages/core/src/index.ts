@@ -36,8 +36,18 @@ export { parseDuration } from "./duration.js";
 export { socketPath } from "./paths.js";
 export { loadPlugins, buildContext } from "./loader.js";
 export type { CoreContext } from "./loader.js";
-export { loadConfig, pluginsFromConfig, defaultConfig, configSchema } from "./config.js";
-export { GLOBAL_SETTINGS_ID, GLOBAL_SETTINGS_NAME, globalSettingsFields } from "./global-settings.js";
+export {
+  loadConfig,
+  pluginsFromConfig,
+  defaultConfig,
+  configSchema,
+  serializeConfig,
+} from "./config.js";
+export {
+  GLOBAL_SETTINGS_ID,
+  GLOBAL_SETTINGS_NAME,
+  globalSettingsFields,
+} from "./global-settings.js";
 export type { PerchConfig } from "./config.js";
 export { configPath, pidPath } from "./paths.js";
 export { readPidFile, writePidFile, removePidFile, isProcessAlive } from "./pidfile.js";
@@ -85,7 +95,7 @@ export type {
   SettingsField,
   NotificationPayload,
 } from "./rpc.js";
-export { getConfig, updateConfig, validateRepoPath } from "./config-store.js";
+export { getConfig, updateConfig, validateRepoPath, migrateLegacyConfig } from "./config-store.js";
 export type { ConfigPatch, RepoPathValidation } from "./config-store.js";
 export { diffConfigs, applyReload, isEmptyDiff } from "./reload.js";
 export type { ConfigDiff, ReloadState, LoadPlugins } from "./reload.js";
@@ -97,14 +107,14 @@ export interface StartDaemonOptions {
   /**
    * Plugin package ids to load (e.g. `["@perch/plugin-stack"]`). When provided,
    * overrides the config file's plugin selection (precedence: explicit > config
-   * > empty). When omitted, plugins are derived from `perch.json`.
+   * > empty). When omitted, plugins are derived from `perch.yaml`.
    */
   plugins?: string[];
   /** Pre-loaded plugin definitions (skips dynamic import; used in tests). */
   pluginDefs?: PluginDef[];
   /**
    * Per-plugin resolved config, keyed by plugin id. When provided, overrides the
-   * config file's per-plugin sections; otherwise derived from `perch.json`.
+   * config file's per-plugin sections; otherwise derived from `perch.yaml`.
    */
   configs?: PluginConfigs;
   /** Override the Unix socket path (defaults to the platform paths shim). */
@@ -118,7 +128,7 @@ export interface StartDaemonOptions {
    */
   pidFile?: boolean | string;
   /**
-   * Watch `perch.json` and hot-apply changes (add/remove/reconfigure plugins)
+   * Watch `perch.yaml` and hot-apply changes (add/remove/reconfigure plugins)
    * without restarting. Defaults to `true` unless `pluginDefs` is provided (test
    * mode), so tests never depend on fs-watch timing. The watcher is stopped on
    * `stop()`.
@@ -127,7 +137,7 @@ export interface StartDaemonOptions {
   /** Debounce window (ms) for coalescing rapid config writes. Default 200. */
   reloadDebounceMs?: number;
   /**
-   * Initial cross-plugin global settings (perch.json `global`), surfaced to
+   * Initial cross-plugin global settings (perch.yaml `global`), surfaced to
    * capabilities as `ctx.global`. Mainly for test mode (`pluginDefs`); the real
    * daemon reads it from the config file and hot-reloads it.
    */
@@ -156,7 +166,7 @@ export interface RunningDaemon {
   /** Absolute path of the bound Unix socket. */
   socketPath: string;
   /**
-   * Re-read `perch.json` and hot-apply any plugin add/remove/reconfigure. This
+   * Re-read `perch.yaml` and hot-apply any plugin add/remove/reconfigure. This
    * is what the config watcher invokes; exposed so callers/tests can trigger a
    * reload deterministically. Invalid config is logged and ignored (current
    * state preserved). Resolves once the reload (if any) has been applied.
@@ -195,7 +205,7 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Run
     configs = options.configs ?? pluginsFromConfig(loaded).configs;
     global = options.global ?? loaded.global;
   } else {
-    // Derive enabled plugins, their configs, and global settings from `perch.json`.
+    // Derive enabled plugins, their configs, and global settings from `perch.yaml`.
     const loaded = await loadConfig(options.configPath);
     const { ids, configs: fromConfig } = pluginsFromConfig(loaded);
     defs = await loadPluginsByIds(ids);
@@ -318,7 +328,7 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Run
     );
   }
 
-  // Watch `perch.json` and hot-apply changes. Default on for the real daemon,
+  // Watch `perch.yaml` and hot-apply changes. Default on for the real daemon,
   // off in test mode (injected pluginDefs) so the suite stays deterministic.
   const wantWatch = options.watch ?? options.pluginDefs === undefined;
   let watcher: ConfigWatcher | undefined;

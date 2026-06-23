@@ -17,7 +17,7 @@ export type PluginConfigs = Record<string, unknown>;
 export interface InvokerDeps {
   cache: Cache;
   configs: PluginConfigs;
-  /** Cross-plugin global settings (perch.json `global`), surfaced as `ctx.global`. */
+  /** Cross-plugin global settings (perch.yaml `global`), surfaced as `ctx.global`. */
   global?: unknown;
   /** Plugins by id (for config-schema validation, future use). */
   plugins: Map<string, PluginDef>;

@@ -5,7 +5,7 @@
  *
  * - **Runtime** (ephemeral, machine-local): the daemon's Unix domain socket and
  *   its pidfile. Prefer a runtime dir on Linux; co-located on macOS.
- * - **Config** (durable, user-edited): the single `perch.json` file.
+ * - **Config** (durable, user-edited): the single `perch.yaml` file.
  *
  * The GUI/CLI/MCP clients use the same logic to find `perchd`.
  *
@@ -13,8 +13,8 @@
  *            Linux:  `${XDG_RUNTIME_DIR || XDG_STATE_HOME || ~/.local/state}/perch/perchd.sock`
  * - pidfile  macOS:  `~/Library/Application Support/Perch/perchd.pid`
  *            Linux:  same runtime base as the socket, `perch/perchd.pid`
- * - config   macOS:  `~/Library/Application Support/Perch/perch.json`
- *            Linux:  `${XDG_CONFIG_HOME || ~/.config}/perch/perch.json`
+ * - config   macOS:  `~/Library/Application Support/Perch/perch.yaml`
+ *            Linux:  `${XDG_CONFIG_HOME || ~/.config}/perch/perch.yaml`
  */
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
@@ -52,11 +52,11 @@ export function pidPath(): string {
 }
 
 /**
- * Absolute path to the durable `perch.json` config file. Lives in the config
+ * Absolute path to the durable `perch.yaml` config file. Lives in the config
  * dir (not the runtime dir) so it survives reboots and is where users edit it.
  */
 export function configPath(): string {
-  if (isMac()) return join(macSupportDir(), "perch.json");
+  if (isMac()) return join(macSupportDir(), "perch.yaml");
   const base = process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
-  return join(base, "perch", "perch.json");
+  return join(base, "perch", "perch.yaml");
 }

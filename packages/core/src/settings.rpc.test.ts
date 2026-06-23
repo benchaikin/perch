@@ -59,7 +59,7 @@ const noop = definePlugin({ id: "noop", capabilities: {} });
 test("integration: settings.describe merges descriptors with current config values", async (t) => {
   const dir = tempDir();
   const socketPath = join(dir, "perchd.sock");
-  const configPath = join(dir, "perch.json");
+  const configPath = join(dir, "perch.yaml");
   // `stackDirection` is set (overrides default); `showDrafts` is unset (→ default).
   writeFileSync(
     configPath,
@@ -104,7 +104,7 @@ test("integration: settings.describe merges descriptors with current config valu
     const direction = fields.find((f) => f.key === "stackDirection");
     assert.ok(direction);
     assert.equal(direction.type, "enum");
-    assert.equal(direction.value, "up"); // from perch.json, overriding default "down"
+    assert.equal(direction.value, "up"); // from perch.yaml, overriding default "down"
 
     const drafts = fields.find((f) => f.key === "showDrafts");
     assert.ok(drafts);
@@ -115,7 +115,7 @@ test("integration: settings.describe merges descriptors with current config valu
 test("integration: settings.describe falls back to plugin id when no name is declared", async () => {
   const dir = tempDir();
   const socketPath = join(dir, "perchd.sock");
-  const configPath = join(dir, "perch.json");
+  const configPath = join(dir, "perch.yaml");
   writeFileSync(configPath, JSON.stringify({ plugins: {} }), "utf8");
 
   const unnamed = definePlugin({

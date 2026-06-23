@@ -148,19 +148,23 @@ emitter, and plugin-supplied services (e.g. the stack `provider`).
 
 - **State dir:** `~/Library/Application Support/Perch` (macOS),
   `${XDG_CONFIG_HOME:-~/.config}/perch` (Linux), behind a `paths` shim.
-- **Single config file — `perch.json`** holds both enabled plugins (+ their
+- **Single config file — `perch.yaml`** holds both enabled plugins (+ their
   config) and the GUI widget layout, so the GUI can read/write the whole thing
   as the user rearranges widgets:
 
-  ```json
-  {
-    "global":  { "repos": ["~/ashby", "~/perch"] },
-    "plugins": { "stack": { "repos": ["ashby/main"] } },
-    "layout":  { "widgets": [{ "id": "stack", "x": 0, "y": 0 }] }
-  }
+  ```yaml
+  global:
+    repos: [~/ashby, ~/perch]
+  plugins:
+    stack:
+      repos: [ashby/main]
+  layout:
+    widgets:
+      - { id: stack, x: 0, y: 0 }
   ```
 
-  Each plugin's section is validated against its `config` zod schema at load.
+  YAML (a JSON superset) so users can comment and hand-edit comfortably. Each
+  plugin's section is validated against its `config` zod schema at load.
 - **Shared `global` section.** Cross-plugin settings live under `global`, handed
   to every capability as `ctx.global`. `global.repos` is the shared list of local
   repository paths the PRs, Worktrees, and Dex plugins watch; each plugin's own
@@ -299,7 +303,7 @@ structures are ever supported.
 
 ## 12. Resolved decisions
 
-1. **Config format** → single **`perch.json`** (plugins + layout in one file;
+1. **Config format** → single **`perch.yaml`** (plugins + layout in one file;
    GUI owns writes). See §6.
 2. **`gh stack` access** → installed **v0.0.5**, publicly available; `repo`
    scope sufficient; `view --json` confirmed. See §8.

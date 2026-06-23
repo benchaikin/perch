@@ -9,7 +9,7 @@
  *    `PerchClient`),
  *  - filters `registry.list` to MCP-opted-in capabilities and exposes each as an
  *    MCP tool, and
- *  - keeps the tool set live: when the daemon hot-reloads `perch.json` it
+ *  - keeps the tool set live: when the daemon hot-reloads `perch.yaml` it
  *    re-queries the registry and emits `tools/list_changed`.
  *
  * The capability's zod input schema is never serialized over RPC (only

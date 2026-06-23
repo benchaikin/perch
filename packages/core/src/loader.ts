@@ -108,7 +108,7 @@ export async function loadPlugins(ids: string[]): Promise<PluginDef[]> {
 /**
  * Load workspace plugins selected by their **plugin id** (the `id` on the
  * `PluginDef`, e.g. `"stack"`), as opposed to {@link loadPlugins} which takes
- * package names. This is the path used when booting from `perch.json`, whose
+ * package names. This is the path used when booting from `perch.yaml`, whose
  * `plugins` map is keyed by plugin id. We discover every workspace plugin
  * package, import each, and keep those whose default export's `id` is requested.
  * Throws if any requested id is not found among discovered plugins.

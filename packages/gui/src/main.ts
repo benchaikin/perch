@@ -31,6 +31,8 @@ import {
 import {
   configPath as defaultConfigPath,
   loadConfig,
+  migrateLegacyConfig,
+  serializeConfig,
   socketPath as defaultSocketPath,
   type NotificationPayload,
 } from "@perch/core";
@@ -363,7 +365,7 @@ async function connect(): Promise<void> {
     }
   });
 
-  // The daemon hot-reloads perch.json — re-sync when the registry changes.
+  // The daemon hot-reloads perch.yaml — re-sync when the registry changes.
   client.onRegistryChanged(() => void reloadFromRegistry());
 
   // Stream daemon notifications and surface each as a native macOS banner.
@@ -462,7 +464,7 @@ async function refresh(): Promise<void> {
 }
 
 /**
- * Re-sync after the daemon hot-reloads `perch.json`: refresh the registry (Sync
+ * Re-sync after the daemon hot-reloads `perch.yaml`: refresh the registry (Sync
  * availability) and re-subscribe to `stack.prs`, which may have been added or
  * removed by the config change.
  */
@@ -1456,25 +1458,26 @@ function fallbackTrayImage(): Electron.NativeImage {
 }
 
 /**
- * The `perch.json` the GUI opens. Created with a sensible default (the stack
+ * The `perch.yaml` the GUI opens. Created with a sensible default (the stack
  * plugin enabled) if it doesn't exist yet, so "Open Config" always lands on a
- * real file. Returns its path.
+ * real file. Serialized via core's {@link serializeConfig} so YAML stays a
+ * core-only dependency. Returns its path.
  */
 function ensureConfigFile(): string {
   const path = defaultConfigPath();
   if (!existsSync(path)) {
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, `${JSON.stringify({ plugins: { stack: {} } }, null, 2)}\n`, "utf8");
+    writeFileSync(path, serializeConfig({ plugins: { stack: {} } }), "utf8");
   }
   return path;
 }
 
-/** Open `perch.json` in the user's default editor. */
+/** Open `perch.yaml` in the user's default editor. */
 function openConfig(): void {
   void shell.openPath(ensureConfigFile());
 }
 
-/** Reveal `perch.json` in Finder / the file manager. */
+/** Reveal `perch.yaml` in Finder / the file manager. */
 function revealConfig(): void {
   shell.showItemInFolder(ensureConfigFile());
 }
@@ -1871,9 +1874,13 @@ if (!app.requestSingleInstanceLock()) {
     app.dock?.hide();
     registerIpc();
     createTray();
+    // Migrate a pre-YAML `perch.json` to `perch.yaml` before anything reads or
+    // writes the config, so existing installs keep their repos/plugins/theme and
+    // "Open Config" lands on the YAML file (not a fresh starter).
+    await migrateLegacyConfig().catch(() => false);
     // Apply the persisted theme BEFORE creating any window, so the window's
     // initial backgroundColor (driven by nativeTheme.shouldUseDarkColors) matches
-    // the forced mode and there's no flash. Read straight from perch.json on disk
+    // the forced mode and there's no flash. Read straight from perch.yaml on disk
     // so this doesn't wait on the daemon connection.
     applyThemeFromConfig(await loadConfig().catch(() => null));
     // Preload the (hidden) panel so its renderer is ready before the first open

@@ -2,7 +2,7 @@
  * Dynamic config reload pipeline.
  *
  * Computes the difference between the currently-running plugin set and a freshly
- * read `perch.json`, then hot-applies it to the live {@link Registry},
+ * read `perch.yaml`, then hot-applies it to the live {@link Registry},
  * {@link Scheduler}, {@link Cache}, and shared config/plugin maps — without
  * restarting the daemon (see v1.1 "Dynamic config reloading").
  *

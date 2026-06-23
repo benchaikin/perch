@@ -1,7 +1,7 @@
 /**
  * Config file watcher.
  *
- * Watches `perch.json` and invokes a callback (debounced) whenever it settles
+ * Watches `perch.yaml` and invokes a callback (debounced) whenever it settles
  * after a change. Editors frequently *replace* a file atomically (write a temp
  * file, then rename over the target) rather than mutating it in place, which
  * tears down an `fs.watch` bound to the file inode. To stay robust we watch the

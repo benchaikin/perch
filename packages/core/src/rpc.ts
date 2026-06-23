@@ -20,7 +20,7 @@ export const Methods = {
   capabilitySubscribe: "capability.subscribe",
   /** `capability.unsubscribe` → void. Params: {@link SubscribeParams}. */
   capabilityUnsubscribe: "capability.unsubscribe",
-  /** `config.get` → {@link ConfigGetResult} (the current `perch.json`). No params. */
+  /** `config.get` → {@link ConfigGetResult} (the current `perch.yaml`). No params. */
   configGet: "config.get",
   /** `config.update` → {@link ConfigUpdateResult} (the new config). Params: {@link ConfigUpdateParams}. */
   configUpdate: "config.update",
@@ -107,7 +107,7 @@ export interface RegistryChangedNotification {
 /** Result of `registry.list`. */
 export type RegistryListResult = CapabilityMeta[];
 
-/** Result of `config.get`: the current parsed `perch.json` (defaults when absent). */
+/** Result of `config.get`: the current parsed `perch.yaml` (defaults when absent). */
 export type ConfigGetResult = PerchConfig;
 
 /** Params for `config.update`. */
@@ -140,7 +140,7 @@ export interface ValidateRepoPathResult {
 /**
  * One field of a `settings.describe` result: the plugin-declared
  * {@link SettingsField} metadata plus the field's **current value**, resolved by
- * the server (the value at `plugins[pluginId].{key}` in `perch.json`, or the
+ * the server (the value at `plugins[pluginId].{key}` in `perch.yaml`, or the
  * field's `default` when unset). Clients render the control from the metadata and
  * seed it with `value`.
  */
