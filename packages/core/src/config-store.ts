@@ -1,7 +1,7 @@
 /**
  * Config read + mutation store.
  *
- * Backs the `config.*` RPC surface: read the current `perch.json`, apply a
+ * Backs the `config.*` RPC surface: read the current `perch.yaml`, apply a
  * deep-merge patch, validate it against {@link configSchema}, and write it back
  * **atomically** (temp file + rename) so the {@link ConfigWatcher} never observes
  * a partially-written file. Mutations deliberately do NOT trigger a reload: the
@@ -19,9 +19,15 @@
  * {@link updateConfig}); core keeps the API general rather than offering
  * per-repo RPCs.
  */
-import { mkdir, rename, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { configSchema, loadConfig, type PerchConfig } from "./config.js";
+import {
+  configSchema,
+  legacyJsonPath,
+  loadConfig,
+  serializeConfig,
+  type PerchConfig,
+} from "./config.js";
 import { configPath as defaultConfigPath } from "./paths.js";
 
 /** A JSON-mergeable patch: same shape as a partial config; `null` deletes a key. */
@@ -57,7 +63,7 @@ export async function getConfig(path: string = defaultConfigPath()): Promise<Per
  *   full desired `plugins.stack.repos` array.
  *
  * The merged object is parsed through {@link configSchema}; an invalid result
- * throws before any write, so a bad patch never corrupts `perch.json`. The write
+ * throws before any write, so a bad patch never corrupts `perch.yaml`. The write
  * goes to a sibling temp file then `rename`s over the target (atomic on POSIX),
  * which the {@link ConfigWatcher} picks up to drive the normal reload path — this
  * function never triggers a reload itself.
@@ -77,8 +83,36 @@ export async function updateConfig(
     throw new Error(`perch: config.update produced invalid config:\n${issues}`);
   }
 
-  await writeAtomic(path, JSON.stringify(result.data, null, 2) + "\n");
+  await writeAtomic(path, serializeConfig(result.data));
   return result.data;
+}
+
+/**
+ * One-time YAML migration: if the durable `perch.yaml` at `path` is absent but a
+ * legacy sibling `perch.json` (the pre-YAML format) exists, rewrite the config to
+ * `path` as YAML via the atomic writer, so the durable file becomes YAML going
+ * forward. The legacy `perch.json` is intentionally left in place — it's simply
+ * ignored once `perch.yaml` exists. No-op (returns false) if `perch.yaml` already
+ * exists or there's no legacy file to migrate.
+ */
+export async function migrateLegacyConfig(path: string = defaultConfigPath()): Promise<boolean> {
+  if (await pathExists(path)) return false;
+  const legacy = legacyJsonPath(path);
+  if (legacy === path || !(await pathExists(legacy))) return false;
+  // updateConfig reads via loadConfig (which falls back to the legacy file) and
+  // writes the result to `path` as YAML — an empty patch makes it a pure rewrite.
+  await updateConfig({}, path);
+  return true;
+}
+
+/** True iff `path` exists and is accessible. */
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

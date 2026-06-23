@@ -40,7 +40,7 @@ export const THEME_SETTINGS_FIELDS: SettingsField[] = [
 
 /**
  * Resolve the `nativeTheme.themeSource` value from a parsed config's `global`
- * section. Missing/unknown → "system" (back-compat: existing perch.json has no
+ * section. Missing/unknown → "system" (back-compat: existing perch.yaml has no
  * theme key).
  */
 export function themeSourceOf(global: unknown): ThemeSource {

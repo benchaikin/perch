@@ -72,10 +72,10 @@ perch stack view                     # a single repo's stack
 perch daemon status                  # start / stop / restart / status
 ```
 
-Config lives at `~/Library/Application Support/Perch/perch.json` (macOS) or
-`${XDG_CONFIG_HOME:-~/.config}/perch/perch.json` (Linux). `perchd` hot-reloads it
-on change, so edits from the Settings window, the `perch config` CLI, or by hand
-take effect live.
+Config lives at `~/Library/Application Support/Perch/perch.yaml` (macOS) or
+`${XDG_CONFIG_HOME:-~/.config}/perch/perch.yaml` (Linux). It's YAML, so you can
+comment it freely. `perchd` hot-reloads it on change, so edits from the Settings
+window, the `perch config` CLI, or by hand take effect live.
 
 **Shared repositories.** The repos Perch watches live in one place — `global.repos`,
 a list of local repo paths shared by the **My PRs**, **Worktrees**, and **Dex**
@@ -205,7 +205,7 @@ It's fed by **Claude Code hooks**. The `agents` plugin exposes `agents.list` (th
 fleet) and `agents report`, which a hook calls on each session event; the daemon
 maps the event's `cwd` → the `dex/<id>` worktree → the task. To enable it:
 
-1. Turn the plugin on in `perch.json`: add `"agents": {}` under `plugins`.
+1. Turn the plugin on in `perch.yaml`: add `agents: {}` under `plugins`.
 2. Add a hook to your **`~/.claude/settings.json`** on the
    `SessionStart`, `UserPromptSubmit`, `Notification`, `Stop`, and `SessionEnd`
    events, each running (append alongside any existing hooks — don't replace them):
@@ -267,7 +267,7 @@ maps the event's `cwd` → the `dex/<id>` worktree → the task. To enable it:
 | Language | TypeScript end to end |
 | GUI | Electron — menu-bar entry + pinned, always-on-top panel; packaged via electron-builder |
 | Daemon transport | JSON-RPC 2.0 over a Unix socket (`vscode-jsonrpc`) |
-| Config | a single `perch.json` — shared `global.repos`, per-plugin settings, GUI layout; hot-reloaded |
+| Config | a single `perch.yaml` — shared `global.repos`, per-plugin settings, GUI layout; hot-reloaded |
 | Credentials | reuses your `gh auth token` |
 | Plugins | loaded from the local `plugins/` dir (dev) / statically bundled (packaged app) |
 

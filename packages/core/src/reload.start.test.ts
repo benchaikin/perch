@@ -68,7 +68,7 @@ const loadPlugins = async (ids: string[]): Promise<PluginDef[]> => ids.map((id) 
 
 test("reload() applies a config change and pushes registry.changed to clients", async () => {
   const dir = tempDir("perch-reload-notify-");
-  const configPath = join(dir, "perch.json");
+  const configPath = join(dir, "perch.yaml");
   const socketPath = join(dir, "perchd.sock");
   writeFileSync(configPath, JSON.stringify({ plugins: { a: {} } }), "utf8");
 
@@ -109,7 +109,7 @@ test("reload() applies a config change and pushes registry.changed to clients", 
 
 test("reload() with invalid config keeps the current state and fires no notification", async () => {
   const dir = tempDir("perch-reload-invalid-");
-  const configPath = join(dir, "perch.json");
+  const configPath = join(dir, "perch.yaml");
   const socketPath = join(dir, "perchd.sock");
   writeFileSync(configPath, JSON.stringify({ plugins: { a: {} } }), "utf8");
 
@@ -139,9 +139,9 @@ test("reload() with invalid config keeps the current state and fires no notifica
   assert.deepEqual([...new Set(list.map((c) => c.pluginId))].sort(), ["a"], "state preserved");
 });
 
-test("real fs watcher: editing perch.json triggers a reload notification", async () => {
+test("real fs watcher: editing perch.yaml triggers a reload notification", async () => {
   const dir = tempDir("perch-reload-watch-");
-  const configPath = join(dir, "perch.json");
+  const configPath = join(dir, "perch.yaml");
   const socketPath = join(dir, "perchd.sock");
   writeFileSync(configPath, JSON.stringify({ plugins: { a: {} } }), "utf8");
 

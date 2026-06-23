@@ -74,7 +74,7 @@ export async function run(argv: string[]): Promise<void> {
     return;
   }
 
-  // Built-in `config` command group — reads/mutates `perch.json` via the config
+  // Built-in `config` command group — reads/mutates `perch.yaml` via the config
   // RPC. Handled before the registry dispatch; it connects to the daemon itself.
   if (isConfigCommand(positionals)) {
     const code = await runConfigCommand(positionals, { socket, json: cli.json });

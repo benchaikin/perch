@@ -82,7 +82,7 @@ async function boot(opts: Parameters<typeof startDaemon>[0]): Promise<RunningDae
 
 test("explicit configs option overrides the config file (resolved config wins)", async () => {
   const dir = tempDir("perch-start-precedence-");
-  const configPath = join(dir, "perch.json");
+  const configPath = join(dir, "perch.yaml");
   writeFileSync(configPath, JSON.stringify({ plugins: { echo: { from: "config" } } }), "utf8");
   const socketPath = join(dir, "perchd.sock");
 
@@ -127,7 +127,7 @@ test("ctx.global is undefined (echoed null) when no global settings are set", as
 
 test("injected pluginDefs (test mode) write no pidfile and default configs to {}", async () => {
   const dir = tempDir("perch-start-testmode-");
-  const configPath = join(dir, "perch.json");
+  const configPath = join(dir, "perch.yaml");
   // A config file exists, but test mode (injected pluginDefs) must ignore it.
   writeFileSync(configPath, JSON.stringify({ plugins: { echo: { from: "config" } } }), "utf8");
   const socketPath = join(dir, "perchd.sock");

@@ -74,7 +74,7 @@ export interface CapabilityContext<Cfg = unknown> {
    *  call sites and tests need not provide one. */
   signal?: AbortSignal;
   /**
-   * Cross-plugin "global" settings from `perch.json`'s `global` section (opaque
+   * Cross-plugin "global" settings from `perch.yaml`'s `global` section (opaque
    * to core). Optional and `unknown`: a plugin that wants it narrows with its own
    * zod schema, exactly as it does {@link config}. Undefined when none is set.
    */

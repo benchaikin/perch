@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { startDaemon } from "./index.js";
 
-// `perchd`              → load enabled plugins from perch.json.
+// `perchd`              → load enabled plugins from perch.yaml.
 // `perchd <pkg…>`       → override: load exactly these plugin package ids.
 const args = process.argv.slice(2);
 const options = args.length > 0 ? { plugins: args } : {};

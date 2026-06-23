@@ -38,7 +38,7 @@ const empty = definePlugin({ id: "noop", capabilities: {} });
 test("integration: config.get / config.update / config.validateRepoPath over a socket", async (t) => {
   const dir = tempDir();
   const socketPath = join(dir, "perchd.sock");
-  const configPath = join(dir, "perch.json");
+  const configPath = join(dir, "perch.yaml");
   writeFileSync(configPath, JSON.stringify({ plugins: { stack: { repos: ["/a"] } } }), "utf8");
 
   // pluginDefs + watch:false keeps the test deterministic (no fs-watch reload).

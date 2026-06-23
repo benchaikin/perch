@@ -10,7 +10,7 @@
  * into the bundle and no filesystem discovery happens.
  *
  * We still want a REAL daemon (not the test-mode daemon `pluginDefs` implies): it
- * must read the user's `perch.json` (per-plugin `configs` AND the cross-plugin
+ * must read the user's `perch.yaml` (per-plugin `configs` AND the cross-plugin
  * `global` block — `global.repos`, the shared terminal), write a pidfile, and
  * hot-reload on config edits. The option-building lives in `perchd-options.ts`
  * (side-effect-free, so it's unit-testable); this entry just resolves the paths,

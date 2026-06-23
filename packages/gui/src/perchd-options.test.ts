@@ -13,7 +13,7 @@ import type { PerchConfig } from "@perch/core";
 
 import { bundledDaemonOptions, BUNDLED_PLUGINS } from "./perchd-options.js";
 
-const paths = { socketPath: "/tmp/perchd.sock", configPath: "/tmp/perch.json" };
+const paths = { socketPath: "/tmp/perchd.sock", configPath: "/tmp/perch.yaml" };
 
 test("forwards global (repos + terminal) so ctx.global isn't empty", () => {
   const loaded: PerchConfig = {
@@ -35,7 +35,7 @@ test("derives per-plugin configs and carries the paths + real-daemon flags", () 
   const opts = bundledDaemonOptions(loaded, paths);
   assert.deepEqual(opts.configs, { dex: { autoLand: false }, stack: {} });
   assert.equal(opts.socketPath, "/tmp/perchd.sock");
-  assert.equal(opts.configPath, "/tmp/perch.json");
+  assert.equal(opts.configPath, "/tmp/perch.yaml");
   // `pluginDefs` flips these off by default; the bundled daemon re-enables them.
   assert.equal(opts.pidFile, true);
   assert.equal(opts.watch, true);

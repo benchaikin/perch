@@ -14,6 +14,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { parse } from "yaml";
 import { startDaemon, type RunningDaemon } from "@perch/core";
 import { definePlugin } from "@perch/sdk";
 import { runConfigCommand, type ConfigOptions } from "./config.js";
@@ -52,7 +53,7 @@ async function boot(
 ): Promise<{ daemon: RunningDaemon; opts: ConfigOptions; dir: string; configPath: string }> {
   const dir = mkdtempSync(join(tmpdir(), "perch-config-cli-test-"));
   const socketPath = join(dir, "perchd.sock");
-  const configPath = join(dir, "perch.json");
+  const configPath = join(dir, "perch.yaml");
   writeFileSync(configPath, JSON.stringify({ plugins: { stack: { repos: initial } } }), "utf8");
 
   const daemon = await startDaemon({
@@ -83,7 +84,7 @@ test("repo add validates a real git repo and persists it", async (t) => {
   assert.match(out, /added main/);
 
   // Persisted to the file and visible via config get.
-  const written = JSON.parse(readFileSync(configPath, "utf8"));
+  const written = parse(readFileSync(configPath, "utf8"));
   assert.deepEqual(written.plugins.stack.repos, [repo]);
 
   const get = await capture(() => runConfigCommand(["config", "get"], opts));
@@ -102,7 +103,7 @@ test("repo add rejects a non-git path without writing", async (t) => {
   assert.equal(code, 1);
   assert.match(out, /not a usable git repo/);
 
-  const written = JSON.parse(readFileSync(configPath, "utf8"));
+  const written = parse(readFileSync(configPath, "utf8"));
   assert.deepEqual(written.plugins.stack.repos, []);
 });
 
@@ -153,7 +154,7 @@ test("repo remove drops a repo by basename and persists", async (t) => {
   assert.equal(code, 0);
   assert.match(out, /removed beta/);
 
-  const written = JSON.parse(readFileSync(configPath, "utf8"));
+  const written = parse(readFileSync(configPath, "utf8"));
   assert.deepEqual(written.plugins.stack.repos, ["/repos/alpha"]);
 });
 
@@ -178,7 +179,7 @@ test("repo set-default moves the match to the front", async (t) => {
   assert.equal(code, 0);
   assert.match(out, /default repo is now gamma/);
 
-  const written = JSON.parse(readFileSync(configPath, "utf8"));
+  const written = parse(readFileSync(configPath, "utf8"));
   assert.deepEqual(written.plugins.stack.repos, ["/repos/gamma", "/repos/alpha", "/repos/beta"]);
 });
 

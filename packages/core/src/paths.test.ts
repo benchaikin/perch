@@ -15,12 +15,12 @@ test("socket, pid, and config live under the right dirs for this platform", () =
     const support = join(homedir(), "Library", "Application Support", "Perch");
     assert.equal(socketPath(), join(support, "perchd.sock"));
     assert.equal(pidPath(), join(support, "perchd.pid"));
-    assert.equal(configPath(), join(support, "perch.json"));
+    assert.equal(configPath(), join(support, "perch.yaml"));
   } else {
     // socket + pid share the runtime base; config lives in the config dir.
     assert.ok(socketPath().endsWith(join("perch", "perchd.sock")));
     assert.ok(pidPath().endsWith(join("perch", "perchd.pid")));
-    assert.ok(configPath().endsWith(join("perch", "perch.json")));
+    assert.ok(configPath().endsWith(join("perch", "perch.yaml")));
   }
 });
 
@@ -33,7 +33,7 @@ test("config dir is distinct from the socket dir (durable vs runtime)", () => {
     try {
       process.env.XDG_CONFIG_HOME = "/tmp/xdg-config";
       process.env.XDG_RUNTIME_DIR = "/tmp/xdg-runtime";
-      assert.equal(configPath(), join("/tmp/xdg-config", "perch", "perch.json"));
+      assert.equal(configPath(), join("/tmp/xdg-config", "perch", "perch.yaml"));
       assert.equal(socketPath(), join("/tmp/xdg-runtime", "perch", "perchd.sock"));
       assert.equal(pidPath(), join("/tmp/xdg-runtime", "perch", "perchd.pid"));
     } finally {
@@ -50,7 +50,7 @@ test("Linux config path honors XDG_CONFIG_HOME, defaulting to ~/.config", () => 
   const prev = process.env.XDG_CONFIG_HOME;
   try {
     delete process.env.XDG_CONFIG_HOME;
-    assert.equal(configPath(), join(homedir(), ".config", "perch", "perch.json"));
+    assert.equal(configPath(), join(homedir(), ".config", "perch", "perch.yaml"));
   } finally {
     restore("XDG_CONFIG_HOME", prev);
   }

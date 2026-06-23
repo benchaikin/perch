@@ -1,12 +1,12 @@
 /**
  * `perch config` command group — built-in, NOT registry-driven.
  *
- * Reads and mutates `perch.json` via the daemon's config RPC, so (like the
+ * Reads and mutates `perch.yaml` via the daemon's config RPC, so (like the
  * `daemon` group) it's dispatched before the registry-driven commands. It
  * connects to the running daemon with {@link PerchClient.connect}; if no daemon
  * is listening it prints the same clear "not running" error as `run`.
  *
- * - `config get`                    — print the current `perch.json`.
+ * - `config get`                    — print the current `perch.yaml`.
  * - `config repo list` (`config repos`) — list the configured stack repos.
  * - `config repo add <path>`        — validate + append a repo path.
  * - `config repo remove <path-or-name>` — drop a repo by path or basename.
@@ -44,7 +44,7 @@ function findRepo(repos: string[], target: string): string | undefined {
   return repos.find((r) => r === abs || r === target || basename(r) === target);
 }
 
-/** `perch config get` — print the current `perch.json`. */
+/** `perch config get` — print the current `perch.yaml`. */
 async function configGet(client: PerchClient, opts: ConfigOptions): Promise<number> {
   const config = await client.configGet();
   process.stdout.write(`${JSON.stringify(config, null, opts.json ? 0 : 2)}\n`);

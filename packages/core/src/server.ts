@@ -54,7 +54,7 @@ export interface ServerDeps {
   invoker: InvokerDeps;
   socketPath: string;
   /**
-   * Path to `perch.json` the `config.*` methods read and mutate. Writes are
+   * Path to `perch.yaml` the `config.*` methods read and mutate. Writes are
    * atomic; the daemon's config watcher picks them up and drives the reload —
    * the server never triggers a reload itself.
    */
@@ -255,7 +255,7 @@ class ClientConnection {
     );
 
     // Describe each plugin's settings descriptor merged with its current config
-    // values (read from `perch.json`; field `default` used when unset). Reads only
+    // values (read from `perch.yaml`; field `default` used when unset). Reads only
     // — clients write edits back through `config.update`.
     this.#conn.onRequest(Methods.settingsDescribe, async (): Promise<SettingsDescribeResult> => {
       const config = await getConfig(this.#deps.configPath);

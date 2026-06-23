@@ -106,7 +106,7 @@ export class PerchClient {
 
   /**
    * Register a handler for `registry.changed` notifications (fired when the
-   * daemon hot-reloads `perch.json`). Returns a {@link Disposable}.
+   * daemon hot-reloads `perch.yaml`). Returns a {@link Disposable}.
    */
   onRegistryChanged(handler: (note: RegistryChangedNotification) => void): Disposable {
     return this.#conn.onNotification(Notifications.registryChanged, handler);
@@ -132,12 +132,12 @@ export class PerchClient {
     return this.#conn.sendRequest(Methods.settingsDescribe);
   }
 
-  /** `config.get` — the current `perch.json`. */
+  /** `config.get` — the current `perch.yaml`. */
   configGet(): Promise<ConfigGetResult> {
     return this.#conn.sendRequest(Methods.configGet);
   }
 
-  /** `config.update` — deep-merge a patch into `perch.json`; returns the new config. */
+  /** `config.update` — deep-merge a patch into `perch.yaml`; returns the new config. */
   configUpdate(params: ConfigUpdateParams): Promise<ConfigUpdateResult> {
     return this.#conn.sendRequest(Methods.configUpdate, params);
   }

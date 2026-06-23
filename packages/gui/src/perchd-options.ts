@@ -1,6 +1,6 @@
 /**
  * Side-effect-free construction of the bundled daemon's {@link StartDaemonOptions}
- * from a loaded `perch.json`. Split out of `perchd-entry.ts` (which calls
+ * from a loaded `perch.yaml`. Split out of `perchd-entry.ts` (which calls
  * `main()` on import) so the wiring is unit-testable without booting a daemon.
  */
 import type { PerchConfig, StartDaemonOptions } from "@perch/core";
@@ -23,7 +23,7 @@ export const BUNDLED_PLUGINS: PluginDef[] = [
 
 /**
  * Build the {@link StartDaemonOptions} for the bundled daemon from a loaded
- * `perch.json`.
+ * `perch.yaml`.
  *
  * The critical bit: with `pluginDefs` set, startDaemon runs in **pre-loaded
  * mode** — it takes BOTH `configs` (per-plugin) AND `global` (the cross-plugin
