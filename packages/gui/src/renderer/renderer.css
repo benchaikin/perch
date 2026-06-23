@@ -135,7 +135,7 @@ body {
   font-size: 10px;
   font-weight: 600;
   background: var(--chip-bg);
-  color: var(--muted);
+  color: var(--badge-muted);
 }
 /* Shared tone palette for both the dot and the count pill. The pill carries a
    translucent fill (like .num); the dot carries a solid tinted background. */
@@ -165,7 +165,7 @@ body {
 }
 .tab-badge.muted {
   background: var(--chip-bg);
-  color: var(--muted);
+  color: var(--badge-muted);
 }
 
 .rows {
@@ -1364,7 +1364,7 @@ body {
 /* "Review comments to address" badge — muted for a lone comment, emphasized
    (stronger color + weight) once there's more than one to work through. */
 .badge.reviewcomments {
-  color: var(--muted);
+  color: var(--badge-muted);
 }
 .badge.reviewcomments.many {
   color: var(--accent);
