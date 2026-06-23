@@ -161,7 +161,7 @@ const configs = [
  * build runs this once; watch mode re-runs it when a source asset changes.
  */
 async function copyAssets() {
-  // The shared Solarized token sheet — both windows link it (first), so it lands
+  // The shared Nord token sheet — both windows link it (first), so it lands
   // in each window's dist dir alongside that window's own stylesheet.
   await cp(join(src, "theme.css"), join(dist, "renderer", "theme.css"));
   await cp(join(src, "theme.css"), join(dist, "settings", "theme.css"));

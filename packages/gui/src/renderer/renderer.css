@@ -1,5 +1,5 @@
 /* The GUI palette lives in the shared theme.css (linked first by index.html) as
-   one Solarized token set — this file only consumes those var(--token)s. */
+   one Nord token set — this file only consumes those var(--token)s. */
 
 * {
   box-sizing: border-box;

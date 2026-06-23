@@ -2,7 +2,7 @@
  * The cross-plugin GUI theme preference — System / Light / Dark — stored at the
  * top-level `global.theme`. The GUI's Electron main process maps it onto
  * `nativeTheme.themeSource`, which forces `prefers-color-scheme` for every
- * renderer; the centralized Solarized tokens (theme.css) then resolve under the
+ * renderer; the centralized Nord tokens (theme.css) then resolve under the
  * chosen mode. "System" keeps the default behavior: track the OS appearance live.
  *
  * Kept in the SDK so the descriptor (the General-tab field) and the value
