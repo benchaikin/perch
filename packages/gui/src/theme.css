@@ -1,39 +1,40 @@
-/* The one shared GUI palette — Solarized (Schoonover). Both windows (the panel's
-   renderer and the Settings window) link this first, so the colors live in a
-   single place instead of a duplicated :root per stylesheet.
+/* The one shared GUI palette — Nord (https://www.nordtheme.com/). Both windows
+   (the panel's renderer and the Settings window) link this first, so the colors
+   live in a single place instead of a duplicated :root per stylesheet.
 
    The base tones flip with the OS appearance via prefers-color-scheme (no JS
    needed; Electron renderers honor it and switch live — and the global
    Light/Dark/System setting forces it via nativeTheme.themeSource). Dark is the
    default; the light palette overrides only the base tones below.
 
-   The accents (blue/green/yellow/red) are SHARED across both themes — Solarized
-   tunes them to read on base03 and base3 alike — so they live once in :root and
-   are not overridden in the light block. --ok (green #859900) and --bad (red
-   #dc322f) are kept apart in hue AND luminance so they stay distinguishable for a
-   red-green color-deficient viewer (deuteranopia confuses a pure red/green hue;
-   the olive-green's yellow cast plus its lower luminance against the warm red
-   carry the signal). The *-rgb tokens mirror each hex for the rgba() tint fills
-   that consumers build (e.g. rgba(var(--ok-rgb), 0.15)). */
+   The accents (blue/green/yellow/red) are SHARED across both themes — Nord's
+   Aurora/Frost hues read on Polar Night and Snow Storm alike — so they live once
+   in :root and are not overridden in the light block. --ok (green #a3be8c) and
+   --bad (red #bf616a) are kept apart in hue AND luminance so they stay
+   distinguishable for a red-green color-deficient viewer (deuteranopia confuses a
+   pure red/green hue; the desaturated green is markedly lighter than the warm red
+   — a ~2:1 luminance ratio — so the brightness carries the signal). The *-rgb
+   tokens mirror each hex for the rgba() tint fills that consumers build (e.g.
+   rgba(var(--ok-rgb), 0.15)). */
 :root {
-  --bg: #002b36; /* base03 */
-  --fg: #93a1a1; /* base1 */
-  --fg-rgb: 147, 161, 161;
-  --muted: #586e75; /* base01 */
-  --rule: #073642; /* base02 */
-  --chip-bg: #073642; /* base02 */
-  --hover-bg: #073642; /* base02 */
-  --hover-bg-strong: #0e4a5a; /* a lifted base02 */
-  --detail-fg: #93a1a1; /* base1 */
+  --bg: #2e3440; /* nord0 */
+  --fg: #d8dee9; /* nord4 */
+  --fg-rgb: 216, 222, 233;
+  --muted: #4c566a; /* nord3 */
+  --rule: #3b4252; /* nord1 */
+  --chip-bg: #3b4252; /* nord1 */
+  --hover-bg: #3b4252; /* nord1 */
+  --hover-bg-strong: #434c5e; /* nord2 */
+  --detail-fg: #d8dee9; /* nord4 */
 
-  --ok: #859900; /* green */
-  --ok-rgb: 133, 153, 0;
-  --warn: #b58900; /* yellow */
-  --warn-rgb: 181, 137, 0;
-  --bad: #dc322f; /* red */
-  --bad-rgb: 220, 50, 47;
-  --accent: #268bd2; /* blue */
-  --accent-rgb: 38, 139, 210;
+  --ok: #a3be8c; /* nord14 green */
+  --ok-rgb: 163, 190, 140;
+  --warn: #ebcb8b; /* nord13 yellow */
+  --warn-rgb: 235, 203, 139;
+  --bad: #bf616a; /* nord11 red */
+  --bad-rgb: 191, 97, 106;
+  --accent: #5e81ac; /* nord10 blue */
+  --accent-rgb: 94, 129, 172;
 
   /* Black scrim for modal backdrops and the dialog drop-shadow — theme-independent. */
   --shadow-rgb: 0, 0, 0;
@@ -41,14 +42,14 @@
 
 @media (prefers-color-scheme: light) {
   :root {
-    --bg: #fdf6e3; /* base3 */
-    --fg: #586e75; /* base01 */
-    --fg-rgb: 88, 110, 117;
-    --muted: #93a1a1; /* base1 */
-    --rule: #ddd6c1; /* a deepened base2 so separators stay visible on base3 */
-    --chip-bg: #eee8d5; /* base2 */
-    --hover-bg: #eee8d5; /* base2 */
-    --hover-bg-strong: #e3dcc4; /* a deepened base2 */
-    --detail-fg: #586e75; /* base01 */
+    --bg: #eceff4; /* nord6 */
+    --fg: #4c566a; /* nord3 */
+    --fg-rgb: 76, 86, 106;
+    --muted: #929aaa; /* a mid slate between nord3 and nord4 */
+    --rule: #cbd3df; /* a deepened nord4 so separators stay visible on nord6 */
+    --chip-bg: #e5e9f0; /* nord5 */
+    --hover-bg: #e5e9f0; /* nord5 */
+    --hover-bg-strong: #d8dee9; /* nord4, a deepened nord5 */
+    --detail-fg: #4c566a; /* nord3 */
   }
 }

@@ -307,7 +307,7 @@ async function waitForSocket(path: string, timeoutMs: number): Promise<boolean> 
 /**
  * Force the app appearance to the persisted `global.theme` (System/Light/Dark)
  * by setting `nativeTheme.themeSource`, which flips `prefers-color-scheme` for
- * every renderer live — so the centralized Solarized tokens resolve under the
+ * every renderer live — so the centralized Nord tokens resolve under the
  * chosen mode in both the panel and Settings windows. "system" (the default, and
  * the fallback for a missing/unknown value) tracks the OS appearance live.
  */
@@ -1288,8 +1288,8 @@ function createPanel(): BrowserWindow {
     alwaysOnTop: true,
     // Non-activating: clicking the panel doesn't steal focus from the editor.
     focusable: true,
-    // Solarized base03 / base3 — matches theme.css's --bg so there's no pre-paint flash.
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#002b36" : "#fdf6e3",
+    // Nord nord0 / nord6 — matches theme.css's --bg so there's no pre-paint flash.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#2e3440" : "#eceff4",
     webPreferences: {
       preload: join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -1647,8 +1647,8 @@ function showSettingsWindow(): void {
     show: false,
     resizable: true,
     fullscreenable: false,
-    // Solarized base03 / base3 — matches theme.css's --bg so there's no pre-paint flash.
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#002b36" : "#fdf6e3",
+    // Nord nord0 / nord6 — matches theme.css's --bg so there's no pre-paint flash.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#2e3440" : "#eceff4",
     webPreferences: {
       preload: join(__dirname, "settings-preload.cjs"),
       contextIsolation: true,
