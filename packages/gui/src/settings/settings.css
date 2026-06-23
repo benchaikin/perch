@@ -1,32 +1,5 @@
-/* Palette follows the OS appearance via prefers-color-scheme (kept in sync with
-   the panel's renderer.css). --bad is a vivid, high-saturation red — clearly
-   distinct from teal for a red-green color-deficient viewer. Dark is the default;
-   the light palette overrides it under prefers-color-scheme. */
-:root {
-  --bg: #1e1e1e;
-  --fg: #e6e6e6;
-  --muted: #8a8a8a;
-  --rule: #333;
-  --chip-bg: #2a2a2a;
-  --hover-bg: #2a2a2a;
-  --hover-bg-strong: #333;
-  --accent: #4a9eff;
-  --bad: #e01e37;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #f5f5f5;
-    --fg: #1d1d1f;
-    --muted: #6b6b70;
-    --rule: #d2d2d7;
-    --chip-bg: #e8e8ec;
-    --hover-bg: #e8e8ec;
-    --hover-bg-strong: #dcdce1;
-    --accent: #0a66d6;
-    --bad: #d70015;
-  }
-}
+/* The GUI palette lives in the shared theme.css (linked first by index.html) as
+   one Solarized token set — this file only consumes those var(--token)s. */
 
 * {
   box-sizing: border-box;

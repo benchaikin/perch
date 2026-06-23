@@ -161,6 +161,11 @@ const configs = [
  * build runs this once; watch mode re-runs it when a source asset changes.
  */
 async function copyAssets() {
+  // The shared Solarized token sheet — both windows link it (first), so it lands
+  // in each window's dist dir alongside that window's own stylesheet.
+  await cp(join(src, "theme.css"), join(dist, "renderer", "theme.css"));
+  await cp(join(src, "theme.css"), join(dist, "settings", "theme.css"));
+
   await cp(join(src, "renderer", "index.html"), join(dist, "renderer", "index.html"));
   await cp(join(src, "renderer", "renderer.css"), join(dist, "renderer", "renderer.css"));
 
@@ -212,8 +217,10 @@ if (watchMode) {
   );
   await Promise.all(contexts.map((ctx) => ctx.watch()));
   await copyAssets();
-  for (const dir of [join(src, "renderer"), join(src, "settings")]) {
-    watchDir(dir, { recursive: true }, () => {
+  // The shared theme.css lives directly under src/ (not in either window's dir),
+  // so watch it explicitly alongside the per-window source dirs.
+  for (const target of [join(src, "renderer"), join(src, "settings"), join(src, "theme.css")]) {
+    watchDir(target, { recursive: true }, () => {
       copyAssets().catch((err) => logErr(`[esbuild] asset copy failed: ${err.message}`));
     });
   }

@@ -1,0 +1,54 @@
+/* The one shared GUI palette — Solarized (Schoonover). Both windows (the panel's
+   renderer and the Settings window) link this first, so the colors live in a
+   single place instead of a duplicated :root per stylesheet.
+
+   The base tones flip with the OS appearance via prefers-color-scheme (no JS
+   needed; Electron renderers honor it and switch live — and the global
+   Light/Dark/System setting forces it via nativeTheme.themeSource). Dark is the
+   default; the light palette overrides only the base tones below.
+
+   The accents (blue/green/yellow/red) are SHARED across both themes — Solarized
+   tunes them to read on base03 and base3 alike — so they live once in :root and
+   are not overridden in the light block. --ok (green #859900) and --bad (red
+   #dc322f) are kept apart in hue AND luminance so they stay distinguishable for a
+   red-green color-deficient viewer (deuteranopia confuses a pure red/green hue;
+   the olive-green's yellow cast plus its lower luminance against the warm red
+   carry the signal). The *-rgb tokens mirror each hex for the rgba() tint fills
+   that consumers build (e.g. rgba(var(--ok-rgb), 0.15)). */
+:root {
+  --bg: #002b36; /* base03 */
+  --fg: #93a1a1; /* base1 */
+  --fg-rgb: 147, 161, 161;
+  --muted: #586e75; /* base01 */
+  --rule: #073642; /* base02 */
+  --chip-bg: #073642; /* base02 */
+  --hover-bg: #073642; /* base02 */
+  --hover-bg-strong: #0e4a5a; /* a lifted base02 */
+  --detail-fg: #93a1a1; /* base1 */
+
+  --ok: #859900; /* green */
+  --ok-rgb: 133, 153, 0;
+  --warn: #b58900; /* yellow */
+  --warn-rgb: 181, 137, 0;
+  --bad: #dc322f; /* red */
+  --bad-rgb: 220, 50, 47;
+  --accent: #268bd2; /* blue */
+  --accent-rgb: 38, 139, 210;
+
+  /* Black scrim for modal backdrops and the dialog drop-shadow — theme-independent. */
+  --shadow-rgb: 0, 0, 0;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #fdf6e3; /* base3 */
+    --fg: #586e75; /* base01 */
+    --fg-rgb: 88, 110, 117;
+    --muted: #93a1a1; /* base1 */
+    --rule: #ddd6c1; /* a deepened base2 so separators stay visible on base3 */
+    --chip-bg: #eee8d5; /* base2 */
+    --hover-bg: #eee8d5; /* base2 */
+    --hover-bg-strong: #e3dcc4; /* a deepened base2 */
+    --detail-fg: #586e75; /* base01 */
+  }
+}
