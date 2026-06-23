@@ -6,6 +6,7 @@
  */
 import {
   AGENT_SETTINGS_FIELDS,
+  GIT_SETTINGS_FIELDS,
   TERMINAL_SETTINGS_FIELDS,
   THEME_SETTINGS_FIELDS,
   type SettingsField,
@@ -34,5 +35,6 @@ export function globalSettingsFields(): SettingsField[] {
     ...THEME_SETTINGS_FIELDS,
     ...TERMINAL_SETTINGS_FIELDS,
     ...AGENT_SETTINGS_FIELDS,
+    ...GIT_SETTINGS_FIELDS,
   ];
 }

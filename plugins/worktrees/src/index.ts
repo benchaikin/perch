@@ -21,6 +21,7 @@ import type { spawn as nodeSpawn } from "node:child_process";
 import {
   action,
   definePlugin,
+  gitConfigOf,
   read,
   reposOf,
   spawnInTerminal,
@@ -68,8 +69,6 @@ const WorktreesConfig = z.object({
    * empty too.
    */
   repoRoot: z.string().optional(),
-  /** Path to the `git` binary; defaults to `git` on PATH. */
-  gitBin: z.string().optional(),
   /** Include the repo's main worktree in the list (default true). */
   showMain: z.boolean().optional(),
 });
@@ -166,7 +165,9 @@ export default definePlugin({
       expose: { mcp: true },
       run: async ({ ctx }): Promise<Worktrees> => {
         const cfg = configOf(ctx.config);
-        const provider = new WorktreesProvider(cfg.gitBin ?? "git", { exec: execOverride });
+        const provider = new WorktreesProvider(gitConfigOf(ctx.global).gitBin ?? "git", {
+          exec: execOverride,
+        });
         const roots = resolveRepoRoots(cfg, ctx.global);
 
         // Build one board per repo root; a non-git / failing root contributes
@@ -251,8 +252,9 @@ export default definePlugin({
       input: RemoveInput,
       expose: { mcp: true },
       run: async ({ input, ctx }) => {
-        const cfg = configOf(ctx.config);
-        const provider = new WorktreesProvider(cfg.gitBin ?? "git", { exec: execOverride });
+        const provider = new WorktreesProvider(gitConfigOf(ctx.global).gitBin ?? "git", {
+          exec: execOverride,
+        });
         const name = input.path.split("/").filter(Boolean).pop() ?? input.path;
         try {
           await provider.removeRaw(input.path, { force: input.force });

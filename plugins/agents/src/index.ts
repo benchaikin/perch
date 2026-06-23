@@ -20,13 +20,7 @@
  * over the current session, not durable history). A daemon restart starts fresh;
  * hooks repopulate it as agents emit their next events.
  */
-import {
-  action,
-  definePlugin,
-  read,
-  validateSettingsDescriptor,
-  z,
-} from "@perch/sdk";
+import { action, definePlugin, gitConfigOf, read, z } from "@perch/sdk";
 
 import { AttributionProvider, type Exec } from "./provider.js";
 import { agentNotifications } from "./notify.js";
@@ -45,19 +39,6 @@ export type { AgentEvent, AgentStore } from "./state.js";
 export { AttributionProvider } from "./provider.js";
 export type { Attribution, Exec } from "./provider.js";
 export { agentNotifications } from "./notify.js";
-
-/** Per-plugin config (`plugins.agents`). All optional; `plugins.agents = {}` works. */
-const AgentsConfig = z.object({
-  /** Path to the `git` binary used for cwd attribution; defaults to `git` on PATH. */
-  gitBin: z.string().optional(),
-});
-export type AgentsConfig = z.infer<typeof AgentsConfig>;
-
-/** Narrow `ctx.config` (typed `unknown` by the SDK) to {@link AgentsConfig}; {} on miss. */
-function configOf(config: unknown): AgentsConfig {
-  const parsed = AgentsConfig.safeParse(config);
-  return parsed.success ? parsed.data : {};
-}
 
 /**
  * The fleet store — a module-level `Map<sessionId, AgentSession>` that persists
@@ -120,18 +101,6 @@ export type ReportAck = z.infer<typeof ReportAck>;
 export default definePlugin({
   id: "agents",
   name: "Agents",
-  config: AgentsConfig,
-  settings: validateSettingsDescriptor([
-    {
-      key: "gitBin",
-      type: "string",
-      label: "git binary path",
-      description:
-        "Path to the `git` CLI used to attribute a reported event's cwd to its " +
-        "dex task. Leave as `git` to use PATH.",
-      default: "git",
-    },
-  ]),
   capabilities: {
     /**
      * Ingest one Claude Code hook event into the fleet store. This is the
@@ -145,8 +114,9 @@ export default definePlugin({
       input: ReportInput,
       expose: { mcp: true },
       run: async ({ input, ctx }): Promise<ReportAck> => {
-        const cfg = configOf(ctx.config);
-        const provider = new AttributionProvider(cfg.gitBin ?? "git", { exec: execOverride });
+        const provider = new AttributionProvider(gitConfigOf(ctx.global).gitBin ?? "git", {
+          exec: execOverride,
+        });
         // Attribute the cwd to a dex task (best-effort; never throws).
         const { branch, taskId } = await provider.attribute(input.cwd);
         const event: AgentEvent = {
