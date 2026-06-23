@@ -326,6 +326,9 @@ export { z };
 /** Shared repo list + the cross-plugin `global.repos` setting. */
 export { GlobalReposConfig, reposOf } from "./repos.js";
 
+/** Shared git binary path + the cross-plugin `global.git` setting. */
+export { GIT_SETTINGS_FIELDS, GlobalGitConfig, gitConfigOf } from "./git.js";
+
 /**
  * Shared dex-task identity colors (stable id → color). Also published as the
  * dependency-free `@perch/sdk/dex-color` subpath, so the browser renderer can

@@ -20,6 +20,7 @@ import {
   action,
   agentConfigOf,
   definePlugin,
+  gitConfigOf,
   read,
   reposOf,
   terminalConfigOf,
@@ -128,8 +129,6 @@ const DexConfig = z.object({
   dirs: z.array(z.string()).optional(),
   /** Path to the `dex` binary; defaults to `dex` on PATH. */
   dexBin: z.string().optional(),
-  /** Path to the `git` binary (for the `spawn`/`land` actions); defaults to `git` on PATH. */
-  gitBin: z.string().optional(),
   /** Path to the `gh` binary (for `land`'s PR-merged lookups); defaults to `gh` on PATH. */
   ghBin: z.string().optional(),
   /** Include completed (done) tasks in the board; default false. */
@@ -369,7 +368,7 @@ async function autoSpawnReadyRepos(
   const deps = {
     exec: execOverride ?? defaultExec,
     dexBin: cfg.dexBin ?? "dex",
-    gitBin: cfg.gitBin ?? "git",
+    gitBin: gitConfigOf(ctx.global).gitBin ?? "git",
     repos,
     terminal: terminalConfigOf(ctx.global),
     agent: agentConfigOf(ctx.global),
@@ -424,15 +423,6 @@ export default definePlugin({
         "Path to the `dex` CLI. Leave as `dex` to use PATH; set an absolute path " +
         "if the daemon can't find it (e.g. an nvm/volta install when launched from Finder).",
       default: "dex",
-    },
-    {
-      key: "gitBin",
-      type: "string",
-      label: "git binary path",
-      description:
-        "Path to the `git` CLI, used by the spawn action to create a task's worktree. " +
-        "Leave as `git` to use PATH.",
-      default: "git",
     },
     // `dirs` (the monitored project roots) stays a perch.json-only setting: the
     // generic settings UI has no list field type yet, and exposing a string[] as
@@ -492,7 +482,7 @@ export default definePlugin({
         return runSpawn(input, {
           exec: execOverride ?? defaultExec,
           dexBin: cfg.dexBin ?? "dex",
-          gitBin: cfg.gitBin ?? "git",
+          gitBin: gitConfigOf(ctx.global).gitBin ?? "git",
           repos,
           terminal: terminalConfigOf(ctx.global),
           agent: agentConfigOf(ctx.global),
@@ -727,7 +717,7 @@ export default definePlugin({
         return runSpawnBatch(tasksForProject(board.tasks, input?.project), {
           exec: execOverride ?? defaultExec,
           dexBin: cfg.dexBin ?? "dex",
-          gitBin: cfg.gitBin ?? "git",
+          gitBin: gitConfigOf(ctx.global).gitBin ?? "git",
           repos: dirs,
           terminal: terminalConfigOf(ctx.global),
           agent: agentConfigOf(ctx.global),
@@ -772,7 +762,7 @@ export default definePlugin({
           const repos = effectiveDirs(cfg.dirs ?? [], ctx.global);
           const board = await runLand({
             exec: execOverride ?? defaultExec,
-            gitBin: cfg.gitBin ?? "git",
+            gitBin: gitConfigOf(ctx.global).gitBin ?? "git",
             ghBin: cfg.ghBin ?? "gh",
             dexBin: cfg.dexBin ?? "dex",
             repos,

@@ -9,6 +9,7 @@ import {
   action,
   agentConfigOf,
   definePlugin,
+  gitConfigOf,
   read,
   reposOf,
   terminalConfigOf,
@@ -366,7 +367,7 @@ export default definePlugin({
         const cwd = resolveRepoCwd(effectiveRepos(ctx.config, ctx.global), input.repo);
         return runResolveConflicts(input, {
           repoDir: cwd ?? process.cwd(),
-          gitBin: "git",
+          gitBin: gitConfigOf(ctx.global).gitBin ?? "git",
           terminal: terminalConfigOf(ctx.global),
           agent: agentConfigOf(ctx.global),
           log: ctx.log,
@@ -400,7 +401,7 @@ export default definePlugin({
         const cwd = resolveRepoCwd(effectiveRepos(ctx.config, ctx.global), input.repo);
         return runOpenAgent(input, {
           repoDir: cwd ?? process.cwd(),
-          gitBin: "git",
+          gitBin: gitConfigOf(ctx.global).gitBin ?? "git",
           terminal: terminalConfigOf(ctx.global),
           agent: agentConfigOf(ctx.global),
           log: ctx.log,
