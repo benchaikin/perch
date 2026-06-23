@@ -20,7 +20,8 @@
   --bg: #2e3440; /* nord0 */
   --fg: #d8dee9; /* nord4 */
   --fg-rgb: 216, 222, 233;
-  --muted: #4c566a; /* nord3 */
+  --muted: #7b88a1; /* a slate between nord3-bright (#616e88) and nord4 — bright enough to read as text on nord0 */
+  --dot-muted: #4c566a; /* nord3 — solid fill for neutral status dots; stays dim while --muted text brightens */
   --rule: #3b4252; /* nord1 */
   --chip-bg: #3b4252; /* nord1 */
   --hover-bg: #3b4252; /* nord1 */
@@ -46,6 +47,7 @@
     --fg: #4c566a; /* nord3 */
     --fg-rgb: 76, 86, 106;
     --muted: #929aaa; /* a mid slate between nord3 and nord4 */
+    --dot-muted: #929aaa; /* light-mode neutral dot fill — unchanged from the prior --muted tone */
     --rule: #cbd3df; /* a deepened nord4 so separators stay visible on nord6 */
     --chip-bg: #e5e9f0; /* nord5 */
     --hover-bg: #e5e9f0; /* nord5 */
