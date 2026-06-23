@@ -7,21 +7,27 @@
    Light/Dark/System setting forces it via nativeTheme.themeSource). Dark is the
    default; the light palette overrides only the base tones below.
 
-   The accents (blue/green/yellow/red) are SHARED across both themes — Nord's
-   Aurora/Frost hues read on Polar Night and Snow Storm alike — so they live once
-   in :root and are not overridden in the light block. --ok (green #a3be8c) and
-   --bad (red #bf616a) are kept apart in hue AND luminance so they stay
+   --accent (blue) is SHARED across both themes — Nord's Frost blue reads on Polar
+   Night and Snow Storm alike. The Aurora hues are not so lucky: the pale green
+   (#a3be8c), yellow (#ebcb8b), and red (#bf616a) were tuned for the dark nord0 bg
+   and wash out on the light nord6 bg (yellow is the worst, ~1.3:1), so the light
+   block below darkens --ok/--warn/--bad toward variants that clear ~3:1 on nord6.
+   --ok (green) and --bad (red) are kept apart in hue AND luminance so they stay
    distinguishable for a red-green color-deficient viewer (deuteranopia confuses a
    pure red/green hue; the desaturated green is markedly lighter than the warm red
-   — a ~2:1 luminance ratio — so the brightness carries the signal). The *-rgb
-   tokens mirror each hex for the rgba() tint fills that consumers build (e.g.
-   rgba(var(--ok-rgb), 0.15)). */
+   — a ~2:1 luminance ratio — so the brightness carries the signal). That gap is
+   why darkening green in the light block forces darkening red alongside it. The
+   *-rgb tokens mirror each hex for the rgba() tint fills that consumers build
+   (e.g. rgba(var(--ok-rgb), 0.15)), so any light-block hex override updates its
+   -rgb twin too. */
 :root {
   --bg: #2e3440; /* nord0 */
   --fg: #d8dee9; /* nord4 */
   --fg-rgb: 216, 222, 233;
   --muted: #7b88a1; /* a slate between nord3-bright (#616e88) and nord4 — bright enough to read as text on nord0 */
   --dot-muted: #4c566a; /* nord3 — solid fill for neutral status dots; stays dim while --muted text brightens */
+  /* small tone/count badge glyphs; tracks --muted in dark (legible there) but darkens in light where pale --muted glyphs wash out */
+  --badge-muted: var(--muted);
   --rule: #3b4252; /* nord1 */
   --chip-bg: #3b4252; /* nord1 */
   --hover-bg: #3b4252; /* nord1 */
@@ -48,10 +54,22 @@
     --fg-rgb: 76, 86, 106;
     --muted: #929aaa; /* a mid slate between nord3 and nord4 */
     --dot-muted: #929aaa; /* light-mode neutral dot fill — unchanged from the prior --muted tone */
+    --badge-muted: #616e88; /* nord3-bright — one step below light --muted so small badge glyphs clear ~4:1 on nord6/nord5 while general secondary text stays --muted */
     --rule: #cbd3df; /* a deepened nord4 so separators stay visible on nord6 */
     --chip-bg: #e5e9f0; /* nord5 */
     --hover-bg: #e5e9f0; /* nord5 */
     --hover-bg-strong: #d8dee9; /* nord4, a deepened nord5 */
     --detail-fg: #4c566a; /* nord3 */
+
+    /* Aurora accents darkened for nord6: the :root hues are too pale on the light
+       bg (small --warn glyphs read ~1.3:1, --ok ~1.8:1). --accent blue already
+       clears ~3.5:1, so it is left shared. --ok and --bad are darkened together to
+       keep green markedly lighter than red (~2:1 luminance) for deuteranopia. */
+    --ok: #5e8a45; /* darkened nord14 green — ~3.5:1 on nord6 */
+    --ok-rgb: 94, 138, 69;
+    --warn: #9c7a16; /* darkened nord13 amber — still reads as the reload/warn amber, ~3.5:1 */
+    --warn-rgb: 156, 122, 22;
+    --bad: #9e3a42; /* deepened nord11 red — darkened with --ok to preserve the green/red luminance gap, ~5.8:1 */
+    --bad-rgb: 158, 58, 66;
   }
 }
