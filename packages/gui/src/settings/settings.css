@@ -283,3 +283,72 @@ input[type="checkbox"].field-control {
   opacity: 0.4;
   cursor: default;
 }
+
+/* ── Add Service modal dialog ───────────────────────────────────────────────── */
+
+/* Dimming backdrop — covers the whole window, centers the panel. */
+.svc-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(var(--shadow-rgb), 0.45);
+}
+
+/* Dialog panel. */
+.svc-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 380px;
+  box-sizing: border-box;
+  padding: 16px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(var(--shadow-rgb), 0.35);
+}
+
+/* Header row: title on the left, close button on the right. */
+.svc-dialog-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.svc-dialog-header {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+/* The corner ✕ close button. */
+.svc-dialog-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 3px 5px;
+  font-size: 12px;
+  line-height: 1;
+  border-radius: 4px;
+}
+
+.svc-dialog-close:hover {
+  color: var(--fg);
+  background: var(--hover-bg);
+}
+
+.svc-dialog-close:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.svc-dialog-close:disabled:hover {
+  color: var(--muted);
+  background: none;
+}

@@ -239,6 +239,154 @@ test("repos list: Add repo… calls addRepo", async () => {
   assert.equal(addRepo.mock.calls.length, 1);
 });
 
+// ── Services tab ─────────────────────────────────────────────────────────────
+
+/** Mount and switch to the Services tab. */
+async function setupServices(overrides: Partial<PerchSettingsBridge> = {}) {
+  const bridge = makeBridge(overrides);
+  await setup(bridge);
+  await fire(() => fireEvent.click(screen.getByRole("button", { name: "Services" })));
+  return bridge;
+}
+
+test("services: Add Service button opens the dialog", async () => {
+  await setupServices();
+
+  // Dialog is not present initially.
+  assert.equal(screen.queryByRole("dialog"), null);
+
+  await fire(() => fireEvent.click(screen.getByText("Add Service")));
+
+  // Dialog is now visible with all three fields.
+  assert.ok(screen.getByRole("dialog"));
+  assert.ok(screen.getByLabelText("Name"));
+  assert.ok(screen.getByLabelText("Command"));
+  assert.ok(screen.getByLabelText("Working directory (optional)"));
+});
+
+test("services: Cancel closes the dialog without calling addProc", async () => {
+  const addProc = mock.fn(async () => ({ procs: [], daemonUp: true }));
+  await setupServices({ addProc });
+
+  await fire(() => fireEvent.click(screen.getByText("Add Service")));
+  assert.ok(screen.getByRole("dialog"));
+
+  await fire(() => fireEvent.click(screen.getByText("Cancel")));
+
+  assert.equal(screen.queryByRole("dialog"), null);
+  assert.equal(addProc.mock.calls.length, 0);
+});
+
+test("services: open→fill→Create calls addProc and closes the dialog on success", async () => {
+  const services: ServicesResult = { procs: [{ name: "web", command: "npm run dev" }], daemonUp: true };
+  const addProc = mock.fn<PerchSettingsBridge["addProc"]>(async () => services);
+  await setupServices({ addProc });
+
+  await fire(() => fireEvent.click(screen.getByText("Add Service")));
+
+  await fire(() =>
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "web" } }),
+  );
+  await fire(() =>
+    fireEvent.change(screen.getByLabelText("Command"), { target: { value: "npm run dev" } }),
+  );
+
+  await fire(() => fireEvent.click(screen.getByText("Create")));
+
+  assert.equal(addProc.mock.calls.length, 1);
+  assert.deepEqual(addProc.mock.calls[0]!.arguments[0], { name: "web", command: "npm run dev" });
+  // Dialog is closed on success.
+  assert.equal(screen.queryByRole("dialog"), null);
+});
+
+test("services: Create with cwd omits blank cwd from the proc", async () => {
+  const services: ServicesResult = { procs: [], daemonUp: true };
+  const addProc = mock.fn<PerchSettingsBridge["addProc"]>(async () => services);
+  await setupServices({ addProc });
+
+  await fire(() => fireEvent.click(screen.getByText("Add Service")));
+
+  await fire(() =>
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "api" } }),
+  );
+  await fire(() =>
+    fireEvent.change(screen.getByLabelText("Command"), { target: { value: "go run ." } }),
+  );
+  // Working directory left blank.
+
+  await fire(() => fireEvent.click(screen.getByText("Create")));
+
+  assert.equal(addProc.mock.calls.length, 1);
+  const proc = addProc.mock.calls[0]!.arguments[0];
+  assert.ok(!("cwd" in proc), "cwd should be omitted when blank");
+});
+
+test("services: Create with cwd includes it in the proc", async () => {
+  const services: ServicesResult = { procs: [], daemonUp: true };
+  const addProc = mock.fn<PerchSettingsBridge["addProc"]>(async () => services);
+  await setupServices({ addProc });
+
+  await fire(() => fireEvent.click(screen.getByText("Add Service")));
+
+  await fire(() =>
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "api" } }),
+  );
+  await fire(() =>
+    fireEvent.change(screen.getByLabelText("Command"), { target: { value: "go run ." } }),
+  );
+  await fire(() =>
+    fireEvent.change(screen.getByLabelText("Working directory (optional)"), {
+      target: { value: "/srv/api" },
+    }),
+  );
+
+  await fire(() => fireEvent.click(screen.getByText("Create")));
+
+  assert.equal(addProc.mock.calls.length, 1);
+  assert.deepEqual(addProc.mock.calls[0]!.arguments[0], {
+    name: "api",
+    command: "go run .",
+    cwd: "/srv/api",
+  });
+});
+
+test("services: error from addProc keeps the dialog open with the error shown", async () => {
+  const errorServices: ServicesResult = { procs: [], daemonUp: true, error: "name already taken" };
+  const addProc = mock.fn<PerchSettingsBridge["addProc"]>(async () => errorServices);
+  // listProcs must also return the errored result so the store snapshot carries the error.
+  await setupServices({
+    addProc,
+    listProcs: mock.fn(async () => errorServices),
+  });
+
+  await fire(() => fireEvent.click(screen.getByText("Add Service")));
+
+  await fire(() =>
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "web" } }),
+  );
+  await fire(() =>
+    fireEvent.change(screen.getByLabelText("Command"), { target: { value: "npm start" } }),
+  );
+
+  await fire(() => fireEvent.click(screen.getByText("Create")));
+
+  // Dialog stays open.
+  assert.ok(screen.getByRole("dialog"));
+  // Error is shown inside the dialog.
+  assert.ok(screen.getByText("name already taken"));
+});
+
+test("services: Add Service button is disabled when daemon is down", async () => {
+  const bridge = makeBridge({
+    listProcs: mock.fn(async () => ({ procs: [], daemonUp: false })),
+  });
+  await setup(bridge);
+  await fire(() => fireEvent.click(screen.getByRole("button", { name: "Services" })));
+
+  const addBtn = screen.getByText("Add Service") as HTMLButtonElement;
+  assert.ok(addBtn.disabled);
+});
+
 // ── Active-tab seed / own / fallback ─────────────────────────────────────────
 
 test("active tab: seeds to the first tab, adopts a click, falls back when it vanishes", async () => {
