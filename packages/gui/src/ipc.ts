@@ -95,6 +95,15 @@ export const Channels = {
    * process name). Main runs `services.logs` (fire-and-forget; M3).
    */
   serviceLogs: "perch:service-logs",
+  /**
+   * Renderer → main `invoke`: set a repo's Services Auto/Manual mode (payload: a
+   * {@link ServicesAutoRequest} — the scope and desired enabled flag). Main writes
+   * `plugins.services.auto[<scope>]` via `config.update`, re-reads the service
+   * list so the toggle reflects the persisted mode, and resolves when the write
+   * finishes so the toggle can clear its in-flight state. The Services analog of
+   * {@link Channels.dexSetAutoSpawn}.
+   */
+  servicesSetAuto: "perch:services-set-auto",
   /** Renderer → main: copy text to the clipboard (payload: the text). */
   copyText: "perch:copy-text",
   /** Renderer → main: persist the selected tab id (payload: the tab id). */
@@ -260,6 +269,18 @@ export interface WorktreeRemoveRequest {
   warning?: string;
 }
 
+/** Renderer → main payload to set a repo's Services Auto/Manual mode. */
+export interface ServicesAutoRequest {
+  /**
+   * The scope whose mode to set — a repo basename when the Services tab is
+   * grouped, or {@link SERVICES_PANE_SCOPE} for the flat fallback. The
+   * `plugins.services.auto` key.
+   */
+  scope: string;
+  /** `true` ⇒ Auto (poll-time keep-running), `false` ⇒ Manual. */
+  enabled: boolean;
+}
+
 /** Renderer → main payload to set a repo's auto-spawn (Auto/Manual) mode. */
 export interface DexAutoSpawnRequest {
   /** The repo (project basename) whose mode to set — the `plugins.dex.autoSpawn` key. */
@@ -350,6 +371,15 @@ export interface PerchBridge {
   servicesBulk(action: ServicesBulkAction, project?: string): void;
   /** Ask the main process to open a terminal tailing a service's logs (by name). */
   serviceLogs(name: string): void;
+  /**
+   * Ask the main process to set a repo's Services Auto/Manual mode (payload: a
+   * {@link ServicesAutoRequest} — the scope + desired enabled flag). Main persists
+   * `plugins.services.auto[<scope>]` and re-reads the service list. Resolves when
+   * the write finishes (or fails), so the caller can clear its in-flight UI; the
+   * error notice (if any) is pushed via panel state. The Services analog of
+   * {@link PerchBridge.dexSetAutoSpawn}.
+   */
+  servicesSetAuto(request: ServicesAutoRequest): Promise<void>;
   /** Ask the main process to copy text to the system clipboard. */
   copyText(text: string): void;
   /** Tell the main process which tab is now selected, so it persists across opens. */

@@ -50,6 +50,9 @@ export function createActions(bridge: () => PerchActions): PerchActions {
     serviceLogs(name) {
       bridge().serviceLogs(name);
     },
+    servicesSetAuto(request) {
+      return bridge().servicesSetAuto(request);
+    },
     copyText(text) {
       bridge().copyText(text);
     },

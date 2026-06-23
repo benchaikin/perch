@@ -128,6 +128,16 @@ const ServicesConfig = z.object({
   /** Spawn `process-compose up -D` when the server is unreachable. */
   autostart: z.boolean().optional(),
   /**
+   * Per-repo Auto/Manual mode, keyed by repo basename (the same `global.repos`
+   * basename the Services tab groups by) or the {@link PANE_SCOPE} sentinel when
+   * the layout is flat / the repo is unknown. `true` ⇒ Auto: each `services.list`
+   * poll keeps that repo's services running — restart the crashed, start the
+   * stopped — with no human in the loop. Absent/`false` ⇒ Manual (today's
+   * behavior). Default empty ⇒ no repo auto-manages, so existing configs see no
+   * change. Mirrors dex's `autoSpawn`; the GUI sibling adds the toggle.
+   */
+  auto: z.record(z.string(), z.boolean()).optional(),
+  /**
    * @deprecated The terminal preference moved to the global `General` settings
    * (`global.terminal`). Kept here only as a back-compat fallback: when no global
    * terminal is set, `services.logs` still honors a legacy `terminalApp` /
@@ -252,6 +262,103 @@ export function serviceLogsTitle(name: string, maxNameLength = 40): string {
   return `${short} logs`;
 }
 
+/**
+ * Flat-pane Auto scope sentinel: the `cfg.auto` key for services that resolve to
+ * no configured repo (the GUI's ungrouped pane). A space-prefixed string that
+ * can't collide with a real repo basename — mirrors the GUI's `SERVICES_PANE_SCOPE`.
+ */
+const PANE_SCOPE = " :pane";
+
+/**
+ * In-flight latch for the auto-reconcile pass. A repo with many stopped/crashed
+ * services can make one pass's restarts run longer than the 5s poll interval;
+ * without this, the next poll would fire an overlapping reconcile that re-issues
+ * the same starts. While a pass runs, the next poll skips it. Mirrors dex's `landing`.
+ */
+let reconciling = false;
+
+/** Inject/reset the `reconciling` latch (tests only) — assert overlap-skip. */
+export function __setReconciling(value: boolean): void {
+  reconciling = value;
+}
+
+/**
+ * The scope keys (repo basenames, or {@link PANE_SCOPE}) set to Auto in the
+ * `auto` map. `[]` for an absent/empty map, so the default config auto-manages
+ * nothing. Mirrors dex's `autoSpawnRepos`. Exported for unit coverage.
+ */
+export function autoRepos(auto: Record<string, boolean> | undefined): string[] {
+  if (!auto) return [];
+  return Object.keys(auto).filter((scope) => auto[scope] === true);
+}
+
+/** A single auto-reconcile step: which lifecycle action to fire on which service. */
+export interface ReconcileAction {
+  /** Process name to act on. */
+  name: string;
+  /** `restart` a crashed service, `start` a stopped one. */
+  action: "start" | "restart";
+  /** The Auto scope (repo basename or {@link PANE_SCOPE}) that owns the service — for logging. */
+  scope: string;
+}
+
+/**
+ * Decide the auto-reconcile actions for the current service list under the
+ * per-repo `auto` map. For every service whose scope — its resolved `project`,
+ * else {@link PANE_SCOPE} — is set to Auto:
+ * - `crashed` ⇒ `restart` (bounce the failed process);
+ * - `stopped` ⇒ `start` (bring an intentionally-down/never-started one up).
+ *
+ * A successfully `completed` one-shot is left alone (so Auto never relaunches a
+ * clean finish), as is any running/starting service. Services named in `acting`
+ * (an in-flight user action) are skipped so the loop never double-fires the
+ * user's own click. Returns `[]` when no repo is Auto, so the default config is
+ * inert. Pure + exported for unit coverage.
+ */
+export function reconcileActions(
+  services: readonly { name: string; status: ServiceStatus; project?: string }[],
+  auto: Record<string, boolean> | undefined,
+  acting: ReadonlySet<string> = new Set(),
+): ReconcileAction[] {
+  if (autoRepos(auto).length === 0) return [];
+  const out: ReconcileAction[] = [];
+  for (const svc of services) {
+    const scope = svc.project ?? PANE_SCOPE;
+    if (auto![scope] !== true || acting.has(svc.name)) continue;
+    if (svc.status === "crashed") out.push({ name: svc.name, action: "restart", scope });
+    else if (svc.status === "stopped") out.push({ name: svc.name, action: "start", scope });
+  }
+  return out;
+}
+
+/**
+ * The `services.list` read's reconcile half (the Services analog of dex's
+ * `autoSpawnReadyRepos`): keep every Auto repo's services running by restarting
+ * the crashed and starting the stopped. Returns early (touching nothing) when no
+ * repo is Auto, so the default config is inert.
+ *
+ * Skips when the server is **unreachable** (`available: false`): with no server
+ * to target, the synthesized `stopped` rows can't be started here — the existing
+ * `autostart` (the global `plugins.services.autostart` bring-up) governs getting
+ * the server up, and Auto must not introduce a second, competing autostart. Each
+ * fired action is logged `services.auto: <scope>: <action> <name>`, mirroring
+ * dex's `dex.land: auto-spawn …`.
+ */
+async function reconcileAuto(
+  list: ServiceList,
+  ctx: { config: unknown; log: (message: string) => void },
+): Promise<void> {
+  if (!list.available) return;
+  const cfg = configOf(ctx.config);
+  const todo = reconcileActions(list.services, cfg.auto);
+  if (todo.length === 0) return;
+  const provider = providerOf(ctx);
+  for (const { name, action, scope } of todo) {
+    const ok = await provider.action(name, action);
+    ctx.log(`services.auto: ${scope}: ${action} ${name}${ok ? "" : " (failed)"}`);
+  }
+}
+
 export default definePlugin({
   id: "services",
   name: "Services",
@@ -286,7 +393,26 @@ export default definePlugin({
           project: resolveProject(p, repos),
         }));
         const projects = repos.map((dir) => basename(dir));
-        return buildServiceList(await providerOf(ctx).processes(), procs, projects);
+        const list = buildServiceList(await providerOf(ctx).processes(), procs, projects);
+        // Surface the persisted Auto/Manual map so the GUI's per-repo toggle
+        // reads the saved mode (mirrors `dex.tasks` spreading `autoSpawn`).
+        const out: ServiceList = cfg.auto ? { ...list, auto: cfg.auto } : list;
+        // Reconcile Auto repos as a side effect of the poll — the only periodic
+        // seam the daemon schedules (same precedent as dex's `land` read). The
+        // `reconciling` latch keeps a slow batch from overlapping the next poll;
+        // the returned list reflects pre-reconcile statuses (the next poll shows
+        // the effects). No-op when no repo is Auto, so the default stays inert.
+        if (reconciling) {
+          ctx.log("services.auto: a previous reconcile is still running; skipping this poll");
+        } else {
+          reconciling = true;
+          try {
+            await reconcileAuto(out, ctx);
+          } finally {
+            reconciling = false;
+          }
+        }
+        return out;
       },
       // Diff each poll against the previous list and fire one notification per
       // process that newly entered `crashed`. `prev`/`next` carry the schema's

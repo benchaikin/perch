@@ -814,7 +814,7 @@ test("the single-repo header's Auto/Manual toggle reflects the stored mode and f
       section={section([row({ id: "r1", name: "Ready" })], { project: "alpha", enabled: false })}
     />,
   );
-  const btn = container.querySelector(".dex-auto-spawn") as HTMLButtonElement;
+  const btn = container.querySelector(".auto-mode-pill") as HTMLButtonElement;
   assert.ok(btn, "the single-repo header carries the auto-spawn toggle");
   assert.equal(btn.getAttribute("aria-pressed"), "false", "the stored mode is Manual");
   assert.equal(btn.classList.contains("on"), false);
@@ -826,20 +826,20 @@ test("the single-repo header's Auto/Manual toggle reflects the stored mode and f
     "the click flips the persisted mode to Auto",
   );
   // Optimistic: the toggle reads Auto and disables until the write resolves.
-  const flipped = container.querySelector(".dex-auto-spawn") as HTMLButtonElement;
+  const flipped = container.querySelector(".auto-mode-pill") as HTMLButtonElement;
   assert.equal(flipped.getAttribute("aria-pressed"), "true");
   assert.equal(flipped.classList.contains("on"), true);
   assert.equal(flipped.disabled, true);
 
   await settleActions();
-  const settled = container.querySelector(".dex-auto-spawn") as HTMLButtonElement;
+  const settled = container.querySelector(".auto-mode-pill") as HTMLButtonElement;
   assert.equal(settled.disabled, false, "the toggle re-enables when the write resolves");
 });
 
 test("the cwd store (no project) shows no auto-spawn toggle", () => {
   const { container } = render(<DexPane section={section([row({ id: "r1", name: "Ready" })])} />);
   assert.equal(
-    container.querySelector(".dex-auto-spawn"),
+    container.querySelector(".auto-mode-pill"),
     null,
     "without a project there's no key to persist auto-spawn on",
   );
@@ -858,7 +858,7 @@ test("each repo header's toggle reflects that repo's stored auto-spawn mode", ()
       )}
     />,
   );
-  const toggles = [...container.querySelectorAll(".dex-auto-spawn")] as HTMLButtonElement[];
+  const toggles = [...container.querySelectorAll(".auto-mode-pill")] as HTMLButtonElement[];
   assert.equal(toggles.length, 2, "every repo header carries its own toggle");
   assert.equal(toggles[0]!.getAttribute("aria-pressed"), "true", "alpha is Auto");
   assert.equal(toggles[1]!.getAttribute("aria-pressed"), "false", "beta is Manual");

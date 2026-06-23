@@ -21,6 +21,9 @@ import { type CapabilityContext } from "@perch/sdk";
 import plugin, {
   __setLogsSpawn,
   __setProviderSpawn,
+  __setReconciling,
+  autoRepos,
+  reconcileActions,
   resolveComposeFile,
   serviceLogsTitle,
 } from "./index.js";
@@ -446,5 +449,136 @@ test("services.logs falls back to the legacy per-services terminal when no globa
     assert.match(calls[0]!.args[1] as string, /^LEGACY sh \/\S+\.sh$/);
   } finally {
     __setLogsSpawn(undefined);
+  }
+});
+
+// ── Auto/Manual reconcile (per-repo "keep services running") ──
+
+test("autoRepos: an undefined map auto-manages nothing (default config is inert)", () => {
+  assert.deepEqual(autoRepos(undefined), []);
+});
+
+test("autoRepos: empty map auto-manages nothing", () => {
+  assert.deepEqual(autoRepos({}), []);
+});
+
+test("autoRepos: only scopes keyed true are Auto; false/absent are Manual", () => {
+  assert.deepEqual(autoRepos({ alpha: true, beta: false, gamma: true }).sort(), ["alpha", "gamma"]);
+});
+
+test("reconcileActions: no Auto repo → no actions (default config inert)", () => {
+  const services = [
+    { name: "api", status: "crashed" as const, project: "alpha" },
+    { name: "web", status: "stopped" as const, project: "alpha" },
+  ];
+  assert.deepEqual(reconcileActions(services, undefined), []);
+  assert.deepEqual(reconcileActions(services, {}), []);
+  assert.deepEqual(reconcileActions(services, { alpha: false }), []);
+});
+
+test("reconcileActions: in an Auto repo, crashed→restart and stopped→start", () => {
+  const services = [
+    { name: "api", status: "crashed" as const, project: "alpha" },
+    { name: "web", status: "stopped" as const, project: "alpha" },
+  ];
+  assert.deepEqual(reconcileActions(services, { alpha: true }), [
+    { name: "api", action: "restart", scope: "alpha" },
+    { name: "web", action: "start", scope: "alpha" },
+  ]);
+});
+
+test("reconcileActions: a successfully completed one-shot is left alone (no relaunch loop)", () => {
+  const services = [{ name: "migrate", status: "completed" as const, project: "alpha" }];
+  assert.deepEqual(reconcileActions(services, { alpha: true }), []);
+});
+
+test("reconcileActions: running/starting services are left alone", () => {
+  const services = [
+    { name: "api", status: "running" as const, project: "alpha" },
+    { name: "web", status: "starting" as const, project: "alpha" },
+  ];
+  assert.deepEqual(reconcileActions(services, { alpha: true }), []);
+});
+
+test("reconcileActions: only the Auto repos' services are acted on", () => {
+  const services = [
+    { name: "api", status: "crashed" as const, project: "alpha" },
+    { name: "db", status: "crashed" as const, project: "beta" },
+  ];
+  assert.deepEqual(reconcileActions(services, { alpha: true }), [
+    { name: "api", action: "restart", scope: "alpha" },
+  ]);
+});
+
+test("reconcileActions: a service with no project uses the flat-pane sentinel scope", () => {
+  const services = [{ name: "api", status: "stopped" as const }];
+  assert.deepEqual(reconcileActions(services, { " :pane": true }), [
+    { name: "api", action: "start", scope: " :pane" },
+  ]);
+});
+
+test("reconcileActions: an in-flight (acting) service is not double-fired", () => {
+  const services = [
+    { name: "api", status: "stopped" as const, project: "alpha" },
+    { name: "web", status: "stopped" as const, project: "alpha" },
+  ];
+  assert.deepEqual(reconcileActions(services, { alpha: true }, new Set(["api"])), [
+    { name: "web", action: "start", scope: "alpha" },
+  ]);
+});
+
+test("services.list reconcile: an Auto repo's stopped service is auto-started via the poll", async () => {
+  __setReconciling(false);
+  const server = await fakeServer([{ name: "api", status: "Stopped" }]);
+  try {
+    const result = (await plugin.capabilities.list!.run({
+      input: {},
+      ctx: {
+        config: { address: server.address, auto: { " :pane": true } },
+        global: {},
+        log: () => {},
+      },
+    })) as ServiceList;
+    // The list surfaces the persisted Auto map…
+    assert.deepEqual(result.auto, { " :pane": true });
+    // …and the reconcile fired a start for the stopped service.
+    assert.ok(server.seen.some((r) => r.method === "POST" && r.url === "/process/start/api"));
+  } finally {
+    __setReconciling(false);
+    await server.close();
+  }
+});
+
+test("services.list reconcile: the default (no Auto) config touches nothing", async () => {
+  __setReconciling(false);
+  const server = await fakeServer([{ name: "api", status: "Stopped" }]);
+  try {
+    await plugin.capabilities.list!.run({
+      input: {},
+      ctx: { config: { address: server.address }, global: {}, log: () => {} },
+    });
+    assert.ok(!server.seen.some((r) => r.url.startsWith("/process/start/")));
+  } finally {
+    __setReconciling(false);
+    await server.close();
+  }
+});
+
+test("services.list reconcile: skips while a previous pass holds the latch", async () => {
+  __setReconciling(true);
+  const server = await fakeServer([{ name: "api", status: "Stopped" }]);
+  try {
+    await plugin.capabilities.list!.run({
+      input: {},
+      ctx: {
+        config: { address: server.address, auto: { " :pane": true } },
+        global: {},
+        log: () => {},
+      },
+    });
+    assert.ok(!server.seen.some((r) => r.url.startsWith("/process/start/")));
+  } finally {
+    __setReconciling(false);
+    await server.close();
   }
 });

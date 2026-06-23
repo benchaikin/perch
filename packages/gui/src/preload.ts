@@ -41,6 +41,9 @@ const bridge: PerchBridge = {
   serviceLogs(name) {
     ipcRenderer.send(Channels.serviceLogs, name);
   },
+  servicesSetAuto(request) {
+    return ipcRenderer.invoke(Channels.servicesSetAuto, request);
+  },
   copyText(text) {
     ipcRenderer.send(Channels.copyText, text);
   },

@@ -40,6 +40,12 @@ export interface ServiceList {
    * services. Absent from an older daemon (the section then renders flat).
    */
   projects?: string[];
+  /**
+   * Per-repo Auto/Manual mode (`plugins.services.auto`), keyed by repo basename
+   * (or {@link SERVICES_PANE_SCOPE} for the flat layout): `true` ⇒ Auto. Drives
+   * each repo group's toggle state. Absent when no repo is configured Auto.
+   */
+  auto?: Record<string, boolean>;
 }
 
 /** A rendered service row's marker health → CSS dot color. */
@@ -116,6 +122,14 @@ export interface ServicesRepoGroup {
   controls: ServicesControl[];
   /** The whole-stack action in flight for THIS group, if any (its button spins). */
   bulkActing?: ServicesBulkAction;
+  /**
+   * Whether this repo is in **Auto** mode (`plugins.services.auto[project]`): the
+   * daemon keeps its services running (restart crashed, start stopped) each poll.
+   * In Auto the per-row **Stop** and the group's **Stop all** are suppressed so the
+   * user isn't fighting a reconcile that would immediately re-start what they
+   * stopped (the manual-stop-in-Auto guard).
+   */
+  auto: boolean;
 }
 
 /**
@@ -147,6 +161,13 @@ export interface ServicesSection {
   bulkActing?: ServicesBulkAction;
   grouped: boolean;
   repoGroups: ServicesRepoGroup[];
+  /**
+   * Whether the **flat fallback** (ungrouped) pane is in Auto mode
+   * (`plugins.services.auto[SERVICES_PANE_SCOPE]`). Only meaningful when
+   * `grouped` is false; like a group's `auto`, it suppresses the flat Stop /
+   * Stop-all controls. When `grouped`, each group carries its own `auto` instead.
+   */
+  auto: boolean;
 }
 
 /** Map a normalized status to its marker health (color). */
@@ -249,6 +270,22 @@ function configuredRepos(list: ServiceList): string[] {
 }
 
 /**
+ * Suppress the **Stop** lifecycle action on an Auto-mode row: in Auto the daemon
+ * re-starts a stopped service on the next poll, so offering Stop would let the
+ * user fight the reconcile. Restart/Start/Logs are unaffected. Returns the row
+ * unchanged when it carries no Stop button.
+ */
+function withoutStop(row: ServiceRow): ServiceRow {
+  if (!row.buttons.some((b) => b.action === "stop")) return row;
+  return { ...row, buttons: row.buttons.filter((b) => b.action !== "stop") };
+}
+
+/** Drop **Stop all** from a control set — the bulk analog of {@link withoutStop} for Auto. */
+function withoutStopAll(controls: ServicesControl[]): ServicesControl[] {
+  return controls.filter((c) => c.action !== "stopAll");
+}
+
+/**
  * Group rows by `project` into one {@link ServicesRepoGroup} per repo. The order
  * is seeded from the `configured` repo list (config order) so a
  * configured-but-empty repo still yields an EMPTY group (header only), then any
@@ -269,6 +306,7 @@ function groupRowsByProject(
   configured: readonly string[],
   controls: ServicesControl[],
   bulkActing: ReadonlyMap<string, ServicesBulkAction>,
+  auto: Record<string, boolean>,
 ): ServicesRepoGroup[] {
   const byProject = new Map<string, ServiceRow[]>();
   const order: string[] = [];
@@ -285,11 +323,15 @@ function groupRowsByProject(
   for (const row of rows) ensure(row.project ?? UNKNOWN_PROJECT).push(row);
   return order.map((project) => {
     const rows = byProject.get(project)!;
+    const isAuto = auto[project] === true;
+    const groupControls = project === UNKNOWN_PROJECT || rows.length === 0 ? [] : controls;
     return {
       project,
-      rows,
-      controls: project === UNKNOWN_PROJECT || rows.length === 0 ? [] : controls,
+      // In Auto, hide the per-row Stop so the user can't fight the reconcile.
+      rows: isAuto ? rows.map(withoutStop) : rows,
+      controls: isAuto ? withoutStopAll(groupControls) : groupControls,
       bulkActing: bulkActing.get(project),
+      auto: isAuto,
     };
   });
 }
@@ -340,22 +382,26 @@ export function buildServicesSection(
   bulkActing: ReadonlyMap<string, ServicesBulkAction> = new Map(),
 ): ServicesSection {
   if (!list || list.services.length === 0) {
-    return { visible: false, rows: [], controls: [], grouped: false, repoGroups: [] };
+    return { visible: false, rows: [], controls: [], grouped: false, repoGroups: [], auto: false };
   }
   const inFlight = new Set(acting);
   const rows = list.services.map((svc) => toServiceRow(svc, inFlight));
   const repos = configuredRepos(list);
+  const auto = list.auto ?? {};
   // Group whenever there's at least one known repo to head the rows — including a
   // single repo (the header names the project). Flat only when no repo is known
   // (an older daemon with no `projects[]` and no per-service `project`).
   const grouped = repos.length > 0;
   const controls = servicesControls(list.available);
+  // The flat fallback's scope is the pane sentinel; in Auto, hide its Stop/Stop-all.
+  const flatAuto = auto[SERVICES_PANE_SCOPE] === true;
   return {
     visible: true,
-    rows,
-    controls,
+    rows: !grouped && flatAuto ? rows.map(withoutStop) : rows,
+    controls: !grouped && flatAuto ? withoutStopAll(controls) : controls,
     bulkActing: bulkActing.get(SERVICES_PANE_SCOPE),
     grouped,
-    repoGroups: grouped ? groupRowsByProject(rows, repos, controls, bulkActing) : [],
+    repoGroups: grouped ? groupRowsByProject(rows, repos, controls, bulkActing, auto) : [],
+    auto: flatAuto,
   };
 }
