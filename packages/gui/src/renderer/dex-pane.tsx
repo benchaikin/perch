@@ -1327,7 +1327,7 @@ function DexAutoSpawnToggle({
     : "Auto-spawn off (Manual) — spawn ready tasks yourself. Click for Auto.";
   return (
     <button
-      className={`icon-btn dex-auto-spawn${on ? " on" : ""}`}
+      className={`icon-btn auto-mode-pill${on ? " on" : ""}`}
       disabled={inFlight}
       aria-pressed={on}
       title={label}
@@ -1346,7 +1346,7 @@ function DexAutoSpawnToggle({
           inFlight ? "fa-solid fa-circle-notch fa-spin" : `fa-solid fa-${on ? "robot" : "hand"}`
         }
       />
-      <span className="dex-auto-spawn-label">{on ? "Auto" : "Manual"}</span>
+      <span className="auto-mode-pill-label">{on ? "Auto" : "Manual"}</span>
     </button>
   );
 }

@@ -61,6 +61,13 @@ export const ServiceList = z.object({
    * then degrades to a flat list).
    */
   projects: z.array(z.string()).optional(),
+  /**
+   * Per-repo Auto/Manual mode (`plugins.services.auto`), keyed by repo basename
+   * (or the flat-pane sentinel), surfaced so the GUI's per-repo toggle reflects
+   * the persisted mode. Mirrors `DexBoard.autoSpawn`; absent when no repo is
+   * configured Auto (the default).
+   */
+  auto: z.record(z.string(), z.boolean()).optional(),
 });
 export type ServiceList = z.infer<typeof ServiceList>;
 

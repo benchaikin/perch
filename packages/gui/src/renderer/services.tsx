@@ -13,14 +13,15 @@
  * renderer.css keeps matching.
  */
 import { useState } from "react";
-import type {
-  ServiceAction,
-  ServiceHealth,
-  ServicesBulkAction,
-  ServiceRow,
-  ServicesControl,
-  ServicesRepoGroup,
-  ServicesSection,
+import {
+  SERVICES_PANE_SCOPE,
+  type ServiceAction,
+  type ServiceHealth,
+  type ServicesBulkAction,
+  type ServiceRow,
+  type ServicesControl,
+  type ServicesRepoGroup,
+  type ServicesSection,
 } from "../services-state.js";
 import { HEALTH_ICON } from "./common.js";
 import { CopyChip } from "./copy-chip.js";
@@ -190,6 +191,68 @@ function ServicesControlEl({
 }
 
 /**
+ * The optimistic in-flight state for the Auto/Manual toggles: a `Map<scope,
+ * enabled>` of the modes being written (so a clicked pill reads the new state and
+ * disables until the next `services.list` poll catches up), plus the setter that
+ * flips it. Threaded from {@link ServicesPane} to the group/section headers,
+ * mirroring dex-pane's `autoSpawnPending`/`setAutoSpawn` context.
+ */
+interface AutoToggleState {
+  pending: ReadonlyMap<string, boolean>;
+  setAuto(scope: string, enabled: boolean): void;
+}
+
+/**
+ * The per-repo Auto/Manual toggle for the Services tab: one click flips the
+ * repo's mode, persisted under `plugins.services.auto[<scope>]`. In Auto the
+ * daemon keeps the repo's services running (restart crashed, start stopped) each
+ * poll; Manual (the default) leaves lifecycle to the user. The displayed state
+ * reads the optimistic override (while a write is in flight) ahead of the
+ * pushed `enabled`, and the button disables until the write resolves — the
+ * Services analog of {@link DexAutoSpawnToggle} (shares the `.auto-mode-pill` CSS).
+ */
+function ServicesAutoToggle({
+  scope,
+  enabled,
+  auto,
+}: {
+  scope: string;
+  enabled: boolean;
+  auto: AutoToggleState;
+}): JSX.Element {
+  const pending = auto.pending.get(scope);
+  const inFlight = pending !== undefined;
+  const on = pending ?? enabled;
+  const label = on
+    ? "Auto on — stopped services are started and crashed ones restarted automatically. Click for Manual."
+    : "Auto off (Manual) — start/stop/restart services yourself. Click for Auto.";
+  return (
+    <button
+      className={`icon-btn auto-mode-pill${on ? " on" : ""}`}
+      disabled={inFlight}
+      aria-pressed={on}
+      title={label}
+      aria-label={label}
+      onClick={
+        inFlight
+          ? undefined
+          : (e) => {
+              e.stopPropagation();
+              auto.setAuto(scope, !on);
+            }
+      }
+    >
+      <i
+        className={
+          inFlight ? "fa-solid fa-circle-notch fa-spin" : `fa-solid fa-${on ? "robot" : "hand"}`
+        }
+      />
+      <span className="auto-mode-pill-label">{on ? "Auto" : "Manual"}</span>
+    </button>
+  );
+}
+
+/**
  * One repo group: a collapsible header (chevron + repo name + service-count chip)
  * plus this repo's whole-stack Start/Stop/Restart-all controls, over its service
  * rows. Clicking the name toggles just this group's rows; the controls act on only
@@ -200,10 +263,12 @@ function ServicesRepoGroupView({
   group,
   collapsed,
   onToggle,
+  auto,
 }: {
   group: ServicesRepoGroup;
   collapsed: boolean;
   onToggle: (project: string) => void;
+  auto: AutoToggleState;
 }): JSX.Element {
   const count = group.rows.length;
   return (
@@ -222,6 +287,7 @@ function ServicesRepoGroupView({
           <span className="branch services-repo-name">{group.project}</span>
           <span className="chip muted services-repo-count">{count}</span>
         </button>
+        <ServicesAutoToggle scope={group.project} enabled={group.auto} auto={auto} />
         {group.controls.length > 0 ? (
           <span className="services-controls services-repo-actions">
             {group.controls.map((control) => (
@@ -270,6 +336,9 @@ export function ServicesPane({
   // background poll re-render and resets on tab switch/relaunch (the pane
   // unmounts), matching the PRs/Dex/Worktrees panes.
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+  // Optimistic Auto/Manual toggle state, keyed by scope — flips the pill on click
+  // and clears when the next `services.list` poll reports the persisted mode.
+  const [autoPending, setAutoPending] = useState<ReadonlyMap<string, boolean>>(() => new Map());
 
   function toggle(project: string): void {
     setCollapsed((prev) => {
@@ -280,16 +349,45 @@ export function ServicesPane({
     });
   }
 
+  // Flip the scope's mode optimistically (so the pill reads the new state and
+  // disables while in flight), persist it via main, and clear the override when
+  // it resolves — by then main has re-read the list, which reports the persisted
+  // mode. Keyed per scope so two repos can toggle independently.
+  const auto: AutoToggleState = {
+    pending: autoPending,
+    setAuto(scope, enabled) {
+      if (autoPending.has(scope)) return;
+      setAutoPending((prev) => new Map(prev).set(scope, enabled));
+      void (async () => {
+        try {
+          await window.perch.servicesSetAuto({ scope, enabled });
+        } finally {
+          setAutoPending((prev) => {
+            const next = new Map(prev);
+            next.delete(scope);
+            return next;
+          });
+        }
+      })();
+    },
+  };
+
   if (!section.visible) return null;
   // The pane-level (unscoped) controls render only on the flat fallback — when the
   // rows group by repo, each group header carries its own scoped controls instead.
   const showPaneControls = !section.grouped && section.controls.length > 0;
-  const hasHeader = showTitle || showPaneControls;
+  // The flat fallback also carries the (pane-scoped) Auto toggle; grouped layouts
+  // put a toggle in each repo header instead.
+  const showPaneAuto = !section.grouped;
+  const hasHeader = showTitle || showPaneControls || showPaneAuto;
   return (
     <section className="repo-section services-section">
       {hasHeader ? (
         <div className="repo-header services-header">
           {showTitle ? <span>Services</span> : null}
+          {showPaneAuto ? (
+            <ServicesAutoToggle scope={SERVICES_PANE_SCOPE} enabled={section.auto} auto={auto} />
+          ) : null}
           {showPaneControls ? (
             <span className="services-controls">
               {section.controls.map((control) => (
@@ -310,6 +408,7 @@ export function ServicesPane({
               group={group}
               collapsed={collapsed.has(group.project)}
               onToggle={toggle}
+              auto={auto}
             />
           ))
         : section.rows.map((svc) => <ServiceRowEl key={svc.name} svc={svc} />)}

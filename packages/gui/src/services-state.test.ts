@@ -91,7 +91,14 @@ test("buildServicesSection gives every row a Logs affordance", () => {
 });
 
 test("buildServicesSection hides when no list / unreachable / empty", () => {
-  const hidden = { visible: false, rows: [], controls: [], grouped: false, repoGroups: [] };
+  const hidden = {
+    visible: false,
+    rows: [],
+    controls: [],
+    grouped: false,
+    repoGroups: [],
+    auto: false,
+  };
   assert.deepEqual(buildServicesSection(undefined), hidden);
   assert.deepEqual(buildServicesSection({ services: [], available: false }), hidden);
   // Reachable but empty → still hidden (nothing to show).
@@ -331,7 +338,100 @@ test("worstServiceHealth picks the most severe row (bad > warn > ok > muted)", (
   assert.equal(worstServiceHealth(sec("stopped", "stopped")), "muted");
   // No rows (hidden section) → muted.
   assert.equal(
-    worstServiceHealth({ visible: false, rows: [], controls: [], grouped: false, repoGroups: [] }),
+    worstServiceHealth({
+      visible: false,
+      rows: [],
+      controls: [],
+      grouped: false,
+      repoGroups: [],
+      auto: false,
+    }),
     "muted",
+  );
+});
+
+// ── Auto/Manual mode (per-repo "keep services running") ──
+
+test("buildServicesSection: threads the persisted auto map onto each repo group", () => {
+  const list: ServiceList = {
+    available: true,
+    projects: ["ashby", "web"],
+    services: [
+      { name: "api", status: "running", project: "ashby" },
+      { name: "ui", status: "running", project: "web" },
+    ],
+    auto: { ashby: true },
+  };
+  const section = buildServicesSection(list);
+  const byProject = new Map(section.repoGroups.map((g) => [g.project, g]));
+  assert.equal(byProject.get("ashby")!.auto, true);
+  assert.equal(byProject.get("web")!.auto, false);
+});
+
+test("buildServicesSection: an absent auto map leaves every group Manual (inert default)", () => {
+  const list: ServiceList = {
+    available: true,
+    projects: ["ashby"],
+    services: [{ name: "api", status: "running", project: "ashby" }],
+  };
+  const section = buildServicesSection(list);
+  assert.equal(section.repoGroups[0]!.auto, false);
+  assert.equal(section.auto, false);
+});
+
+test("buildServicesSection: an Auto repo hides per-row Stop and the group's Stop all", () => {
+  const list: ServiceList = {
+    available: true,
+    projects: ["ashby"],
+    services: [{ name: "api", status: "running", project: "ashby" }],
+    auto: { ashby: true },
+  };
+  const group = buildServicesSection(list).repoGroups[0]!;
+  // Stop is gone from the running row (Restart remains); Stop all is gone from controls.
+  assert.deepEqual(
+    group.rows[0]!.buttons.map((b) => b.action),
+    ["restart"],
+  );
+  assert.deepEqual(
+    group.controls.map((c) => c.action),
+    ["startAll", "restartAll"],
+  );
+});
+
+test("buildServicesSection: a Manual repo keeps Stop and Stop all", () => {
+  const list: ServiceList = {
+    available: true,
+    projects: ["ashby"],
+    services: [{ name: "api", status: "running", project: "ashby" }],
+    auto: { ashby: false },
+  };
+  const group = buildServicesSection(list).repoGroups[0]!;
+  assert.deepEqual(
+    group.rows[0]!.buttons.map((b) => b.action),
+    ["restart", "stop"],
+  );
+  assert.deepEqual(
+    group.controls.map((c) => c.action),
+    ["startAll", "stopAll", "restartAll"],
+  );
+});
+
+test("buildServicesSection: the flat fallback reads + applies the pane-scope Auto mode", () => {
+  const list: ServiceList = {
+    available: true,
+    services: [{ name: "api", status: "running" }],
+    auto: { [SERVICES_PANE_SCOPE]: true },
+  };
+  const section = buildServicesSection(list);
+  assert.equal(section.grouped, false);
+  assert.equal(section.auto, true);
+  // Flat rows + controls drop Stop / Stop all in Auto.
+  assert.deepEqual(
+    section.rows[0]!.buttons.map((b) => b.action),
+    ["restart"],
+  );
+  assert.deepEqual(
+    section.controls.map((c) => c.action),
+    ["startAll", "restartAll"],
   );
 });

@@ -14,12 +14,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { JSDOM } from "jsdom";
-import type {
-  ServiceRow,
-  ServicesBulkAction,
-  ServicesControl,
-  ServicesRepoGroup,
-  ServicesSection,
+import {
+  SERVICES_PANE_SCOPE,
+  type ServiceRow,
+  type ServicesBulkAction,
+  type ServicesControl,
+  type ServicesRepoGroup,
+  type ServicesSection,
 } from "../services-state.js";
 import type { ServiceActionRequest } from "../ipc.js";
 
@@ -35,6 +36,7 @@ const calls = {
   servicesBulk: [] as { action: ServicesBulkAction; project?: string }[],
   serviceLogs: [] as string[],
   copyText: [] as string[],
+  servicesSetAuto: [] as { scope: string; enabled: boolean }[],
 };
 (win as unknown as { perch: unknown }).perch = {
   serviceAction: (request: ServiceActionRequest) => calls.serviceAction.push(request),
@@ -42,6 +44,12 @@ const calls = {
     calls.servicesBulk.push({ action, project }),
   serviceLogs: (name: string) => calls.serviceLogs.push(name),
   copyText: (text: string) => calls.copyText.push(text),
+  // Never resolves: the toggle's optimistic pending state persists so the test
+  // can observe the flipped pill (it settles when the next poll's section arrives).
+  servicesSetAuto: (request: { scope: string; enabled: boolean }) => {
+    calls.servicesSetAuto.push(request);
+    return new Promise<void>(() => {});
+  },
 };
 
 // Imported after the DOM + bridge globals are in place (react-dom reads them at
@@ -76,7 +84,7 @@ const BULK_CONTROLS: ServicesControl[] = [
 
 /** A repo group with the given project label and rows (none → an empty group). */
 function group(project: string, ...rows: ServiceRow[]): ServicesRepoGroup {
-  return { project, rows, controls: [] };
+  return { project, rows, controls: [], auto: false };
 }
 
 /** A repo group carrying the full bulk-control trio (a server-up named repo). */
@@ -85,16 +93,16 @@ function groupWithControls(
   rows: ServiceRow[],
   bulkActing?: ServicesBulkAction,
 ): ServicesRepoGroup {
-  return { project, rows, controls: BULK_CONTROLS, bulkActing };
+  return { project, rows, controls: BULK_CONTROLS, bulkActing, auto: false };
 }
 
-/** A section literal that may omit the grouping fields (defaulted to the flat case). */
-type SectionInput = Omit<ServicesSection, "grouped" | "repoGroups"> &
-  Partial<Pick<ServicesSection, "grouped" | "repoGroups">>;
+/** A section literal that may omit the grouping/auto fields (defaulted to the flat case). */
+type SectionInput = Omit<ServicesSection, "grouped" | "repoGroups" | "auto"> &
+  Partial<Pick<ServicesSection, "grouped" | "repoGroups" | "auto">>;
 
 /** Fill the grouping defaults so flat-case tests can pass plain literals. */
 function asSection(input: SectionInput): ServicesSection {
-  return { grouped: false, repoGroups: [], ...input };
+  return { grouped: false, repoGroups: [], auto: false, ...input };
 }
 
 /**
@@ -458,4 +466,55 @@ test("a hidden section renders nothing", () => {
   const c = render({ visible: false, rows: [], controls: [] });
   assert.equal(c.querySelector(".services-section"), null);
   assert.equal(c.textContent, "");
+});
+
+// ── Auto/Manual toggle pill ──
+
+test("each repo group header renders an Auto/Manual pill reflecting its mode", () => {
+  const c = render({
+    visible: true,
+    rows: [],
+    controls: [],
+    grouped: true,
+    repoGroups: [
+      { ...group("ashby", runningRow("api")), auto: true },
+      group("web", runningRow("ui")),
+    ],
+  });
+  const pills = [...c.querySelectorAll(".auto-mode-pill")] as HTMLButtonElement[];
+  assert.equal(pills.length, 2);
+  // Auto group reads "Auto" + lit; Manual group reads "Manual".
+  assert.equal(pills[0]!.querySelector(".auto-mode-pill-label")!.textContent, "Auto");
+  assert.ok(pills[0]!.classList.contains("on"));
+  assert.equal(pills[1]!.querySelector(".auto-mode-pill-label")!.textContent, "Manual");
+  assert.ok(!pills[1]!.classList.contains("on"));
+});
+
+test("clicking a group's Manual pill writes Auto and flips optimistically", () => {
+  const c = render({
+    visible: true,
+    rows: [],
+    controls: [],
+    grouped: true,
+    repoGroups: [group("ashby", runningRow("api"))],
+  });
+  const pill = c.querySelector(".auto-mode-pill") as HTMLButtonElement;
+  assert.equal(pill.querySelector(".auto-mode-pill-label")!.textContent, "Manual");
+  // flushSync so the optimistic setState lands before we read the DOM back.
+  flushSync(() => click(pill));
+  // The write targets the repo scope with the new mode…
+  assert.deepEqual(calls.servicesSetAuto.at(-1), { scope: "ashby", enabled: true });
+  // …and the pill flips to Auto and disables while the write is in flight.
+  const flipped = c.querySelector(".auto-mode-pill") as HTMLButtonElement;
+  assert.equal(flipped.querySelector(".auto-mode-pill-label")!.textContent, "Auto");
+  assert.equal(flipped.disabled, true);
+  assert.ok(flipped.querySelector(".fa-circle-notch"));
+});
+
+test("the flat fallback renders a pane-scoped Auto/Manual pill in its header", () => {
+  const c = render({ visible: true, rows: [runningRow("api")], controls: [] }, true);
+  const pill = c.querySelector(".services-header .auto-mode-pill") as HTMLButtonElement;
+  assert.ok(pill);
+  click(pill);
+  assert.deepEqual(calls.servicesSetAuto.at(-1), { scope: SERVICES_PANE_SCOPE, enabled: true });
 });

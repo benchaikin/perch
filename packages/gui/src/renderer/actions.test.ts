@@ -39,6 +39,7 @@ const CASES: Array<[keyof PerchActions, unknown, boolean]> = [
   ["serviceAction", { name: "svc", action: "start" }, false],
   ["servicesBulk", "startAll", false],
   ["serviceLogs", "svc", false],
+  ["servicesSetAuto", { scope: "repo-a", enabled: true }, true],
   ["copyText", "some text", false],
   ["setActiveTab", "tab-id", false],
   ["setDexViewMode", "graph", false],

@@ -747,8 +747,9 @@ body {
 
 /* Auto/Manual toggle: a captioned, bordered pill (icon + "Auto"/"Manual") so the
    repo's self-driving mode is legible at a glance. Drops .icon-btn's
-   margin-left:auto so the pill hugs the repo label it sits beside. */
-.dex-auto-spawn {
+   margin-left:auto so the pill hugs the repo label it sits beside. Shared by the
+   Dex auto-spawn toggle and the Services auto-mode toggle. */
+.auto-mode-pill {
   margin-left: 0;
   flex: 0 0 auto;
   display: inline-flex;
@@ -759,17 +760,17 @@ body {
   padding: 2px 8px;
   font-size: 11px;
 }
-.dex-auto-spawn-label {
+.auto-mode-pill-label {
   line-height: 1;
 }
 /* When Auto is on the pill reads accent-lit (text + border) so the self-driving
    repos stand out from the muted resting controls; Manual keeps the default muted
    tone. The lit color survives hover (which would otherwise pull it to --fg). */
-.dex-auto-spawn.on {
+.auto-mode-pill.on {
   color: var(--accent);
   border-color: var(--accent);
 }
-.dex-auto-spawn.on:hover {
+.auto-mode-pill.on:hover {
   color: var(--accent);
 }
 

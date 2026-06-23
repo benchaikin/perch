@@ -52,6 +52,7 @@ import {
   type OpenAgentRequest,
   type ResolveConflictsRequest,
   type ServiceActionRequest,
+  type ServicesAutoRequest,
   type WorktreeRemoveRequest,
 } from "./ipc.js";
 import { addProc, procsFromConfig, removeProc, type Proc } from "./procs.js";
@@ -670,6 +671,41 @@ async function serviceLogs(name: string): Promise<void> {
     }
   } catch (err) {
     showNotice({ tone: "bad", text: `Open logs for ${name} failed: ${errorMessage(err)}` });
+  }
+}
+
+/** Re-invoke `services.list` so the section reflects a just-changed Auto mode immediately. */
+async function refreshServicesList(): Promise<void> {
+  if (!client) return;
+  try {
+    buildInput.servicesList = (await client.invoke({ id: SERVICES_LIST_ID })) as ServiceList;
+  } catch {
+    // Best-effort: the subscription's next poll will reconcile the list anyway.
+  }
+}
+
+/**
+ * Set a repo's Services Auto/Manual mode by persisting
+ * `plugins.services.auto[<scope>]` via `config.update` (deep-merged, so other
+ * repos' modes are untouched), then re-read the service list so the header
+ * toggle reflects the persisted mode immediately. The Services analog of
+ * {@link setDexAutoSpawn}: awaited by the renderer (via `ipcMain.handle`) so the
+ * toggle clears its in-flight state when the write finishes; only a failure toasts.
+ */
+async function setServicesAuto(request: ServicesAutoRequest): Promise<void> {
+  if (!client) return;
+  try {
+    await client.configUpdate({
+      patch: { plugins: { services: { auto: { [request.scope]: request.enabled } } } },
+    });
+    await refreshServicesList();
+  } catch (err) {
+    showNotice({
+      tone: "bad",
+      text: `Set auto for ${request.scope} failed: ${errorMessage(err)}`,
+    });
+  } finally {
+    pushState();
   }
 }
 
@@ -1704,6 +1740,9 @@ function registerIpc(): void {
     (_event, action: ServicesBulkAction, project?: string) => void servicesBulk(action, project),
   );
   ipcMain.on(Channels.serviceLogs, (_event, name: string) => void serviceLogs(name));
+  ipcMain.handle(Channels.servicesSetAuto, (_event, request: ServicesAutoRequest) =>
+    setServicesAuto(request),
+  );
   ipcMain.on(Channels.worktreeOpen, (_event, path: string) => void openWorktree(path));
   ipcMain.handle(Channels.worktreeRemove, (_event, request: WorktreeRemoveRequest) =>
     removeWorktree(request),
