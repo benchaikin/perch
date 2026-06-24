@@ -68,6 +68,17 @@ export const ServiceList = z.object({
    * configured Auto (the default).
    */
   auto: z.record(z.string(), z.boolean()).optional(),
+  /**
+   * Names of services the Auto reconcile just commanded (start/restart) on this
+   * poll, so the GUI can show those rows in-flight (the per-row spinner) the
+   * instant Auto is applied — closing the dead window between "Auto on" and the
+   * next poll surfacing the status change. The returned statuses are still
+   * pre-reconcile, so without this the rows would look untouched for a poll
+   * cycle. Bounded: a service still being commanded on the *next* pass (a crash
+   * loop) is NOT re-listed, so its real status (crashed) shows through rather
+   * than pinning a permanent spinner. Absent/empty when nothing was commanded.
+   */
+  reconciling: z.array(z.string()).optional(),
 });
 export type ServiceList = z.infer<typeof ServiceList>;
 

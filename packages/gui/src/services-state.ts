@@ -46,6 +46,15 @@ export interface ServiceList {
    * each repo group's toggle state. Absent when no repo is configured Auto.
    */
   auto?: Record<string, boolean>;
+  /**
+   * Names of services the daemon's Auto reconcile just commanded (start/restart)
+   * on this poll. The GUI folds these into the in-flight set so the rows show the
+   * per-row spinner the instant Auto is applied — the returned statuses are still
+   * pre-reconcile, so without this the rows would look untouched until the next
+   * poll. The daemon stops re-listing a row once it's no longer freshly commanded,
+   * so a crash loop settles back to its real status instead of spinning forever.
+   */
+  reconciling?: string[];
 }
 
 /** A rendered service row's marker health → CSS dot color. */
@@ -384,7 +393,10 @@ export function buildServicesSection(
   if (!list || list.services.length === 0) {
     return { visible: false, rows: [], controls: [], grouped: false, repoGroups: [], auto: false };
   }
-  const inFlight = new Set(acting);
+  // Fold the daemon's just-commanded (Auto reconcile) services into the in-flight
+  // set alongside the GUI's own click-driven `acting`, so an Auto flip lights up
+  // the affected rows immediately rather than after the next poll.
+  const inFlight = new Set([...acting, ...(list.reconciling ?? [])]);
   const rows = list.services.map((svc) => toServiceRow(svc, inFlight));
   const repos = configuredRepos(list);
   const auto = list.auto ?? {};
