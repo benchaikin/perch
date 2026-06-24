@@ -38,6 +38,17 @@ export interface Alert {
 export type RaiseInput = Omit<Alert, "id">;
 
 /**
+ * The narrow write surface the scheduler needs to apply a read's `alerts`-hook
+ * output: raise (or re-raise) and clear an alert by id. {@link AlertStore}
+ * implements it; the scheduler depends only on this so it stays decoupled from
+ * the dismiss-list machinery (and tests can pass a fake).
+ */
+export interface AlertSink {
+  raise(id: string, input: RaiseInput): Alert;
+  clear(id: string): boolean;
+}
+
+/**
  * Durable backing for the dismiss list. Implementations persist the full set of
  * dismissed ids; the store treats it as the source of truth on boot and rewrites
  * it on every dismissal.
@@ -61,7 +72,7 @@ export interface AlertStoreOptions {
  * Construct via {@link createAlertStore} so the saved dismiss list is loaded
  * before first use; the constructor takes the already-loaded state directly.
  */
-export class AlertStore {
+export class AlertStore implements AlertSink {
   readonly #alerts = new Map<string, Alert>();
   readonly #dismissed: Set<string>;
   readonly #dismissals: DismissalStore;

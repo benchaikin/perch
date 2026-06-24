@@ -23,6 +23,7 @@
 import { action, definePlugin, gitConfigOf, read, z } from "@perch/sdk";
 
 import { AttributionProvider, type Exec } from "./provider.js";
+import { agentAlerts } from "./alerts.js";
 import { agentNotifications } from "./notify.js";
 import {
   AgentFleet,
@@ -39,6 +40,8 @@ export type { AgentEvent, AgentStore } from "./state.js";
 export { AttributionProvider } from "./provider.js";
 export type { Attribution, Exec } from "./provider.js";
 export { agentNotifications } from "./notify.js";
+export { agentAlerts, blockedAlertId, AGENTS_PLUGIN_ID } from "./alerts.js";
+export type { BlockedAgentAlert } from "./alerts.js";
 
 /**
  * The fleet store — a module-level `Map<sessionId, AgentSession>` that persists
@@ -163,6 +166,10 @@ export default definePlugin({
       },
       // Announce a session newly blocked (needs input) or newly ended (done).
       notify: ({ prev, next }) => agentNotifications(prev, next),
+      // Raise a durable dashboard alert while a session is blocked awaiting
+      // input; clear it when the session resumes or ends. The one-shot `notify`
+      // above is the banner; this is the standing card.
+      alerts: ({ prev, next }) => agentAlerts(prev, next),
     }),
   },
 });

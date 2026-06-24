@@ -1,12 +1,28 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { definePlugin, read, z, type Capability, type Notification } from "@perch/sdk";
+import { definePlugin, read, z, type AlertOp, type Capability, type Notification } from "@perch/sdk";
+import type { Alert, AlertSink, RaiseInput } from "./alerts.js";
 import { Cache } from "./cache.js";
 import { createEventBus } from "./event-bus.js";
 import type { InvokerDeps } from "./invoker.js";
 import { NotificationService, type DeliveredNotification } from "./notifications.js";
 import { Registry, type RegisteredCapability } from "./registry.js";
 import { Scheduler } from "./scheduler.js";
+
+/** A recording {@link AlertSink} for asserting a read's `alerts`-hook output. */
+class FakeAlertSink implements AlertSink {
+  readonly raises: Alert[] = [];
+  readonly cleared: string[] = [];
+  raise(id: string, input: RaiseInput): Alert {
+    const alert: Alert = { id, ...input };
+    this.raises.push(alert);
+    return alert;
+  }
+  clear(id: string): boolean {
+    this.cleared.push(id);
+    return true;
+  }
+}
 
 const asCap = (c: unknown): Capability => c as Capability;
 
@@ -422,5 +438,75 @@ test("a read without idleEvery keeps one interval regardless of subscribers", ()
   scheduler.unsubscribe(entry.id, key);
   assert.equal(scheduler.pollerIntervalMs(entry.id, key), 60_000);
 
+  scheduler.stop();
+});
+
+test("scheduler applies a read's alerts-hook output to the alert sink (raise then clear)", async () => {
+  // `run` toggles a flag; `alerts` raises while it's on, clears when it goes off.
+  // A long interval means only the explicit `poke`s below drive polls (no timer
+  // race), so each poke maps to exactly one hook run.
+  let on = true;
+  const plugin = definePlugin({
+    id: "demo",
+    capabilities: {
+      cond: asCap(
+        read({
+          summary: "a toggling condition",
+          output: z.object({ on: z.boolean() }),
+          refresh: { every: "1h" },
+          run: () => ({ on }),
+          alerts: ({ next }): AlertOp[] =>
+            next.on
+              ? [{ op: "raise", id: "demo:cond", payload: { v: 1 } }]
+              : [{ op: "clear", id: "demo:cond" }],
+        }),
+      ),
+    },
+  });
+
+  const { registry, deps } = harness(plugin);
+  const sink = new FakeAlertSink();
+  const scheduler = new Scheduler(deps, createEventBus(), undefined, sink);
+  const entry = registry.get("demo.cond") as RegisteredCapability;
+  scheduler.armPersistent(entry, undefined);
+
+  scheduler.poke("demo.cond");
+  await waitFor(() => sink.raises.length >= 1);
+  assert.equal(sink.raises.length, 1);
+  assert.equal(sink.raises[0]!.id, "demo:cond");
+  // The daemon stamps the raising plugin id + raisedAt server-side.
+  assert.equal(sink.raises[0]!.pluginId, "demo");
+  assert.equal(typeof sink.raises[0]!.raisedAt, "number");
+  assert.deepEqual(sink.raises[0]!.payload, { v: 1 });
+
+  on = false;
+  scheduler.poke("demo.cond");
+  await waitFor(() => sink.cleared.length >= 1);
+  assert.deepEqual(sink.cleared, ["demo:cond"]);
+
+  scheduler.stop();
+});
+
+test("armNotifyReads arms a persistent poller for an alert-only read (no notify hook)", () => {
+  const plugin = definePlugin({
+    id: "demo",
+    capabilities: {
+      alerting: asCap(
+        read({
+          summary: "alerts but no notify",
+          output: z.object({ n: z.number() }),
+          refresh: { every: "1h" },
+          run: () => ({ n: 1 }),
+          alerts: () => [],
+        }),
+      ),
+    },
+  });
+
+  const { registry, deps } = harness(plugin);
+  const scheduler = new Scheduler(deps, createEventBus(), undefined, new FakeAlertSink());
+  const armed = scheduler.armNotifyReads(registry.all());
+  assert.equal(armed, 1);
+  assert.equal(scheduler.hasPersistentPoller("demo.alerting", "null"), true);
   scheduler.stop();
 });

@@ -65,6 +65,19 @@ export interface Notification {
   openUrl?: string;
 }
 
+/**
+ * A durable-alert operation a read's {@link ReadDef.alerts} hook emits after a
+ * poll: raise (or re-raise) an alert by its stable id, or clear one. Distinct
+ * from a {@link Notification} (a one-shot banner): an alert is a standing
+ * condition the daemon's alert store holds until it clears or the user dismisses
+ * it. The daemon stamps the raising plugin id and `raisedAt` itself, so the hook
+ * supplies only the id and — for a raise — an opaque `payload` the frontend's
+ * registered AlertWidget renders.
+ */
+export type AlertOp =
+  | { op: "raise"; id: string; payload?: unknown }
+  | { op: "clear"; id: string };
+
 /** Runtime services handed to a capability's `run`. Expanded in M1/M2. */
 export interface CapabilityContext<Cfg = unknown> {
   config: Cfg;
@@ -106,6 +119,27 @@ export type ReadDef<I, O, Cfg> = {
     next: O;
     ctx: CapabilityContext<Cfg>;
   }) => Notification[] | Promise<Notification[]>;
+  /**
+   * Optional durable-alert hook — the alert counterpart of {@link notify}. After
+   * each successful poll the daemon calls `alerts` with the previous cached
+   * output (`prev`) and the fresh output (`next`) and applies the returned
+   * {@link AlertOp}s to its alert store (raise/clear by id).
+   *
+   * Unlike `notify`, alerts are *durable conditions*: a raise stays visible until
+   * the condition clears or the user dismisses it. So — also unlike `notify`, which
+   * returns `[]` on the first poll to avoid spam — a condition already present on
+   * the first poll (`prev` undefined) SHOULD be raised, not suppressed, so a
+   * restart with the condition still true re-surfaces it. Raising is idempotent
+   * (re-raising the same id refreshes it in place), so emit a raise only when a
+   * condition is newly true (or its payload changed) to avoid churning the alert's
+   * `raisedAt`. May be sync or async; a throw/rejection is caught by the daemon
+   * and never breaks polling.
+   */
+  alerts?: (args: {
+    prev: O | undefined;
+    next: O;
+    ctx: CapabilityContext<Cfg>;
+  }) => AlertOp[] | Promise<AlertOp[]>;
 };
 
 export type ActionDef<I, Cfg, R = void> = {

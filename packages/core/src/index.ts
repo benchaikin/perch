@@ -70,7 +70,7 @@ export type { EventBus, CapabilityUpdate } from "./event-bus.js";
 export { Scheduler } from "./scheduler.js";
 export { RpcServer } from "./server.js";
 export { AlertStore, createAlertStore, configDismissalStore } from "./alerts.js";
-export type { Alert, RaiseInput, DismissalStore, AlertStoreOptions } from "./alerts.js";
+export type { Alert, RaiseInput, AlertSink, DismissalStore, AlertStoreOptions } from "./alerts.js";
 export { NotificationService } from "./notifications.js";
 export type {
   Notification,
@@ -239,7 +239,6 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Run
   // built) fans surviving notifications out to subscribed clients.
   const notificationsEnabled = options.notifications ?? true;
   const notifications = notificationsEnabled ? new NotificationService() : undefined;
-  const scheduler = new Scheduler(invoker, bus, notifications);
 
   // The config path the `config.*` RPC methods read/mutate and the watcher
   // watches — one path, so an RPC write flows back through the normal reload.
@@ -251,6 +250,11 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Run
   const alerts = await createAlertStore({
     dismissals: configDismissalStore(reloadConfigPath),
   });
+
+  // The scheduler applies each read's `alerts`-hook output to the same store the
+  // RPC server reads, so a plugin's raise/clear and a client's list/dismiss share
+  // one set of active alerts.
+  const scheduler = new Scheduler(invoker, bus, notifications, alerts);
 
   const server = new RpcServer({
     registry,

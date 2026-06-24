@@ -1436,3 +1436,52 @@ body {
   opacity: 0.4;
   cursor: default;
 }
+
+/* The agents plugin's AlertWidget (a blocked-agent dashboard card): a stacked
+   header / meta / message / actions layout. The dashboard's alert region owns the
+   outer card chrome; this only lays out the agents-specific content. Reuses the
+   shared .chip / .btn primitives — only the layout + the warn-toned header icon
+   are new. */
+.agents-alert {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.agents-alert-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agents-alert-icon {
+  color: var(--warn);
+}
+
+.agents-alert-title {
+  font-weight: 600;
+}
+
+.agents-alert-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.agents-alert-task {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.agents-alert-message {
+  margin: 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.agents-alert-actions {
+  display: flex;
+  gap: 6px;
+}

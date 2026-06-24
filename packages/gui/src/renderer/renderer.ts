@@ -16,5 +16,9 @@ import { createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { byId } from "./common.js";
 import { App } from "./panel.js";
+// Side-effect import: registers each plugin's AlertWidget into the shared
+// `alertWidgets` registry at load, so the dashboard can resolve an alert's
+// `pluginId` → widget. One line per plugin that raises alerts.
+import "./agents-alert-widget.js";
 
 createRoot(byId("panel")).render(createElement(App));
