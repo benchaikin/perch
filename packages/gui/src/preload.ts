@@ -89,6 +89,12 @@ const bridge: PerchBridge = {
   dexNew(request) {
     return ipcRenderer.invoke(Channels.dexNew, request);
   },
+  alertsList() {
+    return ipcRenderer.invoke(Channels.alertsList);
+  },
+  alertsDismiss(id) {
+    return ipcRenderer.invoke(Channels.alertsDismiss, id);
+  },
 };
 
 contextBridge.exposeInMainWorld("perch", bridge);

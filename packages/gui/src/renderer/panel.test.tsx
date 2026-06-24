@@ -99,10 +99,14 @@ test("the active tab falls back to the first tab when the saved id is gone", () 
   const { container } = render(<App />);
   emit(state);
 
+  // PRs + the always-present Dashboard tab; the saved (now-gone) id falls back to
+  // the first tab, PRs.
   const tabs = tabButtons(container);
-  assert.equal(tabs.length, 1);
+  assert.equal(tabs.length, 2);
   assert.ok(tabs[0]!.classList.contains("tab-active"));
   assert.equal(tabs[0]!.getAttribute("aria-label"), "PRs");
+  assert.ok(!tabs[1]!.classList.contains("tab-active"));
+  assert.equal(tabs[1]!.getAttribute("aria-label"), "Dashboard");
 });
 
 test("refresh spins the icon until the next state push clears it", () => {

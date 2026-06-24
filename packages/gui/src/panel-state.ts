@@ -243,6 +243,13 @@ export interface PanelTab {
 export const STACK_TAB_ID = STACK_PRS_ID;
 /** Tab id for the "Services" view (the services plugin's tab). */
 export const SERVICES_TAB_ID = "services.list";
+/**
+ * Tab id for the "Dashboard" view — the alerts host. Not a plugin capability id
+ * (alerts span every plugin), so it carries its own constant. Always visible: the
+ * pane owns its own `alerts.list` poll and shows a clean empty state when none are
+ * raised, so the tab is a stable home for them rather than appearing only on alert.
+ */
+export const DASHBOARD_TAB_ID = "dashboard";
 
 /** The complete state the renderer needs to draw the panel. */
 export interface PanelState {
@@ -658,6 +665,16 @@ const TAB_SPECS: readonly TabSpec[] = [
       count: worktrees.counts.total,
       tone: worstWorktreeHealth(worktrees),
     }),
+  },
+  {
+    id: DASHBOARD_TAB_ID,
+    label: "Dashboard",
+    icon: "bell",
+    // Always available — it's the home for plugin alerts, which the pane polls
+    // for itself. No badge: alerts never reach the pushed PanelState (the pane
+    // owns its own poll), so there's no count here to glance at.
+    visible: () => true,
+    badge: () => undefined,
   },
 ];
 

@@ -18,24 +18,15 @@
  * from the same instance. Tests construct their own {@link AlertWidgetRegistry}
  * so registrations don't leak across suites.
  */
+import type { Alert } from "../ipc.js";
 
 /**
- * A plugin-raised alert as it reaches the renderer — the wire shape of core's
- * `Alert`. Duplicated here (rather than importing `@perch/core`) because the
- * renderer is a thin browser client that only knows the daemon's wire shapes,
- * not its node internals. `payload` stays `unknown`: it is opaque to the
- * dashboard and read only by the raising plugin's {@link AlertWidget}.
+ * The wire shape of a plugin-raised {@link Alert} lives in the shared IPC
+ * contract (`ipc.ts`) — the renderer, preload, and main all speak it. Re-exported
+ * here so widget authors import `Alert` alongside {@link AlertWidget} from one
+ * place.
  */
-export interface Alert {
-  /** Stable, caller-chosen id (e.g. `services:perch:api-server:crashed`). */
-  id: string;
-  /** The plugin that raised the alert; the key its widget is registered under. */
-  pluginId: string;
-  /** Wall-clock time the alert was (re-)raised (ms since epoch). */
-  raisedAt: number;
-  /** Opaque, plugin-defined detail — only the plugin's own widget reads it. */
-  payload: unknown;
-}
+export type { Alert };
 
 /** What every {@link AlertWidget} receives from the dashboard. */
 export interface AlertWidgetProps {

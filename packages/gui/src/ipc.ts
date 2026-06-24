@@ -7,6 +7,25 @@ import type { PanelState } from "./panel-state.js";
 import type { ServiceAction, ServicesBulkAction } from "./services-state.js";
 import type { DexViewMode, DialogSize } from "./window-state.js";
 
+/**
+ * A plugin-raised alert as it crosses the bridge — the wire shape of core's
+ * `Alert` (see `@perch/core`'s `alerts.ts`). Duplicated here rather than imported
+ * from `@perch/core` because this contract is the only thing the renderer (a thin
+ * browser client) knows; it never reaches into the daemon's node internals.
+ * `payload` stays `unknown`: it is opaque to the dashboard and read only by the
+ * raising plugin's renderer-side `AlertWidget`.
+ */
+export interface Alert {
+  /** Stable, caller-chosen id (e.g. `services:perch:api-server:crashed`). */
+  id: string;
+  /** The plugin that raised the alert; the key its widget is registered under. */
+  pluginId: string;
+  /** Wall-clock time the alert was (re-)raised (ms since epoch). */
+  raisedAt: number;
+  /** Opaque, plugin-defined detail — only the plugin's own widget reads it. */
+  payload: unknown;
+}
+
 /** Renderer → main payload for a service lifecycle action (M2). */
 export interface ServiceActionRequest {
   /** The process name to act on. */
@@ -187,6 +206,20 @@ export const Channels = {
    * so the composer can clear its in-flight state; the outcome is toasted from main.
    */
   dexNew: "perch:dex-new",
+  /**
+   * Renderer → main `invoke`: fetch the active (non-dismissed) alerts, newest
+   * first (payload: none). Main forwards to the daemon's `alerts.list`. The
+   * Dashboard pane polls this on an interval rather than riding {@link
+   * Channels.stateFromMain}, so a plugin-opaque alert payload never has to pass
+   * through the main-process {@link PanelState} builder.
+   */
+  alertsList: "perch:alerts-list",
+  /**
+   * Renderer → main `invoke`: dismiss an alert by id (payload: the id). Main
+   * forwards to the daemon's `alerts.dismiss`, which drops it from the store and
+   * persists the id so it stays dismissed across restarts.
+   */
+  alertsDismiss: "perch:alerts-dismiss",
 } as const;
 
 /**
@@ -470,6 +503,18 @@ export interface PerchBridge {
    * authored asynchronously and appears on the next board refresh.
    */
   dexNew(request: DexNewRequest): Promise<void>;
+  /**
+   * Fetch the active (non-dismissed) alerts, newest first. The Dashboard pane
+   * polls this on an interval and routes each alert to its plugin's registered
+   * widget; resolves with `[]` when the daemon is down.
+   */
+  alertsList(): Promise<Alert[]>;
+  /**
+   * Dismiss an alert by id — the daemon drops it from the store and persists the
+   * id so it stays dismissed across restarts. Resolves when the dismissal
+   * finishes (or fails), so the caller can reconcile on its next poll.
+   */
+  alertsDismiss(id: string): Promise<void>;
 }
 
 declare global {
