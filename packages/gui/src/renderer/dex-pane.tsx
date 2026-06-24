@@ -37,7 +37,8 @@ import {
   type DexSection,
   type DexStatus,
 } from "../dex-state.js";
-import type { LandableState } from "../landable.js";
+import type { LandableState, LandablePr } from "../landable.js";
+import { Chip } from "./components.js";
 import type { AgentState, AgentSummary } from "../agents-state.js";
 import { isIncompleteSubtaskError } from "../ipc.js";
 import type { DexCompleteRequest, DexEditRequest } from "../ipc.js";
@@ -494,23 +495,47 @@ const LANDABLE_FALLBACK = { tone: "muted", icon: "code-pull-request" } as const;
 
 /**
  * The "landable" chip for a task row from its PR's merge-readiness state, or null
- * for `none` (nothing to land). Non-interactive — glanceable only; clicking the
- * row still opens the task detail.
+ * for `none` (nothing to land). When the matched PR (`pr`) is known, it renders as
+ * an actionable `#<number>` button (the shared {@link Chip} href variant) that
+ * opens the PR on GitHub and stops the click from also opening the task detail;
+ * the warn tone + state-shaped icon are kept. Without a matched PR it falls back
+ * to the passive glanceable chip (icon-only or labeled by state).
  */
-function LandableChip({ state }: { state: LandableState }): JSX.Element | null {
+function LandableChip({
+  state,
+  pr,
+}: {
+  state: LandableState;
+  pr?: LandablePr;
+}): JSX.Element | null {
   if (state === "none") return null;
   const spec = LANDABLE_CHIP[state];
   const tone = spec?.tone ?? LANDABLE_FALLBACK.tone;
+  const icon = spec?.icon ?? LANDABLE_FALLBACK.icon;
+  const hint = spec?.hint ?? `Landable: ${state}`;
+  if (pr) {
+    // The PR number is the label now; `dex-landable` rides along in `tone` (the
+    // Chip has no className prop) so the dex row's icon/label alignment is kept.
+    return (
+      <Chip
+        label={`#${pr.number}`}
+        tone={`${tone} dex-landable`}
+        hint={hint}
+        icon={icon}
+        spin={spec?.spin}
+        href={pr.url}
+        actionLabel={`Open PR #${pr.number}`}
+      />
+    );
+  }
   const label = spec?.label ?? state;
   return (
     <span
       className={`chip ${tone} dex-landable`}
-      title={spec?.hint ?? `Landable: ${state}`}
+      title={hint}
       aria-label={spec?.iconOnly ? label : undefined}
     >
-      <i
-        className={`fa-solid fa-${spec?.icon ?? LANDABLE_FALLBACK.icon}${spec?.spin ? " fa-spin" : ""}`}
-      />
+      <i className={`fa-solid fa-${icon}${spec?.spin ? " fa-spin" : ""}`} />
       {spec?.iconOnly ? null : ` ${label}`}
     </span>
   );
@@ -1424,7 +1449,7 @@ function DexRowBody({ row }: { row: DexRow }): JSX.Element {
       <DexIdChip id={row.id} open={open} />
 
       {row.blockedByCount > 0 && <DexBlockedChip count={row.blockedByCount} />}
-      {row.landable && <LandableChip state={row.landable} />}
+      {row.landable && <LandableChip state={row.landable} pr={row.pr} />}
       {row.agent && <AgentMarker agent={row.agent} />}
     </>
   );
@@ -1879,7 +1904,7 @@ function DexMeta({ row }: { row: DexRow }): JSX.Element {
       <span className={`chip ${row.health}`}>{DEX_STATUS_LABEL[row.status]}</span>
       {row.project && <span className="chip muted">{row.project}</span>}
       {row.blockedByCount > 0 && <DexBlockedChip count={row.blockedByCount} />}
-      {row.landable && <LandableChip state={row.landable} />}
+      {row.landable && <LandableChip state={row.landable} pr={row.pr} />}
       {row.agent && <AgentMarker agent={row.agent} />}
     </div>
   );

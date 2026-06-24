@@ -349,6 +349,25 @@ test("buildDexSection threads the landable state onto rows (and only those)", ()
   );
 });
 
+test("buildDexSection threads the matched PR ref onto rows (and only those)", () => {
+  const section = buildDexSection(
+    board(task({ id: "t1", status: "in-progress" }), task({ id: "t2", status: "in-progress" })),
+    true,
+    undefined,
+    new Map([["t1", "needs-review" as const]]),
+    undefined,
+    new Map([["t1", { number: 123, url: "https://gh.test/pr/123" }]]),
+  );
+  // The matched task carries its PR ref; an unmatched one is bare.
+  assert.deepEqual(section.rows[0]!.pr, { number: 123, url: "https://gh.test/pr/123" });
+  assert.equal(section.rows[1]!.pr, undefined);
+  // An omitted PR map leaves every row bare.
+  assert.equal(
+    buildDexSection(board(task({ id: "x", status: "ready" })), true).rows[0]!.pr,
+    undefined,
+  );
+});
+
 test("buildDexSection threads the live agent onto rows (and only those)", () => {
   const agent = {
     sessionId: "s1",
