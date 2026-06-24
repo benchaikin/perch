@@ -43,6 +43,12 @@ export const configSchema = z.object({
    * to core; handed to every capability as `ctx.global` for plugins that opt in.
    */
   global: z.record(z.string(), z.unknown()).optional(),
+  /**
+   * Alert ids the user has dismissed. Persisted here (rather than in volatile
+   * daemon memory) so an ignored alert stays ignored across restarts; the alert
+   * store loads this on boot and consults it when listing (see `./alerts.ts`).
+   */
+  dismissedAlerts: z.array(z.string()).optional(),
   /** Reserved GUI widget layout; passed through untouched in v1. */
   layout: z.unknown().optional(),
 });
