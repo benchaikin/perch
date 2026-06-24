@@ -1204,20 +1204,22 @@ body {
 .services-repo-group:first-of-type .services-repo-header {
   margin-top: 0;
 }
-/* The per-repo bulk-control cluster hugs the trailing edge, beside the toggle. */
+/* The per-repo bulk-control cluster hugs the trailing edge; margin-left: auto
+   pushes it there now that the header button no longer grows. */
 .services-repo-actions {
   flex: 0 0 auto;
+  margin-left: auto;
 }
 /* Collapsible repo header button (adapted from .pr-repo-header-btn): a clickable
    chevron + repo name + service-count chip that toggles the group's rows, so the
-   Services pane's repo sections read like the PRs/Dex/Worktrees ones. Grows to
-   push the trailing controls to the edge. */
+   Services pane's repo sections read like the PRs/Dex/Worktrees ones. Hugs its
+   content so the Auto/Manual toggle sits left beside the name. */
 .services-repo-header-btn {
   appearance: none;
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   padding: 3px 2px;
   border: none;
