@@ -13,7 +13,7 @@
  */
 
 import type { LinkedWorktree } from "./worktree-task-link.js";
-import type { LandableState } from "./landable.js";
+import type { LandableState, LandablePr } from "./landable.js";
 import type { AgentSummary } from "./agents-state.js";
 
 /** Canonical capability id of the dex task board read the section renders. */
@@ -111,6 +111,15 @@ export interface DexRow {
    * landable state added upstream renders rather than crashes.
    */
   landable?: LandableState;
+  /**
+   * The matched PR's `{ number, url }`, joined in by `buildPanelState` from
+   * `deriveLandablePrByTaskId` alongside {@link landable} (same branch→PR join,
+   * so the two are populated together). Lets the renderer turn the landable chip
+   * into an actionable `#<number>` button that opens the PR. Absent for rows with
+   * no matched PR — render defensively (never assume it exists just because
+   * {@link landable} is set).
+   */
+  pr?: LandablePr;
   /**
    * The live Claude Code session (agent) working this task, when one matches —
    * joined in by `buildPanelState` from `deriveAgentByTaskId`. Absent when no
@@ -288,9 +297,10 @@ export function worstDexHealth(section: DexSection): DexHealth {
  * your tasks doesn't make the tab vanish; only an uninstalled plugin hides the
  * section. `worktreeByTaskId` (from `linkWorktreesAndTasks`) annotates each task
  * row with its live worktree; `landableByTaskId` (from `deriveLandableByTaskId`)
- * annotates it with its PR's landable state; `agentByTaskId` (from
- * `deriveAgentByTaskId`) annotates it with its live agent session. Pass an empty
- * map (or omit any) for no annotation. Pure.
+ * annotates it with its PR's landable state; `landablePrByTaskId` (from
+ * `deriveLandablePrByTaskId`) annotates it with that PR's `{ number, url }`;
+ * `agentByTaskId` (from `deriveAgentByTaskId`) annotates it with its live agent
+ * session. Pass an empty map (or omit any) for no annotation. Pure.
  */
 export function buildDexSection(
   board: DexBoard | undefined,
@@ -298,6 +308,7 @@ export function buildDexSection(
   worktreeByTaskId?: ReadonlyMap<string, LinkedWorktree>,
   landableByTaskId?: ReadonlyMap<string, LandableState>,
   agentByTaskId?: ReadonlyMap<string, AgentSummary>,
+  landablePrByTaskId?: ReadonlyMap<string, LandablePr>,
 ): DexSection {
   if (!board) {
     return {
@@ -341,6 +352,7 @@ export function buildDexSection(
       health: dexHealth(t.status),
       worktree: worktreeByTaskId?.get(t.id),
       landable: landableByTaskId?.get(t.id),
+      pr: landablePrByTaskId?.get(t.id),
       agent: agentByTaskId?.get(t.id),
     };
   });

@@ -7,7 +7,12 @@ import { test } from "node:test";
 
 import type { PrInfo, PrOverview } from "./panel-state.js";
 import type { WorktreeTaskLink, LinkedWorktree } from "./worktree-task-link.js";
-import { deriveLandable, deriveLandableByTaskId, type LandableState } from "./landable.js";
+import {
+  deriveLandable,
+  deriveLandableByTaskId,
+  deriveLandablePrByTaskId,
+  type LandableState,
+} from "./landable.js";
 
 /** A PR with defaults; override per case. */
 function pr(over: Partial<PrInfo> & { headRefName: string }): PrInfo {
@@ -192,4 +197,64 @@ test("matches PRs inside a stack group by head ref", () => {
   const result = deriveLandableByTaskId(link({ t1: "base", t2: "tip" }), stacked);
   assert.equal(result.get("t1"), "ready");
   assert.equal(result.get("t2"), "ci-running");
+});
+
+// ---- deriveLandablePrByTaskId: the matched PR's { number, url } per task ----
+
+test("surfaces the matched PR's number + url, keyed by task id", () => {
+  const result = deriveLandablePrByTaskId(
+    link({ t1: "feature-a" }),
+    overview(pr({ headRefName: "feature-a", number: 123, url: "https://gh.test/pr/123" })),
+  );
+  assert.deepEqual(result.get("t1"), { number: 123, url: "https://gh.test/pr/123" });
+});
+
+test("lines up with the landable join: same task ids, no spurious entries", () => {
+  const link_ = link({ t1: "a", t2: "b", t3: "c" });
+  const ov = overview(
+    pr({ headRefName: "a", number: 1 }),
+    pr({ headRefName: "b", number: 2 }),
+    // c has no PR
+  );
+  const landable = deriveLandableByTaskId(link_, ov);
+  const prs = deriveLandablePrByTaskId(link_, ov);
+  assert.deepEqual([...prs.keys()].sort(), [...landable.keys()].sort());
+  assert.equal(prs.get("t1")?.number, 1);
+  assert.equal(prs.get("t2")?.number, 2);
+  assert.equal(prs.has("t3"), false);
+});
+
+test("no matching PR / branchless worktree / missing overview → omitted, no throw", () => {
+  assert.equal(
+    deriveLandablePrByTaskId(link({ t1: "feature-a" }), overview(pr({ headRefName: "other" }))).has(
+      "t1",
+    ),
+    false,
+  );
+  assert.equal(
+    deriveLandablePrByTaskId(link({ t1: undefined }), overview(pr({ headRefName: "feature-a" }))).has(
+      "t1",
+    ),
+    false,
+  );
+  assert.equal(deriveLandablePrByTaskId(link({ t1: "feature-a" }), undefined).size, 0);
+});
+
+test("matches PRs inside a stack group by head ref (PR-ref companion)", () => {
+  const stacked: PrOverview = {
+    repos: [
+      {
+        name: "repo",
+        groups: [
+          {
+            kind: "stack",
+            layers: [pr({ headRefName: "base", number: 10 }), pr({ headRefName: "tip", number: 11 })],
+          },
+        ],
+      },
+    ],
+  };
+  const result = deriveLandablePrByTaskId(link({ t1: "base", t2: "tip" }), stacked);
+  assert.equal(result.get("t1")?.number, 10);
+  assert.equal(result.get("t2")?.number, 11);
 });

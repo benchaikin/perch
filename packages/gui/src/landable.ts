@@ -148,3 +148,44 @@ export function deriveLandableByTaskId(
 
   return byTaskId;
 }
+
+/** The minimal reference to a work-item's matched PR — enough to label and open
+ *  it (e.g. an actionable `#123` chip linking to GitHub). */
+export interface LandablePr {
+  number: number;
+  url: string;
+}
+
+/**
+ * Companion to {@link deriveLandableByTaskId}: surface the *matched PR's*
+ * `{ number, url }` per dex task id, using the identical branch→PR join. The two
+ * maps line up by construction — a task gets an entry here for exactly the same
+ * branches that produce a (non-`none`) landable state — so a row's `landable`
+ * and `pr` are populated together. Kept a separate map (mirroring the
+ * `worktreeByTaskId` / `landableByTaskId` / `agentByTaskId` parallel-map
+ * convention) so {@link deriveLandableByTaskId}'s value shape stays unchanged and
+ * `landableDecisionCount` (the tray badge) is untouched.
+ *
+ * Tolerant + pure, exactly like the landable join: a missing overview, a
+ * branchless worktree, or a branch with no matching PR omits the task.
+ */
+export function deriveLandablePrByTaskId(
+  link: WorktreeTaskLink,
+  overview: PrOverview | undefined,
+): Map<string, LandablePr> {
+  const byTaskId = new Map<string, LandablePr>();
+  if (!overview) return byTaskId;
+
+  const prByBranch = indexPrsByBranch(overview);
+  if (prByBranch.size === 0) return byTaskId;
+
+  for (const [taskId, worktree] of link.worktreeByTaskId) {
+    const branch = worktree.branch;
+    if (!branch) continue;
+    const pr = prByBranch.get(branch);
+    if (!pr) continue;
+    byTaskId.set(taskId, { number: pr.number, url: pr.url });
+  }
+
+  return byTaskId;
+}

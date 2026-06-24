@@ -43,6 +43,8 @@ let dexCompleteCalls: DexCompleteRequest[];
 let dexCompleteResults: DexCompleteResult[];
 let dexNewCalls: DexNewRequest[];
 let setDexViewModeCalls: DexViewMode[];
+/** PR URLs the actionable landable chip opened via `window.perch.openPr`. */
+let openPrCalls: string[];
 /**
  * Pending resolvers for the in-flight action promises — the spawn/delete bridge
  * calls stay pending until {@link settleActions} resolves them, so a test can
@@ -106,6 +108,9 @@ const bridge = {
   setDexViewMode(mode: DexViewMode) {
     setDexViewModeCalls.push(mode);
   },
+  openPr(url: string) {
+    openPrCalls.push(url);
+  },
 } as unknown as PerchBridge;
 
 beforeEach(() => {
@@ -122,6 +127,7 @@ beforeEach(() => {
   dexNewCalls = [];
   dexNewResolve = undefined;
   setDexViewModeCalls = [];
+  openPrCalls = [];
   (globalThis as unknown as { window: { perch: PerchBridge } }).window.perch = bridge;
 });
 
@@ -291,6 +297,51 @@ test("the landable + live-agent markers render for the rows that carry them", ()
   // Exactly one of each — the plain row carries neither.
   assert.equal(container.querySelectorAll(".dex-landable").length, 1);
   assert.equal(container.querySelectorAll(".dex-agent").length, 1);
+});
+
+test("a landable row with a matched PR renders an actionable #number chip that opens the PR", () => {
+  const { container } = render(
+    <DexPane
+      section={section([
+        row({
+          id: "land",
+          name: "Landable",
+          landable: "needs-review",
+          pr: { number: 123, url: "https://gh.test/pr/123" },
+        }),
+      ])}
+    />,
+  );
+
+  const chip = container.querySelector(".dex-landable") as HTMLButtonElement;
+  assert.ok(chip, "expected a landable chip");
+  // It's a real focusable button (Enter/Space-activatable), labeled by the PR number.
+  assert.equal(chip.tagName, "BUTTON");
+  assert.ok(chip.classList.contains("action"), "the actionable chip carries the .action class");
+  assert.ok(chip.classList.contains("warn"), "keeps the warn tone");
+  assert.match(chip.textContent ?? "", /#123/);
+  assert.ok(chip.querySelector(".fa-eye"), "keeps the eye icon");
+  assert.equal(chip.getAttribute("aria-label"), "Open PR #123");
+
+  // Clicking opens the PR and does NOT also open the task detail (event stopped).
+  fireEvent.click(chip);
+  assert.deepEqual(openPrCalls, ["https://gh.test/pr/123"]);
+  assert.equal(
+    container.querySelector(".dex-detail"),
+    null,
+    "opening the PR must not open the detail",
+  );
+});
+
+test("a landable row with no matched PR stays a passive (non-button) chip", () => {
+  const { container } = render(
+    <DexPane
+      section={section([row({ id: "land", name: "Landable", landable: "needs-review" })])}
+    />,
+  );
+  const chip = container.querySelector(".dex-landable")!;
+  assert.equal(chip.tagName, "SPAN", "no PR ⇒ passive span, not a button");
+  assert.equal(chip.querySelector("button"), null);
 });
 
 test("an unmapped landable state falls back to a neutral chip with the raw label", () => {

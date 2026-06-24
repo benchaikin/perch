@@ -35,7 +35,11 @@ import {
   type WorktreesSection,
 } from "./worktrees-state.js";
 import { linkWorktreesAndTasks } from "./worktree-task-link.js";
-import { deriveLandableByTaskId, type LandableState } from "./landable.js";
+import {
+  deriveLandableByTaskId,
+  deriveLandablePrByTaskId,
+  type LandableState,
+} from "./landable.js";
 import { deriveAgentByTaskId, type AgentFleet, type AgentSummary } from "./agents-state.js";
 import type { DexViewMode, DialogSize } from "./window-state.js";
 
@@ -686,6 +690,12 @@ export function buildPanelState(input: BuildInput): PanelState {
   // computed here so a later merge-queue view can consume it off PanelState.
   const landableByTaskId = deriveLandableByTaskId(link, daemonUp ? overview : undefined);
 
+  // The matched PR's `{ number, url }` per task, from the identical branch→PR
+  // join — lines up 1:1 with `landableByTaskId` so each landable row can render
+  // an actionable `#<number>` chip. Kept a separate map to leave the landable
+  // join's shape (and the tray-badge count) untouched.
+  const landablePrByTaskId = deriveLandablePrByTaskId(link, daemonUp ? overview : undefined);
+
   // Join the worktree↔task link to the agent fleet to attach each work-item's
   // live Claude Code session, keyed by task id. Pure + tolerant: a missing/empty
   // fleet (e.g. the agents plugin disabled) or no matching session yields an
@@ -719,6 +729,7 @@ export function buildPanelState(input: BuildInput): PanelState {
       link.worktreeByTaskId,
       landableByTaskId,
       agentByTaskId,
+      landablePrByTaskId,
     ),
     worktrees: buildWorktreesSection(worktreesList, link.taskByWorktreePath),
   };
