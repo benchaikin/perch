@@ -68,6 +68,8 @@ export { createEventBus, TypedEmitter } from "./event-bus.js";
 export type { EventBus, CapabilityUpdate } from "./event-bus.js";
 export { Scheduler } from "./scheduler.js";
 export { RpcServer } from "./server.js";
+export { AlertStore, createAlertStore, configDismissalStore } from "./alerts.js";
+export type { Alert, RaiseInput, DismissalStore, AlertStoreOptions } from "./alerts.js";
 export { NotificationService } from "./notifications.js";
 export type {
   Notification,
