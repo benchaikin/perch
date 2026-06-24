@@ -8,6 +8,7 @@
  * all cleared on shutdown.
  */
 import type { ReadDef } from "@perch/sdk";
+import type { AlertSink } from "./alerts.js";
 import type { EventBus } from "./event-bus.js";
 import { inputKey } from "./cache.js";
 import { parseDuration } from "./duration.js";
@@ -68,6 +69,8 @@ export class Scheduler {
     private readonly bus: EventBus,
     /** Sink for `notify`-hook output. Absent → notify hooks are not run. */
     private readonly notifications?: NotificationService,
+    /** Store for `alerts`-hook output. Absent → alerts hooks are not run. */
+    private readonly alerts?: AlertSink,
   ) {}
 
   #key(id: string, key: string): string {
@@ -160,10 +163,12 @@ export class Scheduler {
   }
 
   /**
-   * Arm persistent pollers for every notify-read among `entries`. For each read
-   * with a `notify` hook, the default input (`{}`/undefined validated through
-   * the read's input schema, like a normal invoke) is computed and a persistent
-   * poller armed via {@link armPersistent}. Reads with no `refresh.every` are
+   * Arm persistent pollers for every notify- or alert-driven read among
+   * `entries`. For each read with a `notify` and/or `alerts` hook, the default
+   * input (`{}`/undefined validated through the read's input schema, like a
+   * normal invoke) is computed and a persistent poller armed via
+   * {@link armPersistent} — so a blocked-agent (or other) alert fires even with
+   * the panel closed, just as notifications do. Reads with no `refresh.every` are
    * skipped (no interval to poll on). Returns the number armed. Safe to call
    * repeatedly — {@link armPersistent} is idempotent per `(id, input)`.
    */
@@ -172,15 +177,15 @@ export class Scheduler {
     for (const entry of entries) {
       if (entry.cap.kind !== "read") continue;
       const read = entry.cap as ReadDef<unknown, unknown, unknown>;
-      if (!read.notify || !read.refresh?.every) continue;
+      if ((!read.notify && !read.alerts) || !read.refresh?.every) continue;
       let input: unknown;
       try {
         input = read.input ? read.input.parse(undefined) : undefined;
       } catch (err) {
-        // A notify-read whose default input fails validation can't be
+        // A notify/alert read whose default input fails validation can't be
         // persistently polled; log and skip rather than aborting boot.
         console.error(
-          `perchd: cannot arm notify poller for ${entry.id} (invalid default input):`,
+          `perchd: cannot arm persistent poller for ${entry.id} (invalid default input):`,
           err,
         );
         continue;
@@ -338,6 +343,7 @@ export class Scheduler {
       const data = await invokeCapability(this.deps, entry, input);
       this.bus.emit({ id: entry.id, inputKey: key, data });
       await this.#runNotify(entry, prev, data);
+      await this.#runAlerts(entry, prev, data);
     } catch (err) {
       console.error(`perchd: poll failed for ${entry.id}:`, err);
     }
@@ -363,6 +369,37 @@ export class Scheduler {
       if (items.length > 0) this.notifications.emit(entry.id, items);
     } catch (err) {
       console.error(`perchd: notify hook failed for ${entry.id}:`, err);
+    }
+  }
+
+  /**
+   * Run a read's `alerts` hook (if any) and apply its {@link AlertOp}s to the
+   * {@link AlertSink} — raise/clear by id, stamping the raising plugin and
+   * `raisedAt` server-side (mirroring the `alerts.raise` RPC handler). Isolated
+   * in try/catch like {@link #runNotify}: a throwing or rejecting hook is logged
+   * and swallowed so it can never break polling.
+   */
+  async #runAlerts(entry: RegisteredCapability, prev: unknown, next: unknown): Promise<void> {
+    if (!this.alerts || entry.cap.kind !== "read") return;
+    const read = entry.cap as ReadDef<unknown, unknown, unknown>;
+    if (!read.alerts) return;
+    try {
+      const ctx = buildContext({
+        pluginId: entry.pluginId,
+        config: this.deps.configs[entry.pluginId],
+        globalConfig: this.deps.global,
+        signal: this.deps.signal,
+      });
+      const ops = await read.alerts({ prev, next, ctx });
+      for (const op of ops) {
+        if (op.op === "raise") {
+          this.alerts.raise(op.id, { pluginId: entry.pluginId, raisedAt: Date.now(), payload: op.payload });
+        } else {
+          this.alerts.clear(op.id);
+        }
+      }
+    } catch (err) {
+      console.error(`perchd: alerts hook failed for ${entry.id}:`, err);
     }
   }
 
