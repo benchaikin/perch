@@ -20,6 +20,7 @@ import type { spawn as nodeSpawn } from "node:child_process";
 
 import {
   action,
+  agentConfigOf,
   definePlugin,
   gitConfigOf,
   read,
@@ -41,6 +42,13 @@ import {
 } from "./parse.js";
 import { buildShellInDir } from "./open.js";
 import { worktreeNotifications } from "./notify.js";
+import { worktreeAlerts } from "./alerts.js";
+import {
+  resolveLaunchCommand,
+  resolveTabColor,
+  resolveTitle,
+  type ResolveInput,
+} from "./resolve.js";
 import { WorktreesProvider, type Exec } from "./provider.js";
 
 export {
@@ -57,6 +65,10 @@ export {
 export type { RawWorktree, WorktreeHealth, WorktreeStatus } from "./parse.js";
 export { buildShellInDir } from "./open.js";
 export { worktreeNotifications } from "./notify.js";
+export { conflictAlertId, worktreeAlerts } from "./alerts.js";
+export type { ConflictAlertPayload } from "./alerts.js";
+export { resolvePrompt, resolveTitle } from "./resolve.js";
+export type { ResolveInput } from "./resolve.js";
 export { WorktreesProvider } from "./provider.js";
 export type { Exec } from "./provider.js";
 
@@ -122,6 +134,13 @@ export function __setOpenSpawn(spawnFn: typeof nodeSpawn | undefined): void {
 const OpenInput = z.object({ path: z.string() });
 
 /**
+ * Input for the `resolve` action: the conflicted worktree `path` to launch the
+ * agent in, plus an optional `branch` for the agent window's title/tab color. The
+ * GUI's WorktreesAlertWidget supplies both from the alert payload.
+ */
+const ResolveActionInput = z.object({ path: z.string(), branch: z.string().optional() });
+
+/**
  * Input for the `remove` action: the worktree `path` to drop, plus an optional
  * `force` for a dirty/conflicted/locked tree (git refuses to remove one without
  * it). The GUI computes `force` from the row and warns before passing it.
@@ -177,7 +196,9 @@ export default definePlugin({
           try {
             listing = await provider.listRaw(root);
           } catch (err) {
-            ctx.log(`worktrees.list: git worktree list failed for ${root ?? "cwd"}: ${String(err)}`);
+            ctx.log(
+              `worktrees.list: git worktree list failed for ${root ?? "cwd"}: ${String(err)}`,
+            );
             return { worktrees: [] };
           }
           const raws = parseWorktreeList(listing);
@@ -210,6 +231,10 @@ export default definePlugin({
       },
       // Announce a worktree that newly conflicted, or one that just appeared.
       notify: ({ prev, next }) => worktreeNotifications(prev, next),
+      // Raise a durable alert for every worktree with unresolved merge conflicts;
+      // the daemon clears each one when the conflict is resolved or the worktree
+      // removed (its row leaves the board). Complements `notify`'s one-shot ping.
+      alerts: ({ prev, next }) => worktreeAlerts(prev, next),
     }),
 
     /**
@@ -231,6 +256,35 @@ export default definePlugin({
           // running here (e.g. a live agent spawned by `dex.spawn`) instead of
           // opening a fresh shell that disconnects from it; falls back to a new
           // window when none is found (or the terminal has no focus hook).
+          focusMarker: input.path,
+          log: ctx.log,
+          spawn: openSpawn,
+        });
+      },
+    }),
+
+    /**
+     * Spawn an interactive Claude agent in a conflicted worktree, seeded to
+     * resolve its merge conflicts — the action behind the WorktreesAlertWidget's
+     * "Resolve" button. The worktree already exists (it's the conflicted one), so
+     * this just launches the agent in it (no checkout/create), mirroring
+     * `stack.resolve-conflicts`'s terminal behavior: a self-identifying title, the
+     * branch's identity tab color, and a worktree-path focus marker so a re-launch
+     * raises the live session rather than opening a second shell. Fire-and-forget;
+     * MCP-exposed so an agent can hand a conflicted tree to a fresh worker. Returns
+     * a small {ok, message}.
+     */
+    resolve: action<ResolveInput, unknown, { ok: boolean; message: string }>({
+      summary: "Spawn an agent to resolve a worktree's merge conflicts",
+      input: ResolveActionInput,
+      expose: { mcp: true },
+      run: ({ input, ctx }) => {
+        return spawnInTerminal({
+          command: resolveLaunchCommand(input, agentConfigOf(ctx.global)),
+          terminal: terminalConfigOf(ctx.global),
+          label: `resolve ${input.branch ?? input.path}`,
+          title: resolveTitle(input),
+          tabColor: resolveTabColor(input),
           focusMarker: input.path,
           log: ctx.log,
           spawn: openSpawn,

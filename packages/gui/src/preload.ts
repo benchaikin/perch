@@ -62,6 +62,9 @@ const bridge: PerchBridge = {
   worktreeOpen(path) {
     ipcRenderer.send(Channels.worktreeOpen, path);
   },
+  resolveWorktree(request) {
+    return ipcRenderer.invoke(Channels.worktreeResolve, request);
+  },
   worktreeRemove(request) {
     return ipcRenderer.invoke(Channels.worktreeRemove, request);
   },
