@@ -1326,8 +1326,8 @@ function createPanel(): BrowserWindow {
     alwaysOnTop: true,
     // Non-activating: clicking the panel doesn't steal focus from the editor.
     focusable: true,
-    // Nord nord0 / nord6 — matches theme.css's --bg so there's no pre-paint flash.
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#2e3440" : "#eceff4",
+    // Matches theme.css's --bg (darkened base / nord6) so there's no pre-paint flash.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1c2123" : "#eceff4",
     webPreferences: {
       preload: join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -1686,8 +1686,8 @@ function showSettingsWindow(): void {
     show: false,
     resizable: true,
     fullscreenable: false,
-    // Nord nord0 / nord6 — matches theme.css's --bg so there's no pre-paint flash.
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#2e3440" : "#eceff4",
+    // Matches theme.css's --bg (darkened base / nord6) so there's no pre-paint flash.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1c2123" : "#eceff4",
     webPreferences: {
       preload: join(__dirname, "settings-preload.cjs"),
       contextIsolation: true,
