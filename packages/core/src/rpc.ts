@@ -6,6 +6,7 @@
  * Transport: JSON-RPC 2.0 over a Unix domain socket via `vscode-jsonrpc`.
  */
 import type { SettingsField } from "@perch/sdk";
+import type { Alert } from "./alerts.js";
 import type { PerchConfig } from "./config.js";
 import type { DeliveredNotification } from "./notifications.js";
 import type { CapabilityMeta } from "./registry.js";
@@ -39,6 +40,14 @@ export const Methods = {
   notificationsSubscribe: "notifications.subscribe",
   /** `notifications.unsubscribe` → void. No params. Opts back out. */
   notificationsUnsubscribe: "notifications.unsubscribe",
+  /** `alerts.raise` → {@link Alert} (the raised alert). Params: {@link AlertRaiseParams}. */
+  alertsRaise: "alerts.raise",
+  /** `alerts.clear` → {@link AlertClearResult}. Params: {@link AlertClearParams}. */
+  alertsClear: "alerts.clear",
+  /** `alerts.list` → {@link AlertListResult} (non-dismissed, newest first). No params. */
+  alertsList: "alerts.list",
+  /** `alerts.dismiss` → void. Params: {@link AlertDismissParams}. */
+  alertsDismiss: "alerts.dismiss",
 } as const;
 
 /** Notification methods (server → client). */
@@ -167,6 +176,44 @@ export interface PluginSettingsDescription {
 export type SettingsDescribeResult = PluginSettingsDescription[];
 
 export type { SettingsField };
+
+/**
+ * Params for `alerts.raise`. The daemon stamps `raisedAt` itself (server
+ * wall-clock), so callers supply only the stable `id`, the raising `pluginId`,
+ * and an opaque `payload` the frontend renders.
+ */
+export interface AlertRaiseParams {
+  /** Stable, caller-chosen id (e.g. `services:perch:api-server:crashed`). */
+  id: string;
+  /** The plugin id raising it. */
+  pluginId: string;
+  /** Opaque, plugin-defined detail rendered by the frontend. */
+  payload?: unknown;
+}
+
+/** Result of `alerts.raise`: the alert as stored (with its server `raisedAt`). */
+export type AlertRaiseResult = Alert;
+
+/** Params for `alerts.clear`. */
+export interface AlertClearParams {
+  /** Id of the active alert to remove. */
+  id: string;
+}
+
+/** Result of `alerts.clear`: whether an active alert was present and removed. */
+export interface AlertClearResult {
+  /** True iff an alert with that id was active and is now cleared. */
+  cleared: boolean;
+}
+
+/** Result of `alerts.list`: non-dismissed active alerts, newest (`raisedAt`) first. */
+export type AlertListResult = Alert[];
+
+/** Params for `alerts.dismiss`. */
+export interface AlertDismissParams {
+  /** Id to add to the persisted dismiss list and remove from the active store. */
+  id: string;
+}
 
 /**
  * Payload of a `notification` notification: a {@link DeliveredNotification}

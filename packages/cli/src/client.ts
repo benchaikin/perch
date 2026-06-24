@@ -17,6 +17,12 @@ import {
 import {
   Methods,
   Notifications,
+  type AlertClearParams,
+  type AlertClearResult,
+  type AlertDismissParams,
+  type AlertListResult,
+  type AlertRaiseParams,
+  type AlertRaiseResult,
   type ConfigGetResult,
   type ConfigUpdateParams,
   type ConfigUpdateResult,
@@ -145,6 +151,26 @@ export class PerchClient {
   /** `config.validateRepoPath` — check a path is an existing git repo. */
   validateRepoPath(params: ValidateRepoPathParams): Promise<ValidateRepoPathResult> {
     return this.#conn.sendRequest(Methods.configValidateRepoPath, params);
+  }
+
+  /** `alerts.raise` — raise (or re-raise) an alert; returns the stored alert. */
+  alertsRaise(params: AlertRaiseParams): Promise<AlertRaiseResult> {
+    return this.#conn.sendRequest(Methods.alertsRaise, params);
+  }
+
+  /** `alerts.clear` — remove an active alert by id. */
+  alertsClear(params: AlertClearParams): Promise<AlertClearResult> {
+    return this.#conn.sendRequest(Methods.alertsClear, params);
+  }
+
+  /** `alerts.list` — non-dismissed active alerts, newest first. */
+  alertsList(): Promise<AlertListResult> {
+    return this.#conn.sendRequest(Methods.alertsList);
+  }
+
+  /** `alerts.dismiss` — persist an id to the dismiss list and drop it from the store. */
+  alertsDismiss(params: AlertDismissParams): Promise<void> {
+    return this.#conn.sendRequest(Methods.alertsDismiss, params);
   }
 
   /** Tear down the connection and underlying socket. */

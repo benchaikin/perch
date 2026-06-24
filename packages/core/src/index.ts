@@ -9,6 +9,7 @@
  * scheduler, cache, event bus, and plugin loader.
  */
 import type { PluginDef } from "@perch/sdk";
+import { configDismissalStore, createAlertStore } from "./alerts.js";
 import { Cache } from "./cache.js";
 import { loadConfig, pluginsFromConfig } from "./config.js";
 import { createEventBus } from "./event-bus.js";
@@ -80,6 +81,12 @@ export type {
 } from "./notifications.js";
 export { Methods, Notifications } from "./rpc.js";
 export type {
+  AlertRaiseParams,
+  AlertRaiseResult,
+  AlertClearParams,
+  AlertClearResult,
+  AlertListResult,
+  AlertDismissParams,
   InvokeParams,
   SubscribeParams,
   SubscribeResult,
@@ -238,12 +245,20 @@ export async function startDaemon(options: StartDaemonOptions = {}): Promise<Run
   // watches — one path, so an RPC write flows back through the normal reload.
   const reloadConfigPath = options.configPath ?? defaultConfigPath();
 
+  // Alert store: active alerts live in memory; the dismiss list persists to the
+  // same `perch.yaml` the rest of the daemon reads. Loaded before the server
+  // listens so a re-raised, previously-dismissed alert is filtered from the start.
+  const alerts = await createAlertStore({
+    dismissals: configDismissalStore(reloadConfigPath),
+  });
+
   const server = new RpcServer({
     registry,
     scheduler,
     cache,
     bus,
     invoker,
+    alerts,
     socketPath: path,
     configPath: reloadConfigPath,
   });
