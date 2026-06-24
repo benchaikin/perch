@@ -21,10 +21,10 @@
    (e.g. rgba(var(--ok-rgb), 0.15)), so any light-block hex override updates its
    -rgb twin too. */
 :root {
-  --bg: #2e3440; /* nord0 */
+  --bg: #1c2123; /* darkened base, below nord0 */
   --fg: #d8dee9; /* nord4 */
   --fg-rgb: 216, 222, 233;
-  --muted: #7b88a1; /* a slate between nord3-bright (#616e88) and nord4 — bright enough to read as text on nord0 */
+  --muted: #7b88a1; /* a slate between nord3-bright (#616e88) and nord4 — bright enough to read as text on the dark bg */
   --dot-muted: #4c566a; /* nord3 — solid fill for neutral status dots; stays dim while --muted text brightens */
   /* small tone/count badge glyphs; tracks --muted in dark (legible there) but darkens in light where pale --muted glyphs wash out */
   --badge-muted: var(--muted);
