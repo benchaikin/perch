@@ -283,6 +283,20 @@ export function __setReconciling(value: boolean): void {
 }
 
 /**
+ * The services commanded by the previous reconcile pass. A service that's still
+ * stopped/crashed (and so re-commanded) on consecutive polls — a crash/restart
+ * loop — is reported as in-flight only on the FIRST command; thereafter its real
+ * status shows through instead of a permanent spinner. The freshly-commanded set
+ * (this pass minus the last) is what {@link ServiceList.reconciling} carries.
+ */
+let lastReconciled: ReadonlySet<string> = new Set();
+
+/** Inject/reset the `lastReconciled` set (tests only) — isolate de-dup state. */
+export function __setLastReconciled(names: Iterable<string> = []): void {
+  lastReconciled = new Set(names);
+}
+
+/**
  * The scope keys (repo basenames, or {@link PANE_SCOPE}) set to Auto in the
  * `auto` map. `[]` for an absent/empty map, so the default config auto-manages
  * nothing. Mirrors dex's `autoSpawnRepos`. Exported for unit coverage.
@@ -343,20 +357,24 @@ export function reconcileActions(
  * the server up, and Auto must not introduce a second, competing autostart. Each
  * fired action is logged `services.auto: <scope>: <action> <name>`, mirroring
  * dex's `dex.land: auto-spawn …`.
+ *
+ * Returns the names it commanded (regardless of the provider's ok), so the read
+ * can surface them as in-flight rows; `[]` when nothing fired.
  */
 async function reconcileAuto(
   list: ServiceList,
   ctx: { config: unknown; log: (message: string) => void },
-): Promise<void> {
-  if (!list.available) return;
+): Promise<string[]> {
+  if (!list.available) return [];
   const cfg = configOf(ctx.config);
   const todo = reconcileActions(list.services, cfg.auto);
-  if (todo.length === 0) return;
+  if (todo.length === 0) return [];
   const provider = providerOf(ctx);
   for (const { name, action, scope } of todo) {
     const ok = await provider.action(name, action);
     ctx.log(`services.auto: ${scope}: ${action} ${name}${ok ? "" : " (failed)"}`);
   }
+  return todo.map((t) => t.name);
 }
 
 export default definePlugin({
@@ -407,7 +425,14 @@ export default definePlugin({
         } else {
           reconciling = true;
           try {
-            await reconcileAuto(out, ctx);
+            const commanded = await reconcileAuto(out, ctx);
+            // Surface only the *freshly* commanded services as in-flight: a row
+            // re-commanded on consecutive polls (a crash/restart loop) would
+            // otherwise spin forever, so we hand it back to its real status once
+            // it's no longer new. Empty arrays are dropped to keep the list inert.
+            const fresh = commanded.filter((name) => !lastReconciled.has(name));
+            lastReconciled = new Set(commanded);
+            if (fresh.length > 0) out.reconciling = fresh;
           } finally {
             reconciling = false;
           }

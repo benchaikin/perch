@@ -223,6 +223,39 @@ test("buildServicesSection shows rows when available with services", () => {
   assert.equal(section.rows[1]!.inFlight, true);
 });
 
+test("buildServicesSection: the daemon's reconcile-commanded services render in-flight", () => {
+  const list: ServiceList = {
+    available: true,
+    projects: ["ashby"],
+    services: [
+      { name: "api", status: "stopped", project: "ashby" },
+      { name: "web", status: "crashed", exitCode: 1, project: "ashby" },
+    ],
+    auto: { ashby: true },
+    // The daemon just commanded `api` (start); `web` was already commanded last
+    // poll, so it's not re-listed — its row hands back to the crashed status.
+    reconciling: ["api"],
+  };
+  const rows = buildServicesSection(list).repoGroups[0]!.rows;
+  assert.equal(rows.find((r) => r.name === "api")!.inFlight, true);
+  assert.equal(rows.find((r) => r.name === "web")!.inFlight, false);
+});
+
+test("buildServicesSection: reconciling unions with the GUI's own acting set", () => {
+  const list: ServiceList = {
+    available: true,
+    services: [
+      { name: "api", status: "stopped" },
+      { name: "db", status: "stopped" },
+    ],
+    reconciling: ["api"],
+  };
+  // `db` is acting from a user click; `api` from the daemon reconcile — both spin.
+  const section = buildServicesSection(list, ["db"]);
+  assert.equal(section.rows.find((r) => r.name === "api")!.inFlight, true);
+  assert.equal(section.rows.find((r) => r.name === "db")!.inFlight, true);
+});
+
 test("buildServicesSection: single configured repo groups under one header", () => {
   const list: ServiceList = {
     available: true,

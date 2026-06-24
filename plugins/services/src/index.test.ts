@@ -19,6 +19,7 @@ import { test } from "node:test";
 import { type CapabilityContext } from "@perch/sdk";
 
 import plugin, {
+  __setLastReconciled,
   __setLogsSpawn,
   __setProviderSpawn,
   __setReconciling,
@@ -529,6 +530,7 @@ test("reconcileActions: an in-flight (acting) service is not double-fired", () =
 
 test("services.list reconcile: an Auto repo's stopped service is auto-started via the poll", async () => {
   __setReconciling(false);
+  __setLastReconciled();
   const server = await fakeServer([{ name: "api", status: "Stopped" }]);
   try {
     const result = (await plugin.capabilities.list!.run({
@@ -543,14 +545,44 @@ test("services.list reconcile: an Auto repo's stopped service is auto-started vi
     assert.deepEqual(result.auto, { " :pane": true });
     // …and the reconcile fired a start for the stopped service.
     assert.ok(server.seen.some((r) => r.method === "POST" && r.url === "/process/start/api"));
+    // …and the just-commanded service is surfaced as in-flight so the GUI can
+    // spin its row immediately (the returned status is still pre-reconcile).
+    assert.deepEqual(result.reconciling, ["api"]);
   } finally {
     __setReconciling(false);
+    __setLastReconciled();
+    await server.close();
+  }
+});
+
+test("services.list reconcile: a service commanded again next poll is not re-listed as in-flight", async () => {
+  __setReconciling(false);
+  __setLastReconciled(["api"]); // already commanded on the previous pass (a crash loop)
+  const server = await fakeServer([{ name: "api", status: "Stopped" }]);
+  try {
+    const result = (await plugin.capabilities.list!.run({
+      input: {},
+      ctx: {
+        config: { address: server.address, auto: { " :pane": true } },
+        global: {},
+        log: () => {},
+      },
+    })) as ServiceList;
+    // It still re-commands the start (Auto keeps trying)…
+    assert.ok(server.seen.some((r) => r.method === "POST" && r.url === "/process/start/api"));
+    // …but it's no longer "fresh", so the row hands back to its real status
+    // instead of pinning a permanent spinner.
+    assert.equal(result.reconciling, undefined);
+  } finally {
+    __setReconciling(false);
+    __setLastReconciled();
     await server.close();
   }
 });
 
 test("services.list reconcile: the default (no Auto) config touches nothing", async () => {
   __setReconciling(false);
+  __setLastReconciled();
   const server = await fakeServer([{ name: "api", status: "Stopped" }]);
   try {
     await plugin.capabilities.list!.run({
@@ -566,6 +598,7 @@ test("services.list reconcile: the default (no Auto) config touches nothing", as
 
 test("services.list reconcile: skips while a previous pass holds the latch", async () => {
   __setReconciling(true);
+  __setLastReconciled();
   const server = await fakeServer([{ name: "api", status: "Stopped" }]);
   try {
     await plugin.capabilities.list!.run({
