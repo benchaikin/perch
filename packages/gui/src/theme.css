@@ -42,6 +42,7 @@
   --bad-rgb: 191, 97, 106;
   --accent: #5e81ac; /* nord10 blue */
   --accent-rgb: 94, 129, 172;
+  --auto: #d08770; /* nord12 Aurora orange — the lit "this repo is driving itself" signal, ~4.4:1 on nord0 */
 
   /* Black scrim for modal backdrops and the dialog drop-shadow — theme-independent. */
   --shadow-rgb: 0, 0, 0;
@@ -71,5 +72,6 @@
     --warn-rgb: 156, 122, 22;
     --bad: #9e3a42; /* deepened nord11 red — darkened with --ok to preserve the green/red luminance gap, ~5.8:1 */
     --bad-rgb: 158, 58, 66;
+    --auto: #bd6a3e; /* darkened nord12 orange — the :root #d08770 reads only ~2.4:1 on nord6, this ~3.4:1 */
   }
 }
