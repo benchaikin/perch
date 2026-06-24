@@ -15,6 +15,7 @@ import {
   SocketMessageWriter,
   type MessageConnection,
 } from "vscode-jsonrpc/node";
+import type { AlertStore } from "./alerts.js";
 import { Cache, inputKey } from "./cache.js";
 import { getConfig, updateConfig, validateRepoPath } from "./config-store.js";
 import type { EventBus } from "./event-bus.js";
@@ -29,6 +30,12 @@ import type { DeliveredNotification } from "./notifications.js";
 import {
   Methods,
   Notifications,
+  type AlertClearParams,
+  type AlertClearResult,
+  type AlertDismissParams,
+  type AlertListResult,
+  type AlertRaiseParams,
+  type AlertRaiseResult,
   type ConfigGetResult,
   type ConfigUpdateParams,
   type ConfigUpdateResult,
@@ -52,6 +59,8 @@ export interface ServerDeps {
   cache: Cache;
   bus: EventBus;
   invoker: InvokerDeps;
+  /** Active alerts + the persisted dismiss list, served by the `alerts.*` methods. */
+  alerts: AlertStore;
   socketPath: string;
   /**
    * Path to `perch.yaml` the `config.*` methods read and mutate. Writes are
@@ -231,6 +240,33 @@ class ClientConnection {
 
     this.#conn.onRequest(Methods.notificationsUnsubscribe, (): void => {
       this.#notificationsSubscribed = false;
+    });
+
+    // Alert store endpoints. Plugins raise/clear conditions and the frontend
+    // lists/dismisses them; the store keeps active alerts in memory and persists
+    // the dismiss list to `perch.yaml`.
+    this.#conn.onRequest(Methods.alertsRaise, (params: AlertRaiseParams): AlertRaiseResult => {
+      return this.#deps.alerts.raise(params.id, {
+        pluginId: params.pluginId,
+        raisedAt: Date.now(),
+        payload: params.payload,
+      });
+    });
+
+    this.#conn.onRequest(Methods.alertsClear, (params: AlertClearParams): AlertClearResult => {
+      return { cleared: this.#deps.alerts.clear(params.id) };
+    });
+
+    // Newest first — the store lists in raise order, so sort by `raisedAt` desc here.
+    this.#conn.onRequest(Methods.alertsList, (): AlertListResult => {
+      return [...this.#deps.alerts.list()].sort((a, b) => b.raisedAt - a.raisedAt);
+    });
+
+    // Dismiss both drops the active alert and persists the id, so a re-raise of
+    // the same condition stays filtered until the user restores it.
+    this.#conn.onRequest(Methods.alertsDismiss, async (params: AlertDismissParams): Promise<void> => {
+      this.#deps.alerts.clear(params.id);
+      await this.#deps.alerts.dismiss(params.id);
     });
 
     this.#conn.onRequest(Methods.configGet, (): Promise<ConfigGetResult> => {
