@@ -763,15 +763,16 @@ body {
 .auto-mode-pill-label {
   line-height: 1;
 }
-/* When Auto is on the pill reads accent-lit (text + border) so the self-driving
-   repos stand out from the muted resting controls; Manual keeps the default muted
+/* When Auto is on the pill lights up in Aurora orange (--auto, text + border) so the
+   self-driving repos stand out from the muted resting controls — a warm tone distinct
+   from the blue --accent used for selection/focus/links; Manual keeps the default muted
    tone. The lit color survives hover (which would otherwise pull it to --fg). */
 .auto-mode-pill.on {
-  color: var(--accent);
-  border-color: var(--accent);
+  color: var(--auto);
+  border-color: var(--auto);
 }
 .auto-mode-pill.on:hover {
-  color: var(--accent);
+  color: var(--auto);
 }
 
 /* Shared modal dialog (backs both the New-task composer and the Complete confirm):
