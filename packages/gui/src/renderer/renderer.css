@@ -1500,3 +1500,71 @@ body {
 .alert-fallback > .btn {
   margin-left: auto;
 }
+
+/* The dashboard alert bar: actionable-PR alerts above the active pane. A stack of
+   alert items, each a clickable row (opens the PR) toned by its condition. */
+.alerts-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 6px;
+}
+
+/* One alert: a row-like layout (mirrors .row) with a left accent bar tinted by
+   the alert's tone, the condition chip + repo + branch, then the action cluster. */
+.alert-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border-left: 2px solid var(--bad);
+  background: rgba(var(--bad-rgb), 0.08);
+  cursor: pointer;
+}
+.alert-item:hover {
+  background: rgba(var(--bad-rgb), 0.14);
+}
+.alert-item.warn {
+  border-left-color: var(--warn);
+  background: rgba(var(--warn-rgb), 0.08);
+}
+.alert-item.warn:hover {
+  background: rgba(var(--warn-rgb), 0.14);
+}
+.alert-item.ok {
+  border-left-color: var(--ok);
+  background: rgba(var(--ok-rgb), 0.08);
+}
+.alert-item.ok:hover {
+  background: rgba(var(--ok-rgb), 0.14);
+}
+
+/* The branch label: the at-a-glance identity, truncated when long so the action
+   cluster always stays visible at the trailing edge. */
+.alert-branch {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.alert-repo {
+  flex: 0 0 auto;
+}
+
+/* The trailing action cluster (Sync/Merge/Open PR + dismiss); pushed right. The
+   shared .btn.btn-sm / .icon-btn auto-margins are reset so the buttons stay in a
+   tight group instead of each pushing to the edge. */
+.alert-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+.alert-actions .btn.btn-sm,
+.alert-actions .icon-btn {
+  margin-left: 0;
+}

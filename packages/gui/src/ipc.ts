@@ -98,6 +98,13 @@ export const Channels = {
   /** Renderer → main: open a PR's URL in the browser (payload: the URL). */
   openPr: "perch:open-pr",
   /**
+   * Renderer → main `invoke`: dismiss a dashboard alert (payload: its id). Main
+   * runs `alerts.dismiss` (drops it from the active store + persists the id so a
+   * re-raise stays filtered), re-reads the list, and resolves when done so the
+   * alert leaves the bar.
+   */
+  dismissAlert: "perch:dismiss-alert",
+  /**
    * Renderer → main: invoke a service lifecycle action (payload: a
    * {@link ServiceActionRequest}). Main runs `services.<action>`.
    */
@@ -394,6 +401,12 @@ export interface PerchBridge {
   mergePr(request: MergePrRequest): Promise<void>;
   /** Ask the main process to open a PR's URL in the browser. */
   openPr(url: string): void;
+  /**
+   * Ask the main process to dismiss a dashboard alert (by id). Main persists the
+   * dismissal and re-reads the list; resolves when done so the caller can clear
+   * its in-flight UI. The alert leaves the bar via the next pushed panel state.
+   */
+  dismissAlert(id: string): Promise<void>;
   /** Ask the main process to start/stop/restart a service (by name). */
   serviceAction(request: ServiceActionRequest): void;
   /**

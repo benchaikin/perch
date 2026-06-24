@@ -8,8 +8,10 @@ import { test } from "node:test";
 import {
   buildPanelState,
   ciChip,
+  deriveStackAlerts,
   landableDecisionCount,
   mergeableChip,
+  prAlertConditions,
   prCanMerge,
   reviewChip,
   toPrRow,
@@ -250,6 +252,98 @@ test("stack health is warn when any layer (or the stack) needs attention", () =>
   assert.equal(dirty.health, "bad");
   // A layer with comments (nothing blocking) takes the bar to amber.
   assert.equal(warned.health, "warn");
+});
+
+test("prAlertConditions flags each actionable PR state", () => {
+  // Clean PR: nothing actionable.
+  assert.deepEqual(prAlertConditions({ ...basePr }), []);
+  // Needs rebase + failing CI both fire (a PR can be in several at once).
+  assert.deepEqual(prAlertConditions({ ...basePr, needsRebase: true, ciStatus: "fail" }), [
+    "needs-rebase",
+    "ci-failing",
+  ]);
+  // Reviewer left inline comments to address.
+  assert.deepEqual(prAlertConditions({ ...basePr, humanReviewCommentCount: 2 }), [
+    "review-comments",
+  ]);
+  // Mergeable + green + approved → ready to merge.
+  assert.deepEqual(
+    prAlertConditions({
+      ...basePr,
+      mergeable: "MERGEABLE",
+      ciStatus: "pass",
+      reviewDecision: "APPROVED",
+    }),
+    ["ready-to-merge"],
+  );
+  // Mergeable + green but NOT yet approved → not "ready" (it's awaiting review).
+  assert.deepEqual(prAlertConditions({ ...basePr, mergeable: "MERGEABLE", ciStatus: "pass" }), []);
+});
+
+test("deriveStackAlerts emits one alert per (PR, condition) with stack ids", () => {
+  const overview: PrOverview = {
+    repos: [
+      {
+        name: "perch",
+        groups: [
+          { kind: "pr", pr: { ...basePr, headRefName: "feat/auth", needsRebase: true } },
+          {
+            kind: "stack",
+            tracked: true,
+            layers: [
+              { ...basePr, number: 2, headRefName: "base", baseRefName: "main" },
+              {
+                ...basePr,
+                number: 3,
+                headRefName: "tip",
+                baseRefName: "base",
+                ciStatus: "fail",
+                humanReviewCommentCount: 1,
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  const alerts = deriveStackAlerts(overview);
+  const ids = alerts.map((a) => a.id);
+  assert.deepEqual(ids, [
+    "stack:perch:feat/auth:needs-rebase",
+    "stack:perch:tip:ci-failing",
+    "stack:perch:tip:review-comments",
+  ]);
+  // The payload carries everything the widget needs to render + act.
+  const first = alerts[0]!;
+  assert.equal(first.payload.condition, "needs-rebase");
+  assert.equal(first.payload.repo, "perch");
+  assert.equal(first.payload.branch, "feat/auth");
+  assert.equal(first.payload.url, basePr.url);
+});
+
+test("deriveStackAlerts returns [] for an absent overview", () => {
+  assert.deepEqual(deriveStackAlerts(undefined), []);
+});
+
+test("buildPanelState carries alerts through and clears them when the daemon is down", () => {
+  const alerts = [
+    {
+      id: "stack:r:b:ci-failing",
+      pluginId: "stack",
+      raisedAt: 1,
+      payload: { condition: "ci-failing" },
+    },
+  ];
+  const up = buildPanelState({
+    daemonUp: true,
+    syncAvailable: true,
+    overview: { repos: [] },
+    alerts,
+  });
+  assert.deepEqual(up.alerts, alerts);
+  // A down daemon has no live alert state, so the pushed state shows none.
+  const down = buildPanelState({ daemonUp: false, syncAvailable: false, alerts });
+  assert.deepEqual(down.alerts, []);
 });
 
 test("buildPanelState surfaces a daemon-down state without crashing", () => {

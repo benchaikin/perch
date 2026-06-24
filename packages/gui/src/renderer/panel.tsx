@@ -18,6 +18,7 @@ import { DEX_TASKS_ID } from "../dex-state.js";
 import { WORKTREES_LIST_ID } from "../worktrees-state.js";
 import { useActions } from "./actions.js";
 import { usePanelState } from "./store.js";
+import { AlertsBar } from "./alerts-bar.js";
 import { PrsPane } from "./prs.js";
 import { ServicesPane } from "./services.js";
 import { WorktreesPane } from "./worktrees.js";
@@ -199,6 +200,7 @@ export function Panel(): JSX.Element {
         </button>
       </header>
       <hr className="rule" />
+      {state && state.alerts.length > 0 && <AlertsBar alerts={state.alerts} />}
       <PaneBody activeId={activeId} state={state} />
       <Notice notice={state?.notice} />
     </>
