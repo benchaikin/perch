@@ -63,9 +63,18 @@ export function isValidTaskId(id: string): boolean {
   return /^[a-z0-9]+$/.test(id);
 }
 
-/** The branch a task gets: `dex/<id>-<slug>`, or bare `dex/<id>` when the slug is empty. */
-export function branchFor(id: string, slug: string): string {
-  return slug ? `dex/${id}-${slug}` : `dex/${id}`;
+/**
+ * The branch a task gets. The core is `dex/<id>-<slug>` (or bare `dex/<id>` when
+ * the slug is empty) — the `dex/<id>` token the branch parser keys off is always
+ * preserved. A non-empty `prefix` is normalized (same kebab rules as
+ * {@link deriveSlug}) into a single leading ref segment, yielding
+ * `<prefix>/dex/<id>-<slug>`; an empty/whitespace-only prefix ⇒ the unprefixed
+ * shape, exactly as before.
+ */
+export function branchFor(prefix: string, id: string, slug: string): string {
+  const core = slug ? `dex/${id}-${slug}` : `dex/${id}`;
+  const cleanPrefix = deriveSlug(prefix);
+  return cleanPrefix ? `${cleanPrefix}/${core}` : core;
 }
 
 /**
@@ -413,6 +422,11 @@ export interface SpawnDeps {
   exec: Exec;
   dexBin: string;
   gitBin: string;
+  /**
+   * Optional branch-name prefix (from `gitConfigOf(ctx.global).branchPrefix`),
+   * threaded into {@link branchFor}. Empty/unset ⇒ the unprefixed `dex/<id>-<slug>`.
+   */
+  branchPrefix?: string;
   /** The monitored project roots, in `global.repos` order (each carries a `.dex/`). */
   repos: string[];
   /** The terminal preference (from `terminalConfigOf(ctx.global)`). */
@@ -634,7 +648,7 @@ export async function runSpawn(input: SpawnInput, deps: SpawnDeps): Promise<Spaw
   }
 
   const slug = deriveSlug(name);
-  const branch = branchFor(id, slug);
+  const branch = branchFor(deps.branchPrefix ?? "", id, slug);
   const worktreePath = worktreePathFor(resolvedRepo, id, slug);
 
   // Pre-flight (BEFORE the in-progress mark): refuse a task whose worktree is

@@ -69,9 +69,18 @@ test("parseDexTaskId extracts the id from a dex/ branch, else undefined", () => 
   // Strict charset: uppercase isn't part of the id (stops at the first non-[a-z0-9]).
   assert.equal(parseDexTaskId("dex/ABC123"), undefined);
   assert.equal(parseDexTaskId("dex/abc_123"), "abc");
-  // The prefix must be exactly `dex/`.
+  // The `dex` token must be exactly `dex/`, not a suffix of another segment.
   assert.equal(parseDexTaskId("dexx/abc12345"), undefined);
   assert.equal(parseDexTaskId("dex/"), undefined);
+
+  // An optional leading prefix segment (the configurable `git.branchPrefix`) is
+  // tolerated: `<prefix>/dex/<id>...` resolves to the same id as the unprefixed form.
+  assert.equal(parseDexTaskId("feat/dex/abc12345"), "abc12345");
+  assert.equal(parseDexTaskId("feat/dex/abc12345-some-slug"), "abc12345");
+  assert.equal(parseDexTaskId("ben/dex/abc12345"), "abc12345");
+  // The `dex/` must be its own segment — a segment merely ending in `dex` doesn't count.
+  assert.equal(parseDexTaskId("my-dex/abc12345"), undefined);
+  assert.equal(parseDexTaskId("feature/x"), undefined);
 });
 
 test("buildWorktrees derives taskId from the branch, override via taskIdByPath", () => {

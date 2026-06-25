@@ -16,6 +16,13 @@ import type { SettingsField } from "./index.js";
 export const GlobalGitConfig = z.object({
   /** Path to the `git` binary; empty/unset ⇒ resolve `git` on PATH. */
   gitBin: z.string().optional(),
+  /**
+   * Optional prefix segment prepended to every branch Perch creates, so the
+   * branch becomes `<prefix>/dex/<id>-<slug>` instead of `dex/<id>-<slug>`.
+   * Empty/unset ⇒ today's exact `dex/<id>-<slug>` shape. The `dex/<id>` token is
+   * always preserved so the branch parser still recovers the task id.
+   */
+  branchPrefix: z.string().optional(),
 });
 export type GlobalGitConfig = z.infer<typeof GlobalGitConfig>;
 
@@ -33,6 +40,16 @@ export const GIT_SETTINGS_FIELDS: SettingsField[] = [
       "(commit attribution, dex spawn/land, opening/listing worktrees, and stack actions). " +
       "Leave as git to resolve it on your PATH.",
     default: "git",
+  },
+  {
+    key: "git.branchPrefix",
+    type: "string",
+    label: "branch prefix",
+    description:
+      "Optional prefix for branches Perch creates — set it to namespace branches for your " +
+      "team or SCM conventions (e.g. ben or feat), and the branch becomes <prefix>/dex/<id>-<slug>. " +
+      "Leave empty to keep the default dex/<id>-<slug>. The prefix is normalized to a valid ref segment.",
+    default: "",
   },
 ];
 

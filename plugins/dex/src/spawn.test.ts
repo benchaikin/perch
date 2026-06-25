@@ -50,8 +50,17 @@ test("isValidTaskId: only lowercase-alphanumeric ids the branch parser recovers"
 });
 
 test("branchFor / worktreePathFor: convention with and without a slug", () => {
-  assert.equal(branchFor("abc12", "my-task"), "dex/abc12-my-task");
-  assert.equal(branchFor("abc12", ""), "dex/abc12");
+  // No prefix ⇒ today's exact shape, with and without a slug.
+  assert.equal(branchFor("", "abc12", "my-task"), "dex/abc12-my-task");
+  assert.equal(branchFor("", "abc12", ""), "dex/abc12");
+  // A prefix becomes a leading ref segment; the `dex/<id>` token is preserved.
+  assert.equal(branchFor("feat", "abc12", "my-task"), "feat/dex/abc12-my-task");
+  assert.equal(branchFor("ben", "abc12", ""), "ben/dex/abc12");
+  // Whitespace-/junk-only prefixes normalize away (no stray leading segment).
+  assert.equal(branchFor("   ", "abc12", "my-task"), "dex/abc12-my-task");
+  assert.equal(branchFor("///", "abc12", "my-task"), "dex/abc12-my-task");
+  // A messy prefix is sanitized to a single valid ref segment.
+  assert.equal(branchFor("My Team!", "abc12", "my-task"), "my-team/dex/abc12-my-task");
   assert.equal(
     worktreePathFor("/work/perch", "abc12", "my-task"),
     "/work/perch-worktrees/abc12-my-task",
@@ -459,6 +468,35 @@ test("runSpawn: happy path — finds the task's store, creates the worktree, lau
   const startIdx = calls.indexOf(start);
   const worktreeIdx = calls.findIndex((c) => c.cmd === "git" && c.args.includes("worktree"));
   assert.ok(startIdx < worktreeIdx);
+});
+
+test("runSpawn: a configured branchPrefix lands a <prefix>/dex/... branch on the worktree add", async () => {
+  const { exec, calls } = execStub({
+    tasks: { "/work/perch/.dex": { name: "Add the spawn action" } },
+    defaultBranch: "main",
+  });
+  const term = fakeSpawn();
+  const script = fakeWriteScript();
+  const res = await runSpawn(
+    { id: "abc12" },
+    deps(exec, { branchPrefix: "Feat", spawn: term.spawn, writeScript: script.writeScript }),
+  );
+
+  assert.equal(res.ok, true);
+  // The prefix only affects the BRANCH; the worktree path is unchanged.
+  assert.equal(res.worktreePath, "/work/perch-worktrees/abc12-add-the-spawn-action");
+  assert.match(res.message, /branch feat\/dex\/abc12-add-the-spawn-action/);
+  const add = calls.find((c) => c.cmd === "git" && c.args.includes("worktree"));
+  assert.deepEqual(add!.args, [
+    "-C",
+    "/work/perch",
+    "worktree",
+    "add",
+    "-b",
+    "feat/dex/abc12-add-the-spawn-action",
+    "/work/perch-worktrees/abc12-add-the-spawn-action",
+    "origin/main",
+  ]);
 });
 
 test("runSpawn: threads the configured agent model + permission mode into the launch", async () => {
