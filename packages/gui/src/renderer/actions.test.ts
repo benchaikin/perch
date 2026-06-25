@@ -36,7 +36,6 @@ const CASES: Array<[keyof PerchActions, unknown, boolean]> = [
   ["openAgent", { headRefName: "h", repo: "r", number: 2 }, true],
   ["mergePr", { number: 3, repo: "r", headRefName: "h" }, true],
   ["openPr", "https://example.test/pr/4", false],
-  ["dismissAlert", "stack:r:b:ci-failing", true],
   ["serviceAction", { name: "svc", action: "start" }, false],
   ["servicesBulk", "startAll", false],
   ["serviceLogs", "svc", false],

@@ -1397,9 +1397,9 @@ body {
   background: rgba(var(--bad-rgb), 0.12);
 }
 
-/* The worktrees plugin's alert row, rendered in the dashboard alert bar
-   (.alerts-bar). A bad-toned row whose inner layout the WorktreesAlertWidget
-   owns, sharing the chip/dot/btn primitives. */
+/* The worktrees plugin's alert row, rendered in the Dashboard pane. A bad-toned
+   row whose inner layout the WorktreesAlertWidget owns, sharing the chip/dot/btn
+   primitives. */
 .alert {
   display: flex;
   align-items: center;
@@ -1528,15 +1528,6 @@ body {
 
 .alert-fallback > .btn {
   margin-left: auto;
-}
-
-/* The dashboard alert bar: actionable-PR alerts above the active pane. A stack of
-   alert items, each a clickable row (opens the PR) toned by its condition. */
-.alerts-bar {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  margin-bottom: 6px;
 }
 
 /* One alert: a row-like layout (mirrors .row) with a left accent bar tinted by

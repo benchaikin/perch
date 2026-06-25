@@ -32,9 +32,6 @@ const bridge: PerchBridge = {
   openPr(url) {
     ipcRenderer.send(Channels.openPr, url);
   },
-  dismissAlert(id) {
-    return ipcRenderer.invoke(Channels.dismissAlert, id);
-  },
   serviceAction(request) {
     ipcRenderer.send(Channels.serviceAction, request);
   },

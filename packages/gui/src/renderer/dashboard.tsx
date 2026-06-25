@@ -19,6 +19,10 @@ import { useEffect, useState } from "react";
 import { alertWidgets, type Alert } from "./alert-widgets.js";
 import { useActions } from "./actions.js";
 import { Loading, Message } from "./components.js";
+// Side-effect import: registers the stack plugin's widget into `alertWidgets` so
+// `pluginId: "stack"` alerts resolve to the StackAlertWidget rather than the
+// UnregisteredAlert fallback. (agents/worktrees widgets register from their panes.)
+import "./stack-alert-widget.js";
 
 /** How often the pane re-polls `alerts.list` while it's mounted (the active tab). */
 const POLL_INTERVAL_MS = 5_000;

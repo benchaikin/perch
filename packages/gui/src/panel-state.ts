@@ -298,14 +298,6 @@ export interface PanelState {
   /** A transient status toast, when one is active. */
   notice?: Notice;
   /**
-   * The active, non-dismissed alerts to surface in the dashboard alert bar,
-   * newest first — actionable conditions (e.g. PR states raised by the stack
-   * plugin, conflicted worktrees raised by the worktrees plugin). Empty while the
-   * daemon is down. The renderer resolves each alert's `pluginId` to a registered
-   * AlertWidget; an alert with no widget is skipped.
-   */
-  alerts: AlertView[];
-  /**
    * The process-compose "Services" section. `visible` is false (the renderer
    * omits the section) when process-compose is unreachable or reports no
    * services, so the panel is unchanged for users without it.
@@ -391,12 +383,6 @@ export interface BuildInput {
   mergingPrs?: string[];
   /** A transient status toast. */
   notice?: Notice;
-  /**
-   * The latest active, non-dismissed alerts (from the daemon's `alerts.list`),
-   * reconciled by the main process off the PR overview. Undefined until the first
-   * reconcile; cleared to `[]` in the pushed state while the daemon is down.
-   */
-  alerts?: AlertView[];
   /** The latest `services.list` data, or `undefined` if none has arrived yet. */
   servicesList?: ServiceList;
   /** The latest `dex.tasks` data, or `undefined` if none has arrived yet. */
@@ -563,19 +549,6 @@ export interface StackAlertSpec {
   id: string;
   /** The plugin-defined detail the renderer's `stack` widget reads. */
   payload: StackAlertPayload;
-}
-
-/**
- * An active alert as it reaches the renderer (the wire shape of core's `Alert`).
- * Mirrors the renderer-side `Alert` in `alert-widgets.tsx`; defined here too so
- * {@link PanelState} can carry it without the Electron-free shape layer importing
- * the renderer. `payload` is opaque — only the raising plugin's widget reads it.
- */
-export interface AlertView {
-  id: string;
-  pluginId: string;
-  raisedAt: number;
-  payload: unknown;
 }
 
 /**
@@ -856,9 +829,6 @@ export function buildPanelState(input: BuildInput): PanelState {
     mergePrAvailable: daemonUp ? !!input.mergePrAvailable : false,
     mergingPrs: input.mergingPrs ?? [],
     notice: input.notice,
-    // Alerts are reconciled into the daemon store off the overview; surface them
-    // only while the daemon is up (a down daemon has no live alert state).
-    alerts: daemonUp ? (input.alerts ?? []) : [],
     landableByTaskId,
     agentByTaskId,
     services: buildServicesSection(
