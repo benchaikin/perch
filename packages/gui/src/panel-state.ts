@@ -53,6 +53,8 @@ export const STACK_RESOLVE_CONFLICTS_ID = "stack.resolve-conflicts";
 export const STACK_OPEN_AGENT_ID = "stack.open-agent";
 /** Canonical capability id of the per-PR single-PR merge action. */
 export const STACK_MERGE_PR_ID = "stack.merge-pr";
+/** The stack plugin's id — the key its raised alerts (and AlertWidget) carry. */
+export const STACK_PLUGIN_ID = "stack";
 
 /** Normalized CI rollup for a PR (mirrors the stack plugin's `CiStatus`). */
 export type CiStatus = "pass" | "fail" | "pending" | "none";
@@ -296,6 +298,14 @@ export interface PanelState {
   /** A transient status toast, when one is active. */
   notice?: Notice;
   /**
+   * The active, non-dismissed alerts to surface in the dashboard alert bar,
+   * newest first — actionable PR states (needs-rebase, CI failing, review
+   * comments, ready-to-merge) raised by the stack plugin. Empty while the daemon
+   * is down. The renderer resolves each alert's `pluginId` to a registered
+   * AlertWidget; an alert with no widget is skipped.
+   */
+  alerts: AlertView[];
+  /**
    * The process-compose "Services" section. `visible` is false (the renderer
    * omits the section) when process-compose is unreachable or reports no
    * services, so the panel is unchanged for users without it.
@@ -381,6 +391,12 @@ export interface BuildInput {
   mergingPrs?: string[];
   /** A transient status toast. */
   notice?: Notice;
+  /**
+   * The latest active, non-dismissed alerts (from the daemon's `alerts.list`),
+   * reconciled by the main process off the PR overview. Undefined until the first
+   * reconcile; cleared to `[]` in the pushed state while the daemon is down.
+   */
+  alerts?: AlertView[];
   /** The latest `services.list` data, or `undefined` if none has arrived yet. */
   servicesList?: ServiceList;
   /** The latest `dex.tasks` data, or `undefined` if none has arrived yet. */
@@ -502,6 +518,112 @@ export function prCanMerge(pr: PrInfo): boolean {
     !(pr.needsRebase ?? false) &&
     pr.reviewDecision !== "CHANGES_REQUESTED"
   );
+}
+
+/**
+ * The actionable PR states the dashboard raises as alerts. Each maps to a stable
+ * alert id suffix (`stack:<repo>:<branch>:<condition>`) and to a labelled widget
+ * with the relevant action buttons:
+ * - `needs-rebase`   — the PR's base advanced past it (offer Sync).
+ * - `ci-failing`     — CI reported a failure (offer Open PR).
+ * - `review-comments`— a reviewer left inline comments to address (offer Open PR).
+ * - `ready-to-merge` — CI green AND approved, mergeable (offer Merge).
+ */
+export type StackAlertCondition =
+  | "needs-rebase"
+  | "ci-failing"
+  | "review-comments"
+  | "ready-to-merge";
+
+/**
+ * The opaque payload a `stack` alert carries to its renderer widget — everything
+ * the {@link StackAlertCondition} widget needs to label the alert and wire its
+ * action buttons (Sync/Merge/Open PR) without re-reading the overview. Defined
+ * here (the Electron-free shape layer) so both the main-process deriver and the
+ * renderer widget share one definition.
+ */
+export interface StackAlertPayload {
+  /** Which actionable state this alert represents. */
+  condition: StackAlertCondition;
+  /** The repo (name) the PR lives in — selects the target for Sync/Merge. */
+  repo: string;
+  /** The PR's head branch — the alert id key + the Merge/Sync in-flight key. */
+  branch: string;
+  /** The PR number, shown in the widget and passed to Merge. */
+  number: number;
+  /** The PR title, shown in the widget. */
+  title: string;
+  /** The PR's web URL — the Open PR button + the widget's click target. */
+  url: string;
+}
+
+/** A desired alert: its stable id and the payload its widget renders. */
+export interface StackAlertSpec {
+  /** `stack:<repo>:<branch>:<condition>` — stable across polls so re-raises dedupe. */
+  id: string;
+  /** The plugin-defined detail the renderer's `stack` widget reads. */
+  payload: StackAlertPayload;
+}
+
+/**
+ * An active alert as it reaches the renderer (the wire shape of core's `Alert`).
+ * Mirrors the renderer-side `Alert` in `alert-widgets.tsx`; defined here too so
+ * {@link PanelState} can carry it without the Electron-free shape layer importing
+ * the renderer. `payload` is opaque — only the raising plugin's widget reads it.
+ */
+export interface AlertView {
+  id: string;
+  pluginId: string;
+  raisedAt: number;
+  payload: unknown;
+}
+
+/**
+ * The actionable conditions a PR is currently in, in display order (most blocking
+ * first). Empty when the PR is clean / has nothing to act on. `ready-to-merge` is
+ * mutually exclusive with the blocking states by construction ({@link prCanMerge}
+ * already excludes a failing CI / needed rebase / requested changes).
+ */
+export function prAlertConditions(pr: PrInfo): StackAlertCondition[] {
+  const conditions: StackAlertCondition[] = [];
+  if (pr.needsRebase ?? false) conditions.push("needs-rebase");
+  if (pr.ciStatus === "fail") conditions.push("ci-failing");
+  if ((pr.humanReviewCommentCount ?? 0) > 0) conditions.push("review-comments");
+  if (prCanMerge(pr) && pr.reviewDecision === "APPROVED") conditions.push("ready-to-merge");
+  return conditions;
+}
+
+/**
+ * Derive the full set of `stack` alerts the dashboard should currently have
+ * raised, one per (PR, actionable condition), across every repo + stack layer in
+ * the overview. Pure: same overview → same specs, so the main process can diff it
+ * against the last-raised set to reconcile the daemon's alert store (raise the
+ * new, clear the resolved). Returns `[]` for an absent overview.
+ */
+export function deriveStackAlerts(overview: PrOverview | undefined): StackAlertSpec[] {
+  if (!overview) return [];
+  const specs: StackAlertSpec[] = [];
+  for (const repo of overview.repos) {
+    for (const group of repo.groups) {
+      const prs = group.kind === "pr" ? [group.pr] : group.layers;
+      for (const pr of prs) {
+        for (const condition of prAlertConditions(pr)) {
+          specs.push({
+            id: `stack:${repo.name}:${pr.headRefName}:${condition}`,
+            payload: {
+              condition,
+              repo: repo.name,
+              branch: pr.headRefName,
+              number: pr.number,
+              title: pr.title,
+              url: pr.url,
+            },
+          });
+        }
+      }
+    }
+  }
+  return specs;
 }
 
 /** Derive a single rendered PR row from a raw {@link PrInfo} in repo `repoName`. */
@@ -733,6 +855,9 @@ export function buildPanelState(input: BuildInput): PanelState {
     mergePrAvailable: daemonUp ? !!input.mergePrAvailable : false,
     mergingPrs: input.mergingPrs ?? [],
     notice: input.notice,
+    // Alerts are reconciled into the daemon store off the overview; surface them
+    // only while the daemon is up (a down daemon has no live alert state).
+    alerts: daemonUp ? (input.alerts ?? []) : [],
     landableByTaskId,
     agentByTaskId,
     services: buildServicesSection(
