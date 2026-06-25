@@ -325,27 +325,6 @@ test("deriveStackAlerts returns [] for an absent overview", () => {
   assert.deepEqual(deriveStackAlerts(undefined), []);
 });
 
-test("buildPanelState carries alerts through and clears them when the daemon is down", () => {
-  const alerts = [
-    {
-      id: "stack:r:b:ci-failing",
-      pluginId: "stack",
-      raisedAt: 1,
-      payload: { condition: "ci-failing" },
-    },
-  ];
-  const up = buildPanelState({
-    daemonUp: true,
-    syncAvailable: true,
-    overview: { repos: [] },
-    alerts,
-  });
-  assert.deepEqual(up.alerts, alerts);
-  // A down daemon has no live alert state, so the pushed state shows none.
-  const down = buildPanelState({ daemonUp: false, syncAvailable: false, alerts });
-  assert.deepEqual(down.alerts, []);
-});
-
 test("buildPanelState surfaces a daemon-down state without crashing", () => {
   const state = buildPanelState({ daemonUp: false, syncAvailable: false });
   assert.equal(state.status, "daemon-down");

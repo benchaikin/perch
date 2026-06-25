@@ -41,9 +41,6 @@ export function createActions(bridge: () => PerchActions): PerchActions {
     openPr(url) {
       bridge().openPr(url);
     },
-    dismissAlert(id) {
-      return bridge().dismissAlert(id);
-    },
     serviceAction(request) {
       bridge().serviceAction(request);
     },

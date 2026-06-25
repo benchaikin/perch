@@ -79,7 +79,6 @@ import {
   STACK_PRS_ID,
   STACK_RESOLVE_CONFLICTS_ID,
   STACK_SYNC_ID,
-  type AlertView,
   type BuildInput,
   type Notice,
   type PanelState,
@@ -358,9 +357,9 @@ async function connect(): Promise<void> {
       buildInput.overview = note.data as PrOverview;
       buildInput.error = undefined;
       pushState();
-      // The overview changed — reconcile the alert store and push again with the
-      // refreshed alerts (the PR rows already updated on the push above).
-      void refreshAlerts();
+      // The overview changed — reconcile the daemon's alert store so the Dashboard
+      // pane's next poll reflects it (the PR rows already updated on the push above).
+      void reconcileAlerts();
     } else if (note.id === SERVICES_LIST_ID && note.inputKey === servicesKey) {
       buildInput.servicesList = note.data as ServiceList;
       pushState();
@@ -370,9 +369,9 @@ async function connect(): Promise<void> {
     } else if (note.id === WORKTREES_LIST_ID && note.inputKey === worktreesKey) {
       buildInput.worktreesList = note.data as WorktreeList;
       pushState();
-      // A worktrees change reconciles conflict alerts on the same poll; re-read
-      // the alert store so the dashboard banner tracks worktree raises and clears.
-      void refreshAlerts();
+      // A worktrees change reconciles conflict alerts on the same poll; reconcile
+      // the alert store so the Dashboard pane tracks worktree raises and clears.
+      void reconcileAlerts();
     } else if (note.id === AGENTS_LIST_ID && note.inputKey === agentsKey) {
       buildInput.agentFleet = note.data as AgentFleet;
       pushState();
@@ -461,7 +460,7 @@ async function connect(): Promise<void> {
   }
 
   // Seed the alert store from the initial overview now that we're subscribed.
-  void refreshAlerts();
+  void reconcileAlerts();
 }
 
 /** Re-invoke `stack.prs` on demand (Refresh button). */
@@ -477,7 +476,7 @@ async function refresh(): Promise<void> {
     buildInput.error = `stack.prs: ${errorMessage(err)}`;
   }
   pushState();
-  void refreshAlerts();
+  void reconcileAlerts();
 }
 
 /**
@@ -542,7 +541,7 @@ async function reloadFromRegistry(): Promise<void> {
   pushState();
   // The stack plugin may have been enabled/disabled or its repos changed — its
   // overview just refreshed (or cleared), so reconcile alerts to match.
-  void refreshAlerts();
+  void reconcileAlerts();
 }
 
 /** Pending auto-dismiss timer for the transient notice toast. */
@@ -1324,11 +1323,12 @@ let raisedAlertIds = new Set<string>();
 /**
  * Reconcile the daemon's alert store against the current PR overview: raise every
  * actionable PR condition (needs-rebase / CI failing / review comments /
- * ready-to-merge) and clear the ones that have since resolved, then re-read the
- * non-dismissed list into the view-model. Raising is idempotent, so re-raising
- * the still-active set each poll self-heals a daemon restart; the persisted
- * dismiss list keeps a user-dismissed alert filtered even as it's re-raised.
- * No-op without a client; a failure is logged and leaves the last alerts in place.
+ * ready-to-merge) and clear the ones that have since resolved. Raising is
+ * idempotent, so re-raising the still-active set each poll self-heals a daemon
+ * restart; the persisted dismiss list keeps a user-dismissed alert filtered even
+ * as it's re-raised. The Dashboard pane polls `alerts.list` itself, so this is a
+ * pure producer — nothing reads the result back into the pushed state. No-op
+ * without a client; a failure is logged and leaves the last alerts in place.
  */
 async function reconcileAlerts(): Promise<void> {
   if (!client) return;
@@ -1342,34 +1342,25 @@ async function reconcileAlerts(): Promise<void> {
       await client.alertsRaise({ id: spec.id, pluginId: STACK_PLUGIN_ID, payload: spec.payload });
     }
     raisedAlertIds = desired;
-    buildInput.alerts = (await client.alertsList()) as AlertView[];
   } catch (err) {
     console.error(`[alerts] reconcile failed: ${errorMessage(err)}`);
   }
 }
 
-/** Reconcile alerts off the latest overview, then push the refreshed state. */
-async function refreshAlerts(): Promise<void> {
-  await reconcileAlerts();
-  pushState();
-}
-
 /**
- * Dismiss a dashboard alert (the bar's ✕): persist the dismissal — the daemon
- * drops it from the active store and records the id so a re-raise of the same
- * condition stays filtered — re-read the list, and push so the alert leaves the
- * bar. The id stays in {@link raisedAlertIds} (it's still raised, just filtered),
- * so a later reconcile won't spuriously clear it. No-op without a client.
+ * Dismiss a dashboard alert (the Dashboard pane's ✕): persist the dismissal — the
+ * daemon drops it from the active store and records the id so a re-raise of the
+ * same condition stays filtered. The id stays in {@link raisedAlertIds} (it's
+ * still raised, just filtered), so a later reconcile won't spuriously clear it.
+ * The Dashboard pane updates optimistically and reconciles on its next poll, so
+ * the main process just forwards to the daemon. No-op without a client.
  */
 async function dismissAlert(id: string): Promise<void> {
   if (!client) return;
   try {
     await client.alertsDismiss({ id });
-    buildInput.alerts = (await client.alertsList()) as AlertView[];
   } catch (err) {
     console.error(`[alerts] dismiss failed: ${errorMessage(err)}`);
-  } finally {
-    pushState();
   }
 }
 
@@ -1850,8 +1841,6 @@ function registerIpc(): void {
   ipcMain.on(Channels.refresh, () => void refresh());
   ipcMain.on(Channels.sync, (_event, repo: string) => void sync(repo));
   ipcMain.on(Channels.openPr, (_event, url: string) => openPr(url));
-  // Dismiss uses `handle` so the renderer can await the persisted dismissal.
-  ipcMain.handle(Channels.dismissAlert, (_event, id: string) => dismissAlert(id));
   ipcMain.on(
     Channels.serviceAction,
     (_event, request: ServiceActionRequest) => void serviceAction(request),
