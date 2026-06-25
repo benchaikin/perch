@@ -553,15 +553,15 @@ const twoPrOverview: PrOverview = {
 };
 
 test("buildPanelState always emits a PRs tab, Services only when present", () => {
-  // No services list → just the PRs tab (plus the always-present Dashboard tab).
+  // No services list → just the PRs tab (with the always-present Dashboard tab first).
   const noSvc = buildPanelState({ overview: twoPrOverview, daemonUp: true, syncAvailable: true });
   assert.deepEqual(
     noSvc.tabs.map((t) => t.id),
-    ["stack.prs", "dashboard"],
+    ["dashboard", "stack.prs"],
   );
-  assert.equal(noSvc.tabs[0]!.label, "PRs");
+  assert.equal(noSvc.tabs[0]!.label, "Dashboard");
 
-  // With a live services list → PRs first, Services second, Dashboard last.
+  // With a live services list → Dashboard first, PRs second, Services third.
   const withSvc = buildPanelState({
     overview: twoPrOverview,
     daemonUp: true,
@@ -570,7 +570,7 @@ test("buildPanelState always emits a PRs tab, Services only when present", () =>
   });
   assert.deepEqual(
     withSvc.tabs.map((t) => t.id),
-    ["stack.prs", "services.list", "dashboard"],
+    ["dashboard", "stack.prs", "services.list"],
   );
 });
 
@@ -599,8 +599,9 @@ test("PRs tab badge counts open PRs and tones by worst health", () => {
   // All-clean repo → ok tone.
   const clean: PrOverview = { repos: [{ name: "r", groups: [{ kind: "pr", pr: { ...basePr } }] }] };
   const okState = buildPanelState({ overview: clean, daemonUp: true, syncAvailable: true });
-  assert.equal(okState.tabs[0]!.badge?.count, 1);
-  assert.equal(okState.tabs[0]!.badge?.tone, "ok");
+  const okPrs = okState.tabs.find((t) => t.id === "stack.prs")!;
+  assert.equal(okPrs.badge?.count, 1);
+  assert.equal(okPrs.badge?.tone, "ok");
 });
 
 test("Services tab badge is a bare dot toned by worst service health", () => {
@@ -671,7 +672,7 @@ test("Dex tab appears via the registry when the board is non-empty", () => {
   });
   assert.deepEqual(
     state.tabs.map((t) => t.id),
-    ["stack.prs", "dex.tasks", "dashboard"],
+    ["dashboard", "stack.prs", "dex.tasks"],
   );
   const dex = state.tabs.find((t) => t.id === "dex.tasks")!;
   assert.equal(dex.label, "Dex");
@@ -724,10 +725,11 @@ test("buildPanelState: no PRs → PRs tab with a bare muted badge", () => {
   const down = buildPanelState({ daemonUp: false, syncAvailable: false });
   assert.deepEqual(
     down.tabs.map((t) => t.id),
-    ["stack.prs", "dashboard"],
+    ["dashboard", "stack.prs"],
   );
-  assert.equal(down.tabs[0]!.badge?.count, undefined);
-  assert.equal(down.tabs[0]!.badge?.tone, "muted");
+  const downPrs = down.tabs.find((t) => t.id === "stack.prs")!;
+  assert.equal(downPrs.badge?.count, undefined);
+  assert.equal(downPrs.badge?.tone, "muted");
 
   // "empty" (repos present but no PRs) likewise shows a muted PRs badge.
   const empty = buildPanelState({
@@ -736,7 +738,8 @@ test("buildPanelState: no PRs → PRs tab with a bare muted badge", () => {
     syncAvailable: true,
   });
   assert.equal(empty.status, "empty");
-  assert.equal(empty.tabs[0]!.badge?.tone, "muted");
+  const emptyPrs = empty.tabs.find((t) => t.id === "stack.prs")!;
+  assert.equal(emptyPrs.badge?.tone, "muted");
 });
 
 test("buildPanelState joins the agent fleet onto the matching dex row", () => {

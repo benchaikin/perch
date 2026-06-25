@@ -742,13 +742,24 @@ interface TabSpec {
 }
 
 /**
- * The ordered tab registry: PRs first (always), then Services and Dex when their
- * sections are visible. Each spec owns its badge logic — PRs shows the open-PR
- * count tinted by worst PR health (a bare muted dot when there are none);
- * Services a bare status dot; Dex the ready+blocked count tinted by worst dex
- * health (blocked → red), or a bare dot when nothing's waiting.
+ * The ordered tab registry: Dashboard first (always) as the alerts home, then
+ * PRs (always), then Services and Dex when their sections are visible. Each spec
+ * owns its badge logic — PRs shows the open-PR count tinted by worst PR health (a
+ * bare muted dot when there are none); Services a bare status dot; Dex the
+ * ready+blocked count tinted by worst dex health (blocked → red), or a bare dot
+ * when nothing's waiting.
  */
 const TAB_SPECS: readonly TabSpec[] = [
+  {
+    id: DASHBOARD_TAB_ID,
+    label: "Dashboard",
+    icon: "bell",
+    // Always available — it's the home for plugin alerts, which the pane polls
+    // for itself. No badge: alerts never reach the pushed PanelState (the pane
+    // owns its own poll), so there's no count here to glance at.
+    visible: () => true,
+    badge: () => undefined,
+  },
   {
     id: STACK_TAB_ID,
     label: "PRs",
@@ -787,16 +798,6 @@ const TAB_SPECS: readonly TabSpec[] = [
       count: worktrees.counts.total,
       tone: worstWorktreeHealth(worktrees),
     }),
-  },
-  {
-    id: DASHBOARD_TAB_ID,
-    label: "Dashboard",
-    icon: "bell",
-    // Always available — it's the home for plugin alerts, which the pane polls
-    // for itself. No badge: alerts never reach the pushed PanelState (the pane
-    // owns its own poll), so there's no count here to glance at.
-    visible: () => true,
-    badge: () => undefined,
   },
 ];
 
