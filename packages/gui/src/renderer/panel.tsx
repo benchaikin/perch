@@ -200,7 +200,9 @@ export function Panel(): JSX.Element {
         </button>
       </header>
       <hr className="rule" />
-      {state && state.alerts.length > 0 && <AlertsBar alerts={state.alerts} />}
+      {state && state.alerts.length > 0 && activeId !== DASHBOARD_TAB_ID && (
+        <AlertsBar alerts={state.alerts} />
+      )}
       <PaneBody activeId={activeId} state={state} />
       <Notice notice={state?.notice} />
     </>
