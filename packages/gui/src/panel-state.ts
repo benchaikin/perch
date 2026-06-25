@@ -42,6 +42,7 @@ import {
 } from "./landable.js";
 import { deriveAgentByTaskId, type AgentFleet, type AgentSummary } from "./agents-state.js";
 import type { DexViewMode, DialogSize } from "./window-state.js";
+import type { Alert } from "./ipc.js";
 
 /** Canonical capability id of the cross-repo "My PRs" read the panel renders. */
 export const STACK_PRS_ID = "stack.prs";
@@ -397,6 +398,13 @@ export interface BuildInput {
   worktreesList?: WorktreeList;
   /** The latest `agents.list` fleet, or `undefined` if none has arrived yet. */
   agentFleet?: AgentFleet;
+  /**
+   * The active alerts the daemon currently has raised (the same set the Dashboard
+   * pane polls via `alerts.list`), or `undefined` if none has arrived yet. Feeds
+   * only the Dashboard tab's count badge — the pane still owns the alert list it
+   * renders.
+   */
+  alerts?: Alert[];
   /** Service names with an in-flight start/stop/restart — their buttons spin. */
   servicesActing?: string[];
   /**
@@ -699,6 +707,7 @@ interface TabContext {
   services: ServicesSection;
   dex: DexSection;
   worktrees: WorktreesSection;
+  alerts: Alert[];
 }
 
 /**
@@ -717,7 +726,8 @@ interface TabSpec {
 /**
  * The ordered tab registry: Dashboard first (always) as the alerts home, then
  * PRs (always), then Services and Dex when their sections are visible. Each spec
- * owns its badge logic — PRs shows the open-PR count tinted by worst PR health (a
+ * owns its badge logic — Dashboard shows the active-alert count (a bare muted dot
+ * when there are none); PRs shows the open-PR count tinted by worst PR health (a
  * bare muted dot when there are none); Services a bare status dot; Dex the
  * ready+blocked count tinted by worst dex health (blocked → red), or a bare dot
  * when nothing's waiting.
@@ -727,11 +737,13 @@ const TAB_SPECS: readonly TabSpec[] = [
     id: DASHBOARD_TAB_ID,
     label: "Dashboard",
     icon: "bell",
-    // Always available — it's the home for plugin alerts, which the pane polls
-    // for itself. No badge: alerts never reach the pushed PanelState (the pane
-    // owns its own poll), so there's no count here to glance at.
+    // Always available — it's the home for plugin alerts. The pane renders the
+    // alert list from its own `alerts.list` poll; the badge shows the active
+    // count (tinted `warn`, since an alert is always something to act on), or a
+    // bare muted dot when there are none.
     visible: () => true,
-    badge: () => undefined,
+    badge: ({ alerts }) =>
+      alerts.length > 0 ? { count: alerts.length, tone: "warn" } : { tone: "muted" },
   },
   {
     id: STACK_TAB_ID,
@@ -847,6 +859,11 @@ export function buildPanelState(input: BuildInput): PanelState {
     worktrees: buildWorktreesSection(worktreesList, link.taskByWorktreePath),
   };
 
+  // The active alerts feed only the Dashboard tab's count badge. Gated on
+  // `daemonUp` so a stale set can't outlive the daemon (its alerts are in-memory
+  // and lost on restart) — daemon down → a bare muted dot.
+  const alerts = daemonUp ? input.alerts ?? [] : [];
+
   if (!daemonUp) {
     return {
       status: "daemon-down",
@@ -859,6 +876,7 @@ export function buildPanelState(input: BuildInput): PanelState {
         services: live.services,
         dex: live.dex,
         worktrees: live.worktrees,
+        alerts,
       }),
     };
   }
@@ -875,6 +893,7 @@ export function buildPanelState(input: BuildInput): PanelState {
         services: live.services,
         dex: live.dex,
         worktrees: live.worktrees,
+        alerts,
       }),
     };
   }
@@ -891,6 +910,7 @@ export function buildPanelState(input: BuildInput): PanelState {
         services: live.services,
         dex: live.dex,
         worktrees: live.worktrees,
+        alerts,
       }),
     };
   }
@@ -911,6 +931,7 @@ export function buildPanelState(input: BuildInput): PanelState {
     services: live.services,
     dex: live.dex,
     worktrees: live.worktrees,
+    alerts,
   });
   if (!anyContent) {
     return { status: "empty", message: "No open PRs", repos, syncAvailable, ...live, tabs };
