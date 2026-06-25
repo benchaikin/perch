@@ -110,6 +110,38 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+// electron-liquid-glass is a native node-addon that esbuild leaves external (see
+// esbuild.mjs), so it's pulled in via the bundle's runtime `require` rather than a
+// static import. Tolerate its absence — a packaged build without the addon should
+// fall back to the opaque panel, not crash on load. The structural type mirrors the
+// slice of the addon's API we use (its default export is a singleton instance).
+interface LiquidGlassApi {
+  isGlassSupported(): boolean;
+  addView(
+    handle: Buffer,
+    options?: { cornerRadius?: number; tintColor?: string; opaque?: boolean },
+  ): number;
+}
+declare const require: NodeRequire;
+function loadLiquidGlass(): LiquidGlassApi | null {
+  try {
+    return (require("electron-liquid-glass") as { default: LiquidGlassApi }).default;
+  } catch (err) {
+    console.error(`[liquid-glass] native module unavailable: ${errorMessage(err)}`);
+    return null;
+  }
+}
+
+const liquidGlass = loadLiquidGlass();
+/**
+ * Whether the native macOS liquid-glass background can be used: the addon loaded
+ * and the OS supports it (macOS 26+). Drives `transparent` at window creation; when
+ * false, windows keep today's opaque `backgroundColor` + opaque renderer body.
+ */
+const LIQUID_GLASS_SUPPORTED = liquidGlass?.isGlassSupported() ?? false;
+/** Windows that already had the glass NSView attached, so a reload doesn't stack a second one. */
+const glassedWindows = new WeakSet<BrowserWindow>();
+
 /** Where the user's resized panel size is persisted (GUI-local UI state). */
 function windowStatePath(): string {
   return join(app.getPath("userData"), "window-state.json");
@@ -1437,6 +1469,28 @@ function saveCurrentSize(win: BrowserWindow): void {
   }
 }
 
+/**
+ * Insert the native macOS glass NSView behind the web content and let it show
+ * through by making the renderer body transparent (via the `liquid-glass` class).
+ * No-op — leaving the panel's opaque body in place — when glass is unsupported or
+ * the addon fails to attach, so a `transparent` window is never left as a broken
+ * see-through rectangle. The glass view is added once per window; the body class is
+ * (re)applied on every load since a reload resets the DOM.
+ */
+function applyLiquidGlass(win: BrowserWindow): void {
+  if (!liquidGlass || !LIQUID_GLASS_SUPPORTED) return;
+  if (!glassedWindows.has(win)) {
+    // cornerRadius matches the panel's rounded float; opaque keeps content legible.
+    const viewId = liquidGlass.addView(win.getNativeWindowHandle(), {
+      cornerRadius: 12,
+      opaque: true,
+    });
+    if (viewId < 0) return; // addon failed to attach — keep the opaque body.
+    glassedWindows.add(win);
+  }
+  void win.webContents.executeJavaScript('document.body.classList.add("liquid-glass");');
+}
+
 /** Create the frameless, always-on-top, non-activating panel window (hidden). */
 function createPanel(): BrowserWindow {
   // Restore the user's last size (or the default), clamped to the minimum, the
@@ -1459,8 +1513,17 @@ function createPanel(): BrowserWindow {
     alwaysOnTop: true,
     // Non-activating: clicking the panel doesn't steal focus from the editor.
     focusable: true,
-    // Matches theme.css's --bg (darkened base / nord6) so there's no pre-paint flash.
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1c2123" : "#eceff4",
+    // Required by electron-liquid-glass: the native glass NSView sits behind the
+    // web content, so the window must be transparent for it to show through.
+    transparent: LIQUID_GLASS_SUPPORTED,
+    // A transparent window can't also paint an opaque fill (it would hide the
+    // glass), so drop it there; otherwise keep the opaque fill matching theme.css's
+    // --bg (darkened base / nord6) so there's no pre-paint flash.
+    backgroundColor: LIQUID_GLASS_SUPPORTED
+      ? "#00000000"
+      : nativeTheme.shouldUseDarkColors
+        ? "#1c2123"
+        : "#eceff4",
     webPreferences: {
       preload: join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -1504,7 +1567,10 @@ function createPanel(): BrowserWindow {
   // the first pushState() (from showPanel, right after show()) races the
   // renderer registering its onState listener — the message is dropped and the
   // panel paints blank until the next refresh/poll.
-  win.webContents.on("did-finish-load", () => pushState());
+  win.webContents.on("did-finish-load", () => {
+    pushState();
+    applyLiquidGlass(win);
+  });
 
   // Surface renderer/preload failures in the main process log (otherwise a
   // renderer exception is silent and the panel just sits blank).
