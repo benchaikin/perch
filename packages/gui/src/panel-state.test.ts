@@ -18,6 +18,12 @@ import {
   type PrOverview,
 } from "./panel-state.js";
 import type { LandableState } from "./landable.js";
+import type { Alert } from "./ipc.js";
+
+/** A minimal active alert for the Dashboard tab badge tests. */
+function makeAlert(id: string): Alert {
+  return { id, pluginId: "stack", raisedAt: 0, payload: {} };
+}
 
 test("ciChip maps each status to a tone", () => {
   assert.equal(ciChip("pass").tone, "ok");
@@ -553,20 +559,45 @@ test("buildPanelState always emits a PRs tab, Services only when present", () =>
   );
 });
 
-test("the Dashboard tab is always present with no badge", () => {
+test("the Dashboard tab is always present with an alert-count badge", () => {
   // Always visible (alerts span every plugin and the pane polls for itself), even
   // with the daemon down — it's the stable home for alerts and shows its own empty
-  // state. It carries no badge: alert counts never reach the pushed PanelState.
+  // state. With no alerts it carries a bare muted dot.
   const up = buildPanelState({ overview: twoPrOverview, daemonUp: true, syncAvailable: true });
   const upTab = up.tabs.find((t) => t.id === "dashboard")!;
   assert.equal(upTab.label, "Dashboard");
-  assert.equal(upTab.badge, undefined);
+  assert.equal(upTab.badge?.count, undefined);
+  assert.equal(upTab.badge?.tone, "muted");
 
   const down = buildPanelState({ daemonUp: false, syncAvailable: false });
-  assert.ok(
-    down.tabs.some((t) => t.id === "dashboard"),
-    "Dashboard tab should show even when the daemon is down",
-  );
+  const downTab = down.tabs.find((t) => t.id === "dashboard")!;
+  assert.ok(downTab, "Dashboard tab should show even when the daemon is down");
+  // Daemon down → no alerts → a bare muted dot (a stale set can't outlive the daemon).
+  assert.equal(downTab.badge?.count, undefined);
+  assert.equal(downTab.badge?.tone, "muted");
+});
+
+test("the Dashboard tab badge counts active alerts, toned warn", () => {
+  const state = buildPanelState({
+    overview: twoPrOverview,
+    daemonUp: true,
+    syncAvailable: true,
+    alerts: [makeAlert("stack:r:b:ci-failing"), makeAlert("worktrees:wt:conflict")],
+  });
+  const dash = state.tabs.find((t) => t.id === "dashboard")!;
+  assert.equal(dash.badge?.count, 2);
+  assert.equal(dash.badge?.tone, "warn");
+});
+
+test("the Dashboard tab badge ignores alerts while the daemon is down", () => {
+  const down = buildPanelState({
+    daemonUp: false,
+    syncAvailable: false,
+    alerts: [makeAlert("stack:r:b:ci-failing")],
+  });
+  const dash = down.tabs.find((t) => t.id === "dashboard")!;
+  assert.equal(dash.badge?.count, undefined);
+  assert.equal(dash.badge?.tone, "muted");
 });
 
 test("PRs tab badge counts open PRs and tones by worst health", () => {

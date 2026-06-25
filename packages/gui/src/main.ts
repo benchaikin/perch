@@ -343,6 +343,7 @@ async function connect(): Promise<void> {
       // The daemon's active alerts are in-memory; a fresh one starts empty, so
       // forget what we'd raised and let the next reconcile re-raise from scratch.
       raisedAlertIds.clear();
+      buildInput.alerts = [];
       pushState();
       return;
     }
@@ -375,6 +376,9 @@ async function connect(): Promise<void> {
     } else if (note.id === AGENTS_LIST_ID && note.inputKey === agentsKey) {
       buildInput.agentFleet = note.data as AgentFleet;
       pushState();
+      // Agents raise their own alerts daemon-side — refresh the Dashboard tab's
+      // count badge so it tracks them too.
+      void refreshActiveAlerts();
     }
   });
 
@@ -1326,9 +1330,10 @@ let raisedAlertIds = new Set<string>();
  * ready-to-merge) and clear the ones that have since resolved. Raising is
  * idempotent, so re-raising the still-active set each poll self-heals a daemon
  * restart; the persisted dismiss list keeps a user-dismissed alert filtered even
- * as it's re-raised. The Dashboard pane polls `alerts.list` itself, so this is a
- * pure producer — nothing reads the result back into the pushed state. No-op
- * without a client; a failure is logged and leaves the last alerts in place.
+ * as it's re-raised. The Dashboard pane polls `alerts.list` itself for the list it
+ * renders; afterwards we refresh the active set into the pushed state to feed the
+ * Dashboard tab's count badge. No-op without a client; a failure is logged and
+ * leaves the last alerts in place.
  */
 async function reconcileAlerts(): Promise<void> {
   if (!client) return;
@@ -1345,6 +1350,27 @@ async function reconcileAlerts(): Promise<void> {
   } catch (err) {
     console.error(`[alerts] reconcile failed: ${errorMessage(err)}`);
   }
+  // The store may have changed (raises/clears above, plus alerts other plugins
+  // raise daemon-side) — refresh the Dashboard tab's count badge to match.
+  await refreshActiveAlerts();
+}
+
+/**
+ * Pull the daemon's active alerts into the build input so the Dashboard tab's
+ * count badge reflects them, then push. The Dashboard pane still renders the
+ * alert *list* from its own `alerts.list` poll; this only feeds the glanceable
+ * count. No-op without a client; a failure is logged and leaves the last count
+ * in place.
+ */
+async function refreshActiveAlerts(): Promise<void> {
+  if (!client) return;
+  try {
+    buildInput.alerts = await client.alertsList();
+  } catch (err) {
+    console.error(`[alerts] refresh failed: ${errorMessage(err)}`);
+    return;
+  }
+  pushState();
 }
 
 /**
