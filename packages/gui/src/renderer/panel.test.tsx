@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { App } from "./panel.js";
-import { buildPanelState, SERVICES_TAB_ID } from "../panel-state.js";
+import { buildPanelState, SERVICES_TAB_ID, STACK_TAB_ID } from "../panel-state.js";
 import type { PanelState } from "../panel-state.js";
 import type { PerchBridge } from "../ipc.js";
 
@@ -68,13 +68,14 @@ function tabButtons(container: HTMLElement): HTMLElement[] {
 
 test("clicking a tab selects it, switches the pane, and persists the choice", () => {
   const base = emptyState();
+  const prsTab = base.tabs.find((t) => t.id === STACK_TAB_ID)!;
   const servicesTab = { id: SERVICES_TAB_ID, label: "Services", icon: "gears" };
-  const state: PanelState = { ...base, tabs: [base.tabs[0]!, servicesTab] };
+  const state: PanelState = { ...base, tabs: [prsTab, servicesTab] };
 
   const { container } = render(<App />);
   emit(state);
 
-  // PRs is seeded active: its empty-state message shows through the body slot.
+  // PRs is seeded active (first tab): its empty-state message shows through the body slot.
   const rows = container.querySelector("#rows")!;
   assert.match(rows.textContent ?? "", /No open PRs/);
   let [prsBtn, servicesBtn] = tabButtons(container);
@@ -99,14 +100,14 @@ test("the active tab falls back to the first tab when the saved id is gone", () 
   const { container } = render(<App />);
   emit(state);
 
-  // PRs + the always-present Dashboard tab; the saved (now-gone) id falls back to
-  // the first tab, PRs.
+  // The always-present Dashboard tab (leftmost) + PRs; the saved (now-gone) id
+  // falls back to the first tab, Dashboard.
   const tabs = tabButtons(container);
   assert.equal(tabs.length, 2);
   assert.ok(tabs[0]!.classList.contains("tab-active"));
-  assert.equal(tabs[0]!.getAttribute("aria-label"), "PRs");
+  assert.equal(tabs[0]!.getAttribute("aria-label"), "Dashboard");
   assert.ok(!tabs[1]!.classList.contains("tab-active"));
-  assert.equal(tabs[1]!.getAttribute("aria-label"), "Dashboard");
+  assert.equal(tabs[1]!.getAttribute("aria-label"), "PRs");
 });
 
 test("refresh spins the icon until the next state push clears it", () => {
