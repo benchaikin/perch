@@ -23,6 +23,15 @@ body {
   -webkit-user-select: none;
 }
 
+/* When the native macOS liquid-glass background is active, the main process adds
+   this class so the panel's content floats over the glass instead of an opaque
+   fill. Inner surfaces/cards keep their own solid colors, so only the empty gaps
+   go glassy and text stays legible. Without the class (unsupported macOS) the body
+   keeps its opaque --bg fill above. */
+body.liquid-glass {
+  background: transparent;
+}
+
 .panel {
   display: flex;
   flex-direction: column;

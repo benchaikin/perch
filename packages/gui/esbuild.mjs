@@ -70,7 +70,10 @@ const configs = [
     platform: "node",
     format: "esm",
     target: "node22",
-    external: ["electron"],
+    // electron-liquid-glass is a native node-addon (ships a prebuilt `.node` and
+    // require()s node-gyp-build); esbuild can't inline it, so leave it as a
+    // runtime require resolved from node_modules (see the `require` banner below).
+    external: ["electron", "electron-liquid-glass"],
     // ESM output has no `require`, but bundled CJS deps (e.g. vscode-jsonrpc)
     // do a runtime `require("util")`. esbuild's `__require` shim uses the
     // ambient `require` if one exists, else throws "Dynamic require ... not
