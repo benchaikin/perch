@@ -82,13 +82,16 @@ export type Worktrees = z.infer<typeof Worktrees>;
 /**
  * Extract the dex task id a branch encodes, per the shared convention: a branch
  * named `dex/<id>` or `dex/<id>-<slug>`, where `<id>` is a run of lowercase
- * alphanumerics (`[a-z0-9]`) immediately after the literal `dex/` prefix, up to
- * the next `-`/`/`/end. A branch that doesn't start with `dex/` (or is
- * undefined/detached/empty) → undefined.
+ * alphanumerics (`[a-z0-9]`) immediately after the literal `dex/` token, up to
+ * the next `-`/`/`/end. The `dex/` token may be the start of the branch or follow
+ * an optional leading prefix segment (the configurable `git.branchPrefix`), so
+ * both `dex/<id>-<slug>` and `<prefix>/dex/<id>-<slug>` resolve to the same id —
+ * this is the reader half that must stay in sync with the dex spawn's `branchFor`.
+ * A branch without a `dex/` token (or undefined/detached/empty) → undefined.
  */
 export function parseDexTaskId(branch: string | undefined): string | undefined {
   if (!branch) return undefined;
-  const m = /^dex\/([a-z0-9]+)/.exec(branch);
+  const m = /(?:^|\/)dex\/([a-z0-9]+)/.exec(branch);
   return m ? m[1] : undefined;
 }
 

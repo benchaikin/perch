@@ -11,6 +11,11 @@ test("gitConfigOf: narrows global.git, {} on miss or invalid", () => {
   assert.deepEqual(gitConfigOf({ git: { gitBin: "/opt/homebrew/bin/git" } }), {
     gitBin: "/opt/homebrew/bin/git",
   });
+  // The optional branch prefix narrows alongside gitBin.
+  assert.deepEqual(gitConfigOf({ git: { gitBin: "git", branchPrefix: "feat" } }), {
+    gitBin: "git",
+    branchPrefix: "feat",
+  });
   assert.deepEqual(gitConfigOf({}), {});
   assert.deepEqual(gitConfigOf(undefined), {});
   assert.deepEqual(gitConfigOf("nope"), {});
@@ -18,11 +23,14 @@ test("gitConfigOf: narrows global.git, {} on miss or invalid", () => {
   assert.deepEqual(gitConfigOf({ git: "bad" }), {});
 });
 
-test("GIT_SETTINGS_FIELDS: a single git.gitBin string field defaulting to git", () => {
-  assert.equal(GIT_SETTINGS_FIELDS.length, 1);
-  const [field] = GIT_SETTINGS_FIELDS;
-  assert.ok(field);
-  assert.equal(field.key, "git.gitBin");
-  assert.equal(field.type, "string");
-  assert.equal(field.default, "git");
+test("GIT_SETTINGS_FIELDS: a git.gitBin field and an optional git.branchPrefix field", () => {
+  assert.equal(GIT_SETTINGS_FIELDS.length, 2);
+  const gitBin = GIT_SETTINGS_FIELDS.find((f) => f.key === "git.gitBin");
+  assert.ok(gitBin);
+  assert.equal(gitBin.type, "string");
+  assert.equal(gitBin.default, "git");
+  const prefix = GIT_SETTINGS_FIELDS.find((f) => f.key === "git.branchPrefix");
+  assert.ok(prefix);
+  assert.equal(prefix.type, "string");
+  assert.equal(prefix.default, "");
 });

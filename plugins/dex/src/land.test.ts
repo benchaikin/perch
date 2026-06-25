@@ -275,6 +275,23 @@ test("runLand: merged + clean + has CI → reaps (worktree remove, branch -d, de
   assert.equal(complete!.cwd, "/work/perch");
 });
 
+test("runLand: a prefixed branch (<prefix>/dex/...) still resolves its task id and reaps", async () => {
+  const wt = "/work/perch-worktrees/abc12-foo";
+  const { exec, calls } = stub({
+    worktrees: porcelain("/work/perch", [{ path: wt, branch: "feat/dex/abc12-foo" }]),
+    prByBranch: { "feat/dex/abc12-foo": mergedWithCi },
+  });
+  const board = await runLand(deps(exec));
+
+  assert.equal(board.flagged.length, 0);
+  assert.equal(board.reaped.length, 1);
+  // The id is recovered through the leading prefix segment, so the worktree links
+  // to its task and reaps exactly as an unprefixed `dex/...` branch would.
+  assert.equal(board.reaped[0]!.taskId, "abc12");
+  const branch = calls.find((c) => c.args.includes("branch"));
+  assert.deepEqual(branch?.args, ["-C", "/work/perch", "branch", "-d", "feat/dex/abc12-foo"]);
+});
+
 test("runLand: open (unmerged) PR is skipped entirely — not reaped, not flagged", async () => {
   const { exec, calls } = stub({
     worktrees: porcelain("/work/perch", [{ path: "/wt/a", branch: "dex/abc12-foo" }]),
