@@ -23,6 +23,7 @@ import type { LinkedTask } from "../worktree-task-link.js";
 import { dexTaskColor } from "@perch/sdk/dex-color";
 import { DEX_STATUS_LABEL, DexTaskDot } from "./dex-task-chip.js";
 import { useActions } from "./actions.js";
+import { alertWidgets, type AlertWidgetProps } from "./alert-widgets.js";
 
 /**
  * A collapsible worktree repo header: a chevron, health dot, name, count, and
@@ -338,3 +339,87 @@ export function WorktreesPane({ section }: { section: WorktreesSection }): JSX.E
     </section>
   );
 }
+
+/**
+ * The opaque payload a `worktrees:<repo>:<branch>:conflict` alert carries — the
+ * wire shape of the plugin's `ConflictAlertPayload`. Duplicated here (rather than
+ * importing the node-only plugin) because the renderer is a thin client that only
+ * reads the alert's wire shape.
+ */
+interface ConflictAlertPayload {
+  path: string;
+  branch?: string;
+  repo?: string;
+  name: string;
+}
+
+/**
+ * The {@link AlertWidget} for the worktrees plugin's conflict alerts: the branch
+ * name, its repo chip, a "Resolve" button that spawns an agent in the conflicted
+ * worktree (via `worktrees.resolve`), and a dismiss control. Registered into the
+ * shared {@link alertWidgets} registry at module load, so the dashboard renders a
+ * `worktrees:*` alert by resolving its `pluginId`. The Resolve spawn shows an
+ * optimistic spinner held in component state until the main process resolves.
+ */
+export function WorktreesAlertWidget({ alert, onDismiss }: AlertWidgetProps): JSX.Element {
+  const actions = useActions();
+  const payload = alert.payload as ConflictAlertPayload;
+  const label = payload.branch ?? payload.name;
+  const [resolving, setResolving] = useState(false);
+
+  function resolve(): void {
+    if (resolving) return;
+    setResolving(true);
+    void (async () => {
+      try {
+        await actions.resolveWorktree({ path: payload.path, branch: payload.branch });
+      } finally {
+        setResolving(false);
+      }
+    })();
+  }
+
+  return (
+    <div className="alert alert-worktrees" title={`Merge conflict in ${label}`}>
+      <i className="dot bad fa-solid fa-code-merge alert-icon" />
+      <span className="branch alert-branch">{label}</span>
+      {payload.repo && <span className="chip muted alert-repo">{payload.repo}</span>}
+      <span className="alert-text">has unresolved merge conflicts</span>
+      <button
+        className="btn btn-primary btn-sm worktree-resolve-btn"
+        disabled={resolving}
+        title={
+          resolving
+            ? "Resolving…"
+            : `Spawn an agent to resolve this worktree's merge conflicts (${label})`
+        }
+        onClick={resolving ? undefined : resolve}
+      >
+        {resolving ? (
+          <>
+            <i className="fa-solid fa-circle-notch fa-spin" />
+            {" Resolving…"}
+          </>
+        ) : (
+          <>
+            <i className="fa-solid fa-wand-magic-sparkles" />
+            {" Resolve"}
+          </>
+        )}
+      </button>
+      <button
+        className="icon-btn alert-dismiss-btn"
+        title="Dismiss this alert"
+        aria-label="Dismiss this alert"
+        onClick={onDismiss}
+      >
+        <i className="fa-solid fa-xmark" />
+      </button>
+    </div>
+  );
+}
+
+// Register at module load so the dashboard resolves a `worktrees` alert's widget
+// from the shared registry. This module is imported by the panel (via the
+// Worktrees pane), so the registration runs whenever the panel mounts.
+alertWidgets.register("worktrees", WorktreesAlertWidget);

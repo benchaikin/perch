@@ -299,9 +299,9 @@ export interface PanelState {
   notice?: Notice;
   /**
    * The active, non-dismissed alerts to surface in the dashboard alert bar,
-   * newest first — actionable PR states (needs-rebase, CI failing, review
-   * comments, ready-to-merge) raised by the stack plugin. Empty while the daemon
-   * is down. The renderer resolves each alert's `pluginId` to a registered
+   * newest first — actionable conditions (e.g. PR states raised by the stack
+   * plugin, conflicted worktrees raised by the worktrees plugin). Empty while the
+   * daemon is down. The renderer resolves each alert's `pluginId` to a registered
    * AlertWidget; an alert with no widget is skipped.
    */
   alerts: AlertView[];

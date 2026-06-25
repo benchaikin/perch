@@ -1397,6 +1397,35 @@ body {
   background: rgba(var(--bad-rgb), 0.12);
 }
 
+/* The worktrees plugin's alert row, rendered in the dashboard alert bar
+   (.alerts-bar). A bad-toned row whose inner layout the WorktreesAlertWidget
+   owns, sharing the chip/dot/btn primitives. */
+.alert {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  color: var(--fg);
+  background: rgba(var(--bad-rgb), 0.12);
+}
+.alert .alert-branch {
+  font-weight: 600;
+}
+.alert .alert-text {
+  color: var(--muted);
+}
+/* The action + dismiss controls cluster at the row's trailing edge; the Resolve
+   button absorbs the free space (the dismiss button then sits flush after it). */
+.alert .worktree-resolve-btn {
+  flex: none;
+  margin-left: auto;
+}
+.alert .alert-dismiss-btn {
+  margin-left: 0;
+}
+
 .message {
   color: var(--muted);
   text-align: center;

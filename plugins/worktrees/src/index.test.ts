@@ -8,7 +8,12 @@ import { test } from "node:test";
 
 import type { ActionDef, Capability, ReadDef } from "@perch/sdk";
 
-import plugin, { __setExec, resolveRepoRoots, type Worktrees, type WorktreesConfig } from "./index.js";
+import plugin, {
+  __setExec,
+  resolveRepoRoots,
+  type Worktrees,
+  type WorktreesConfig,
+} from "./index.js";
 import type { Exec } from "./provider.js";
 
 /** Pull the `list` read off the plugin and type its `run` for direct invocation. */
@@ -17,6 +22,13 @@ const list = plugin.capabilities.list as Capability as ReadDef<unknown, Worktree
 /** Pull the `remove` action off the plugin for direct invocation. */
 const remove = plugin.capabilities.remove as Capability as ActionDef<
   { path: string; force?: boolean },
+  WorktreesConfig,
+  { ok: boolean; message: string }
+>;
+
+/** Pull the `resolve` action off the plugin to inspect its metadata. */
+const resolve = plugin.capabilities.resolve as Capability as ActionDef<
+  { path: string; branch?: string },
   WorktreesConfig,
   { ok: boolean; message: string }
 >;
@@ -50,9 +62,7 @@ function execFor(byCwd: Record<string, string>, configByCwd: Record<string, stri
 
 /** Invoke the `list` read with a config + global, returning its board. */
 function run(config: WorktreesConfig, global?: unknown): Promise<Worktrees> {
-  return Promise.resolve(
-    list.run({ input: {}, ctx: { config, global, log: () => {} } }),
-  );
+  return Promise.resolve(list.run({ input: {}, ctx: { config, global, log: () => {} } }));
 }
 
 test("resolveRepoRoots precedence: override → global.repos → cwd", () => {
@@ -222,4 +232,40 @@ test("list: showMain=false drops every repo's main worktree", async () => {
   } finally {
     __setExec(undefined);
   }
+});
+
+test("list declares an alerts hook that surfaces conflicted worktrees", () => {
+  assert.ok(list.alerts, "expected the list read to declare an alerts hook");
+  const next: Worktrees = {
+    worktrees: [
+      {
+        path: "/wt/fix",
+        name: "fix",
+        repo: "perch",
+        branch: "dex/abc-fix",
+        detached: false,
+        main: false,
+        dirty: true,
+        dirtyCount: 2,
+        conflict: true,
+        locked: false,
+        prunable: false,
+        health: "bad",
+      },
+    ],
+  };
+  const ops = list.alerts!({ prev: undefined, next, ctx: { config: {}, log: () => {} } });
+  assert.deepEqual(ops, [
+    {
+      op: "raise",
+      id: "worktrees:perch:dex/abc-fix:conflict",
+      payload: { path: "/wt/fix", branch: "dex/abc-fix", repo: "perch", name: "fix" },
+    },
+  ]);
+});
+
+test("resolve is an MCP-exposed action", () => {
+  assert.equal(resolve.kind, "action");
+  assert.equal(resolve.expose?.mcp, true);
+  assert.match(resolve.summary, /resolve/i);
 });

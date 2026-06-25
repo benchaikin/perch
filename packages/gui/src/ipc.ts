@@ -141,6 +141,13 @@ export const Channels = {
   /** Renderer → main: open a worktree dir (payload: the path). Main runs `worktrees.open`. */
   worktreeOpen: "perch:worktree-open",
   /**
+   * Renderer → main `invoke`: spawn an agent to resolve a conflicted worktree's
+   * merge conflicts (payload: a {@link WorktreeResolveRequest}). Main runs
+   * `worktrees.resolve` and resolves when the terminal work finishes, so the
+   * widget's Resolve button can clear its in-progress state.
+   */
+  worktreeResolve: "perch:worktree-resolve",
+  /**
    * Renderer → main `invoke`: remove a worktree (payload: a
    * {@link WorktreeRemoveRequest}). Main confirms with a native dialog (removal
    * is irreversible and a forced one discards uncommitted work) before running
@@ -309,6 +316,16 @@ export interface WorktreeRemoveRequest {
   warning?: string;
 }
 
+/**
+ * Renderer → main payload to spawn a conflict-resolution agent for a worktree.
+ * Carries the worktree `path` (where the agent launches) and the optional `branch`
+ * (the agent window's title/tab color). Both come from the conflict alert payload.
+ */
+export interface WorktreeResolveRequest {
+  path: string;
+  branch?: string;
+}
+
 /** Renderer → main payload to set a repo's Services Auto/Manual mode. */
 export interface ServicesAutoRequest {
   /**
@@ -436,6 +453,13 @@ export interface PerchBridge {
   setNewTaskDialogSize(size: DialogSize): void;
   /** Ask the main process to open a worktree directory (by path). */
   worktreeOpen(path: string): void;
+  /**
+   * Ask the main process to spawn an agent to resolve a conflicted worktree's
+   * merge conflicts (payload: a {@link WorktreeResolveRequest}). Resolves when the
+   * spawn finishes (or fails), so the caller can clear its in-progress UI; the
+   * success/error notice is pushed via panel state.
+   */
+  resolveWorktree(request: WorktreeResolveRequest): Promise<void>;
   /**
    * Ask the main process to remove a worktree (payload: a
    * {@link WorktreeRemoveRequest}). Main confirms with a native dialog (removal

@@ -47,6 +47,7 @@ const CASES: Array<[keyof PerchActions, unknown, boolean]> = [
   ["setNewTaskDialogSize", { width: 600, height: 480 }, false],
   ["worktreeOpen", "/path/to/wt", false],
   ["worktreeRemove", { path: "/path/to/wt", name: "wt" }, true],
+  ["resolveWorktree", { path: "/path/to/wt", branch: "feat" }, true],
   ["dexSpawn", "task-1", true],
   ["dexSpawnReady", undefined, true],
   ["dexSetAutoSpawn", { project: "p", enabled: true }, true],

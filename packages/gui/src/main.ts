@@ -57,6 +57,7 @@ import {
   type ServiceActionRequest,
   type ServicesAutoRequest,
   type WorktreeRemoveRequest,
+  type WorktreeResolveRequest,
 } from "./ipc.js";
 import { addProc, procsFromConfig, removeProc, type Proc } from "./procs.js";
 import { addRepo, removeRepo, reposFromConfig, setDefault, toEntries } from "./repos.js";
@@ -369,6 +370,9 @@ async function connect(): Promise<void> {
     } else if (note.id === WORKTREES_LIST_ID && note.inputKey === worktreesKey) {
       buildInput.worktreesList = note.data as WorktreeList;
       pushState();
+      // A worktrees change reconciles conflict alerts on the same poll; re-read
+      // the alert store so the dashboard banner tracks worktree raises and clears.
+      void refreshAlerts();
     } else if (note.id === AGENTS_LIST_ID && note.inputKey === agentsKey) {
       buildInput.agentFleet = note.data as AgentFleet;
       pushState();
@@ -455,7 +459,7 @@ async function connect(): Promise<void> {
       console.error(`[agents] subscribe failed: ${errorMessage(err)}`);
     }
   }
-  pushState();
+
   // Seed the alert store from the initial overview now that we're subscribed.
   void refreshAlerts();
 }
@@ -801,6 +805,31 @@ async function refreshWorktreesBoard(): Promise<void> {
 }
 
 /**
+ * Spawn an agent to resolve a conflicted worktree's merge conflicts via the
+ * worktrees plugin's `resolve` action, then toast the outcome (the terminal launch
+ * is otherwise silent on success). Awaited by the renderer (via `ipcMain.handle`)
+ * so the widget's Resolve button clears its in-progress state when the work finishes.
+ */
+async function resolveWorktree(request: WorktreeResolveRequest): Promise<void> {
+  if (!client) return;
+  try {
+    const result = (await client.invoke({
+      id: "worktrees.resolve",
+      input: { path: request.path, branch: request.branch },
+    })) as { ok?: boolean; message?: string } | null;
+    if (result && result.ok === false) {
+      showNotice({ tone: "bad", text: result.message ?? "Couldn't resolve worktree conflicts." });
+    } else {
+      showNotice({ tone: "ok", text: result?.message ?? "Spawned a conflict-resolution agent." });
+    }
+  } catch (err) {
+    showNotice({ tone: "bad", text: `Resolve conflicts failed: ${errorMessage(err)}` });
+  } finally {
+    pushState();
+  }
+}
+
+/**
  * Spawn an agent for a ready dex task via the dex plugin's `spawn` action, then
  * toast the outcome — success as well as failure, mirroring {@link spawnDexReady}
  * (worktree creation + terminal launch is otherwise silent on success). Awaited
@@ -1089,17 +1118,6 @@ async function newDexTask(request: DexNewRequest): Promise<void> {
 async function listAlerts(): Promise<Alert[]> {
   if (!client) return [];
   return client.alertsList();
-}
-
-/**
- * Dismiss an alert by id for the Dashboard pane. Forwards to the daemon's
- * `alerts.dismiss`, which drops it from the store and persists the id so it stays
- * dismissed across restarts. No-op (resolves) when the daemon is down; the pane's
- * optimistic removal is reconciled by its next poll.
- */
-async function dismissAlert(id: string): Promise<void> {
-  if (!client) return;
-  await client.alertsDismiss({ id });
 }
 
 /** Re-invoke `dex.tasks` so the board reflects a just-deleted task immediately. */
@@ -1845,6 +1863,9 @@ function registerIpc(): void {
   ipcMain.on(Channels.serviceLogs, (_event, name: string) => void serviceLogs(name));
   ipcMain.handle(Channels.servicesSetAuto, (_event, request: ServicesAutoRequest) =>
     setServicesAuto(request),
+  );
+  ipcMain.handle(Channels.worktreeResolve, (_event, request: WorktreeResolveRequest) =>
+    resolveWorktree(request),
   );
   ipcMain.on(Channels.worktreeOpen, (_event, path: string) => void openWorktree(path));
   ipcMain.handle(Channels.worktreeRemove, (_event, request: WorktreeRemoveRequest) =>
