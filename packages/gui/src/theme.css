@@ -28,10 +28,10 @@
   --dot-muted: #4c566a; /* nord3 — solid fill for neutral status dots; stays dim while --muted text brightens */
   /* small tone/count badge glyphs; tracks --muted in dark (legible there) but darkens in light where pale --muted glyphs wash out */
   --badge-muted: var(--muted);
-  --rule: #3b4252; /* nord1 */
-  --chip-bg: #3b4252; /* nord1 */
-  --hover-bg: #3b4252; /* nord1 */
-  --hover-bg-strong: #434c5e; /* nord2 */
+  --rule: #3b4252; /* nord1 — borders/separators keep their definition */
+  --chip-bg: #252b33; /* custom midpoint between --bg and nord0 */
+  --hover-bg: #252b33; /* custom midpoint between --bg and nord0 */
+  --hover-bg-strong: #2e3440; /* nord0 */
   --detail-fg: #d8dee9; /* nord4 */
 
   --ok: #a3be8c; /* nord14 green */

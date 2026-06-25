@@ -24,12 +24,26 @@ body {
 }
 
 /* When the native macOS liquid-glass background is active, the main process adds
-   this class so the panel's content floats over the glass instead of an opaque
-   fill. Inner surfaces/cards keep their own solid colors, so only the empty gaps
-   go glassy and text stays legible. Without the class (unsupported macOS) the body
-   keeps its opaque --bg fill above. */
+   this class so the panel's content floats over the glass. Control surfaces
+   (tabs, buttons, chips, hover rows) become translucent tints of the foreground
+   color so the glass bleeds through them. Dialogs keep --bg intact. Without the
+   class the body keeps its opaque --bg fill and all surfaces use their solid values. */
 body.liquid-glass {
   background: transparent;
+  --hover-bg:        rgba(var(--fg-rgb), 0.08);
+  --hover-bg-strong: rgba(var(--fg-rgb), 0.15);
+  --chip-bg:         rgba(var(--fg-rgb), 0.10);
+}
+
+/* In light mode the pale --muted (#929aaa) and friends were tuned for contrast
+   against the opaque nord6 fill. Against the glass they lose too much contrast,
+   so step them down one Nord shade each. */
+@media (prefers-color-scheme: light) {
+  body.liquid-glass {
+    --muted:       #616e88; /* nord3-bright, was #929aaa */
+    --badge-muted: #4c566a; /* nord3,        was #616e88 */
+    --dot-muted:   #616e88; /* nord3-bright, was #929aaa */
+  }
 }
 
 .panel {
