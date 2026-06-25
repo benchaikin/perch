@@ -125,7 +125,8 @@ interface LiquidGlassApi {
 declare const require: NodeRequire;
 function loadLiquidGlass(): LiquidGlassApi | null {
   try {
-    return (require("electron-liquid-glass") as { default: LiquidGlassApi }).default;
+    const mod = require("electron-liquid-glass");
+    return ((mod.default ?? mod) as LiquidGlassApi);
   } catch (err) {
     console.error(`[liquid-glass] native module unavailable: ${errorMessage(err)}`);
     return null;
@@ -1480,10 +1481,8 @@ function saveCurrentSize(win: BrowserWindow): void {
 function applyLiquidGlass(win: BrowserWindow): void {
   if (!liquidGlass || !LIQUID_GLASS_SUPPORTED) return;
   if (!glassedWindows.has(win)) {
-    // cornerRadius matches the panel's rounded float; opaque keeps content legible.
     const viewId = liquidGlass.addView(win.getNativeWindowHandle(), {
       cornerRadius: 12,
-      opaque: true,
     });
     if (viewId < 0) return; // addon failed to attach — keep the opaque body.
     glassedWindows.add(win);
