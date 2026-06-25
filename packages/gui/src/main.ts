@@ -43,6 +43,7 @@ import { shouldShowNotification, toNotifyOptions } from "./notify.js";
 import {
   Channels,
   isIncompleteSubtaskError,
+  type Alert,
   type DexAutoSpawnRequest,
   type DexBlockerRequest,
   type DexCompleteRequest,
@@ -1064,6 +1065,28 @@ async function newDexTask(request: DexNewRequest): Promise<void> {
   }
 }
 
+/**
+ * Fetch the active alerts for the Dashboard pane's poll. Forwards to the daemon's
+ * `alerts.list` (already sorted newest-first daemon-side). Returns `[]` when the
+ * daemon is down so the pane simply renders its empty state instead of erroring —
+ * the next poll reconciles once the connection is back.
+ */
+async function listAlerts(): Promise<Alert[]> {
+  if (!client) return [];
+  return client.alertsList();
+}
+
+/**
+ * Dismiss an alert by id for the Dashboard pane. Forwards to the daemon's
+ * `alerts.dismiss`, which drops it from the store and persists the id so it stays
+ * dismissed across restarts. No-op (resolves) when the daemon is down; the pane's
+ * optimistic removal is reconciled by its next poll.
+ */
+async function dismissAlert(id: string): Promise<void> {
+  if (!client) return;
+  await client.alertsDismiss({ id });
+}
+
 /** Re-invoke `dex.tasks` so the board reflects a just-deleted task immediately. */
 async function refreshDexBoard(): Promise<void> {
   if (!client) return;
@@ -1769,6 +1792,10 @@ function registerIpc(): void {
     removeDexBlocker(request),
   );
   ipcMain.handle(Channels.dexNew, (_event, request: DexNewRequest) => newDexTask(request));
+  // The Dashboard pane polls alerts directly (it owns plugin-opaque payloads), so
+  // these bypass the pushed PanelState and forward straight to the daemon.
+  ipcMain.handle(Channels.alertsList, () => listAlerts());
+  ipcMain.handle(Channels.alertsDismiss, (_event, id: string) => dismissAlert(id));
   ipcMain.handle(Channels.resolveConflicts, (_event, request: ResolveConflictsRequest) =>
     resolveConflicts(request),
   );

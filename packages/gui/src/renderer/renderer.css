@@ -1485,3 +1485,18 @@ body {
   display: flex;
   gap: 6px;
 }
+
+/* Dashboard fallback row for an alert whose plugin registered no widget: the id,
+   the raising plugin (muted), then a dismiss button pushed to the right. Not
+   itself clickable, so it drops .row's pointer cursor. */
+.alert-fallback {
+  cursor: default;
+}
+
+.alert-fallback-plugin {
+  color: var(--muted);
+}
+
+.alert-fallback > .btn {
+  margin-left: auto;
+}

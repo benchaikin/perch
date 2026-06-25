@@ -13,7 +13,7 @@
  */
 import { useEffect, useState } from "react";
 import type { PanelState, PanelTab, TabBadge as TabBadgeData } from "../panel-state.js";
-import { SERVICES_TAB_ID } from "../panel-state.js";
+import { SERVICES_TAB_ID, DASHBOARD_TAB_ID } from "../panel-state.js";
 import { DEX_TASKS_ID } from "../dex-state.js";
 import { WORKTREES_LIST_ID } from "../worktrees-state.js";
 import { useActions } from "./actions.js";
@@ -22,6 +22,7 @@ import { PrsPane } from "./prs.js";
 import { ServicesPane } from "./services.js";
 import { WorktreesPane } from "./worktrees.js";
 import { DexPane } from "./dex-pane.js";
+import { DashboardPane } from "./dashboard.js";
 
 /**
  * Resolve which tab should be active: keep the current selection when it still
@@ -134,7 +135,9 @@ function PaneBody({
   return (
     <main id="rows" className="rows">
       {state &&
-        (activeId === SERVICES_TAB_ID ? (
+        (activeId === DASHBOARD_TAB_ID ? (
+          <DashboardPane />
+        ) : activeId === SERVICES_TAB_ID ? (
           <ServicesPane section={state.services} showTitle={false} />
         ) : activeId === WORKTREES_LIST_ID ? (
           <WorktreesPane section={state.worktrees} />

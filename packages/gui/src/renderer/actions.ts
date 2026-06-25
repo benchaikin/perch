@@ -98,6 +98,12 @@ export function createActions(bridge: () => PerchActions): PerchActions {
     dexNew(request) {
       return bridge().dexNew(request);
     },
+    alertsList() {
+      return bridge().alertsList();
+    },
+    alertsDismiss(id) {
+      return bridge().alertsDismiss(id);
+    },
   };
 }
 

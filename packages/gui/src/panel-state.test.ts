@@ -459,15 +459,15 @@ const twoPrOverview: PrOverview = {
 };
 
 test("buildPanelState always emits a PRs tab, Services only when present", () => {
-  // No services list → just the PRs tab.
+  // No services list → just the PRs tab (plus the always-present Dashboard tab).
   const noSvc = buildPanelState({ overview: twoPrOverview, daemonUp: true, syncAvailable: true });
   assert.deepEqual(
     noSvc.tabs.map((t) => t.id),
-    ["stack.prs"],
+    ["stack.prs", "dashboard"],
   );
   assert.equal(noSvc.tabs[0]!.label, "PRs");
 
-  // With a live services list → PRs first, Services second.
+  // With a live services list → PRs first, Services second, Dashboard last.
   const withSvc = buildPanelState({
     overview: twoPrOverview,
     daemonUp: true,
@@ -476,7 +476,23 @@ test("buildPanelState always emits a PRs tab, Services only when present", () =>
   });
   assert.deepEqual(
     withSvc.tabs.map((t) => t.id),
-    ["stack.prs", "services.list"],
+    ["stack.prs", "services.list", "dashboard"],
+  );
+});
+
+test("the Dashboard tab is always present with no badge", () => {
+  // Always visible (alerts span every plugin and the pane polls for itself), even
+  // with the daemon down — it's the stable home for alerts and shows its own empty
+  // state. It carries no badge: alert counts never reach the pushed PanelState.
+  const up = buildPanelState({ overview: twoPrOverview, daemonUp: true, syncAvailable: true });
+  const upTab = up.tabs.find((t) => t.id === "dashboard")!;
+  assert.equal(upTab.label, "Dashboard");
+  assert.equal(upTab.badge, undefined);
+
+  const down = buildPanelState({ daemonUp: false, syncAvailable: false });
+  assert.ok(
+    down.tabs.some((t) => t.id === "dashboard"),
+    "Dashboard tab should show even when the daemon is down",
   );
 });
 
@@ -561,7 +577,7 @@ test("Dex tab appears via the registry when the board is non-empty", () => {
   });
   assert.deepEqual(
     state.tabs.map((t) => t.id),
-    ["stack.prs", "dex.tasks"],
+    ["stack.prs", "dex.tasks", "dashboard"],
   );
   const dex = state.tabs.find((t) => t.id === "dex.tasks")!;
   assert.equal(dex.label, "Dex");
@@ -614,7 +630,7 @@ test("buildPanelState: no PRs → PRs tab with a bare muted badge", () => {
   const down = buildPanelState({ daemonUp: false, syncAvailable: false });
   assert.deepEqual(
     down.tabs.map((t) => t.id),
-    ["stack.prs"],
+    ["stack.prs", "dashboard"],
   );
   assert.equal(down.tabs[0]!.badge?.count, undefined);
   assert.equal(down.tabs[0]!.badge?.tone, "muted");
