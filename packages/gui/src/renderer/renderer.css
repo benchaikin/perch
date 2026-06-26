@@ -271,13 +271,13 @@ body.liquid-glass {
    a native dialog raised from main, so there's no inline confirm/cancel to style.
 
    Destructive, rarely used: tinted red (--bad, beating .icon-btn:hover's --fg)
-   and hidden at rest, revealed only on row hover/keyboard focus. opacity (not
+   and dim at rest, brightening on row hover/keyboard focus. opacity (not
    display) keeps it in layout so the row height and trailing chips don't shift. */
 .worktree-row .worktree-remove-btn {
-  padding: 1px 4px;
+  padding: 1px 5px;
   font-size: 11px;
   color: var(--bad);
-  opacity: 0;
+  opacity: 0.3;
   transition: opacity 0.1s ease;
 }
 .worktree-row:hover .worktree-remove-btn,
@@ -384,7 +384,7 @@ body.liquid-glass {
 .dex-row .dex-delete .icon-btn,
 .dex-graph-row .dex-delete .icon-btn {
   margin-left: 0;
-  padding: 1px 4px;
+  padding: 1px 5px;
   font-size: 11px;
 }
 
@@ -707,6 +707,7 @@ body.liquid-glass {
   gap: 2px;
   /* A little top space separates each repo group from the one above. */
   margin-top: 10px;
+  padding-right: 2px;
 }
 .dex-repo-header-btn {
   appearance: none;
@@ -1223,6 +1224,7 @@ body.liquid-glass {
   align-items: center;
   gap: 2px;
   margin-top: 6px;
+  padding-right: 2px;
 }
 /* The first group sits right under the pane header — no extra top space. */
 .services-repo-group:first-of-type .services-repo-header {

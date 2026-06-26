@@ -29,9 +29,9 @@
   /* small tone/count badge glyphs; tracks --muted in dark (legible there) but darkens in light where pale --muted glyphs wash out */
   --badge-muted: var(--muted);
   --rule: #3b4252; /* nord1 — borders/separators keep their definition */
-  --chip-bg: #252b33; /* custom midpoint between --bg and nord0 */
-  --hover-bg: #252b33; /* custom midpoint between --bg and nord0 */
-  --hover-bg-strong: #2e3440; /* nord0 */
+  --chip-bg: #202830; /* subtle lift above --bg, mirrors the tight nord5/nord6 gap in light */
+  --hover-bg: #202830; /* subtle lift above --bg, mirrors the tight nord5/nord6 gap in light */
+  --hover-bg-strong: #2e3440; /* nord0 — active/selected states */
   --detail-fg: #d8dee9; /* nord4 */
 
   --ok: #a3be8c; /* nord14 green */
