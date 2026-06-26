@@ -60,6 +60,7 @@ type PrRow = {
   statusCheckRollup?: Parameters<typeof rollupToCiStatus>[0];
   reviewDecision?: string | null;
   mergeable?: string | null;
+  mergeStateStatus?: string | null;
   headRefName?: string;
   baseRefName?: string;
 };
@@ -78,6 +79,7 @@ function prToLayer(pr: PrRow): StackLayer {
     ciStatus: rollupToCiStatus(pr.statusCheckRollup),
     reviewDecision: (REVIEW_DECISIONS as readonly string[]).includes(review) ? review : undefined,
     mergeable: (MERGEABLE_STATES as readonly string[]).includes(mergeable) ? mergeable : undefined,
+    mergeStateStatus: pr.mergeStateStatus ?? undefined,
     // Not determinable without gh-stack tracking — see file header.
     needsRebase: false,
     conflict: mergeable === "CONFLICTING" ? true : undefined,
@@ -132,7 +134,7 @@ export function baseRefProvider(options: BaseRefProviderOptions = {}): StackProv
           "--state",
           "open",
           "--json",
-          "number,title,url,statusCheckRollup,reviewDecision,mergeable,headRefName,baseRefName",
+          "number,title,url,statusCheckRollup,reviewDecision,mergeable,mergeStateStatus,headRefName,baseRefName",
         ]),
         execOpts,
       );

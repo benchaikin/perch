@@ -76,6 +76,8 @@ export interface PrInfo {
   ciStatus?: CiStatus;
   reviewDecision?: ReviewDecision;
   mergeable?: Mergeable;
+  /** GitHub merge-state status — `"BLOCKED"` when branch protection prevents merging. */
+  mergeStateStatus?: string;
   needsRebase?: boolean;
   conflict?: boolean;
   /** Count of human-authored inline review comments to address (bots filtered). */
@@ -478,6 +480,13 @@ export function mergeableChip(mergeable: Mergeable | undefined): Chip | undefine
   }
 }
 
+/** Returns a chip when branch protection is blocking the merge, otherwise `undefined`. */
+export function mergeBlockedChip(mergeStateStatus: string | undefined): Chip | undefined {
+  return mergeStateStatus === "BLOCKED"
+    ? { label: "✗ frozen", tone: "bad", hint: "Merging blocked: protected ref" }
+    : undefined;
+}
+
 /**
  * A PR is `"bad"` (red) when something blocks the merge: CI failing, a merge
  * conflict, a needed rebase, or changes requested. Absent any of those, it's
@@ -486,6 +495,7 @@ export function mergeableChip(mergeable: Mergeable | undefined): Chip | undefine
  */
 export function prHealth(pr: PrInfo): Health {
   const blocked =
+    pr.mergeStateStatus === "BLOCKED" ||
     pr.ciStatus === "fail" ||
     (pr.conflict ?? false) ||
     (pr.needsRebase ?? false) ||
@@ -505,6 +515,7 @@ export function prHealth(pr: PrInfo): Health {
  */
 export function prCanMerge(pr: PrInfo): boolean {
   return (
+    pr.mergeStateStatus !== "BLOCKED" &&
     pr.mergeable === "MERGEABLE" &&
     pr.ciStatus !== "fail" &&
     pr.ciStatus !== "pending" &&
@@ -623,6 +634,8 @@ export function toPrRow(pr: PrInfo, repoName: string): PrRow {
   }
   const merge = mergeableChip(pr.mergeable);
   if (merge) chips.push(merge);
+  const frozen = mergeBlockedChip(pr.mergeStateStatus);
+  if (frozen) chips.push(frozen);
   return {
     number: pr.number,
     title: pr.title,

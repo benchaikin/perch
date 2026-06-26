@@ -163,6 +163,7 @@ type PrRow = {
   statusCheckRollup?: RollupCheck[] | null;
   reviewDecision?: string | null;
   mergeable?: string | null;
+  mergeStateStatus?: string | null;
   headRefName?: string;
   baseRefName?: string;
 };
@@ -498,7 +499,7 @@ export function ghStackProvider(options: GhStackProviderOptions = {}): StackProv
             "pr",
             "list",
             "--json",
-            "number,title,url,statusCheckRollup,reviewDecision,mergeable,headRefName,baseRefName",
+            "number,title,url,statusCheckRollup,reviewDecision,mergeable,mergeStateStatus,headRefName,baseRefName",
           ]),
           execOpts,
         ).catch(() => "[]"),
@@ -538,6 +539,7 @@ export function ghStackProvider(options: GhStackProviderOptions = {}): StackProv
             mergeable === "MERGEABLE" || mergeable === "CONFLICTING" || mergeable === "UNKNOWN"
               ? mergeable
               : undefined,
+          mergeStateStatus: nullToUndefined(pr?.mergeStateStatus),
           needsRebase: layer.needsRebase,
           conflict: mergeable === "CONFLICTING" ? true : undefined,
           url: pr?.url,

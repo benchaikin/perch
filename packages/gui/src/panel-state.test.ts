@@ -11,6 +11,7 @@ import {
   deriveStackAlerts,
   landableDecisionCount,
   mergeableChip,
+  mergeBlockedChip,
   prAlertConditions,
   prCanMerge,
   reviewChip,
@@ -53,6 +54,12 @@ test("mergeableChip only chips conflicting/unknown, not clean", () => {
   assert.equal(mergeableChip("UNKNOWN")?.tone, "muted");
   assert.equal(mergeableChip("MERGEABLE"), undefined);
   assert.equal(mergeableChip(undefined), undefined);
+});
+
+test("mergeBlockedChip chips BLOCKED, omits everything else", () => {
+  assert.equal(mergeBlockedChip("BLOCKED")?.tone, "bad");
+  assert.equal(mergeBlockedChip("CLEAN"), undefined);
+  assert.equal(mergeBlockedChip(undefined), undefined);
 });
 
 const basePr = {
@@ -182,6 +189,18 @@ test("prCanMerge is false for each non-mergeable reason", () => {
   assert.equal(prCanMerge({ ...mergeablePr, needsRebase: true }), false);
   // Changes requested.
   assert.equal(prCanMerge({ ...mergeablePr, reviewDecision: "CHANGES_REQUESTED" }), false);
+  // Merge freeze (BLOCKED mergeStateStatus) blocks even an otherwise-green PR.
+  assert.equal(prCanMerge({ ...mergeablePr, mergeStateStatus: "BLOCKED" }), false);
+});
+
+test("merge freeze (BLOCKED) marks the row bad, shows a frozen chip, and blocks merge", () => {
+  const frozenPr = { ...mergeablePr, mergeStateStatus: "BLOCKED" };
+  const row = toPrRow(frozenPr, "r");
+  assert.equal(row.health, "bad");
+  assert.equal(row.canMerge, false);
+  const chip = row.chips.find((c) => c.label === "✗ frozen");
+  assert.ok(chip, "frozen chip should be present");
+  assert.equal(chip?.tone, "bad");
 });
 
 test("toPrRow surfaces the merge gate on the row's canMerge flag", () => {

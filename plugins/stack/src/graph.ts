@@ -33,6 +33,8 @@ export const StackLayer = z.object({
   reviewDecision: z.enum(["APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED"]).optional(),
   /** GitHub mergeable state, passed through verbatim when present. */
   mergeable: z.enum(["MERGEABLE", "CONFLICTING", "UNKNOWN"]).optional(),
+  /** GitHub merge-state status — `"BLOCKED"` when branch protection prevents merging. */
+  mergeStateStatus: z.string().optional(),
   /** Base of this layer has advanced past it — a rebase is needed. */
   needsRebase: z.boolean().default(false),
   /** This layer currently has a merge conflict against its base. */
