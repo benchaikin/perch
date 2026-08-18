@@ -281,3 +281,88 @@ test("daemon-down status renders an error-styled message", () => {
   assert.ok(msg, "expected a message element");
   assert.ok(msg!.classList.contains("error"), "daemon-down is error-styled");
 });
+
+/** A PR someone else opened and asked you to review. */
+function theirPr(over: Partial<PrInfo> = {}): PrInfo {
+  return {
+    number: 40,
+    title: "Their change",
+    url: "https://example.com/pr/40",
+    headRefName: "their/feature",
+    baseRefName: "main",
+    author: "octocat",
+    ...over,
+  };
+}
+
+/** An `ok` PanelState for one repo's groups + its review requests. */
+function stateWithReviewRequests(
+  reviewRequests: PrInfo[],
+  groups: NonNullable<BuildInput["overview"]>["repos"][number]["groups"] = [],
+): PanelState {
+  return buildPanelState({
+    daemonUp: true,
+    syncAvailable: false,
+    ...ALL_ACTIONS,
+    overview: { repos: [{ name: "acme/web", groups, reviewRequests }] },
+  });
+}
+
+test("a repo's review requests render in a labelled section with a count", () => {
+  const { container, getByText } = render(
+    <PrsPane
+      state={stateWithReviewRequests([theirPr(), theirPr({ number: 41, title: "Another" })])}
+    />,
+  );
+  getByText("Review requested");
+  const section = container.querySelector(".review-requests")!;
+  assert.ok(section, "expected a Review requested section");
+  assert.equal(section.querySelector(".review-requests-count")?.textContent, "2");
+  assert.equal(section.querySelectorAll(".row").length, 2);
+  // The PR's author is on the row, so you can see whose PR it is.
+  assert.equal(section.querySelector(".pr-author")?.textContent, "@octocat");
+});
+
+test("review-requested rows withhold Merge, Resolve conflicts and Open agent", () => {
+  // Maximally "actionable" if it were yours: mergeable AND conflicting.
+  const state = stateWithReviewRequests([
+    theirPr({ mergeable: "MERGEABLE", ciStatus: "pass", reviewDecision: "APPROVED" }),
+    theirPr({ number: 41, mergeable: "CONFLICTING", conflict: true }),
+  ]);
+  const { container } = render(<PrsPane state={state} />);
+  assert.equal(container.querySelector(".merge-pr-btn"), null, "never merge someone else's PR");
+  assert.equal(container.querySelector(".resolve-conflicts-btn"), null);
+  assert.equal(container.querySelector(".open-agent-btn"), null);
+});
+
+test("a review-requested row still opens the PR in the browser", () => {
+  const { container } = render(<PrsPane state={stateWithReviewRequests([theirPr()])} />);
+  fireEvent.click(container.querySelector(".review-requests .row")!);
+  assert.deepEqual(openPrCalls, ["https://example.com/pr/40"]);
+});
+
+test("your own PRs keep their action buttons alongside a review-requested section", () => {
+  const state = stateWithReviewRequests(
+    [theirPr({ mergeable: "CONFLICTING", conflict: true })],
+    [{ kind: "pr", pr: conflictingPr() }],
+  );
+  const { container } = render(<PrsPane state={state} />);
+  // Exactly one Resolve/Open-agent pair — on your PR, not on theirs.
+  assert.equal(container.querySelectorAll(".resolve-conflicts-btn").length, 1);
+  assert.equal(container.querySelectorAll(".open-agent-btn").length, 1);
+  assert.equal(container.querySelectorAll(".review-requests .open-agent-btn").length, 0);
+});
+
+test("collapsing a repo hides its review requests along with its groups", () => {
+  const { container } = render(<PrsPane state={stateWithReviewRequests([theirPr()])} />);
+  fireEvent.click(container.querySelector(".pr-repo-header-btn")!);
+  assert.equal(container.querySelector(".review-requests"), null);
+});
+
+test("a repo with only review requests renders its section, not 'No open PRs'", () => {
+  const { container, queryByText } = render(
+    <PrsPane state={stateWithReviewRequests([theirPr()])} />,
+  );
+  assert.equal(queryByText("No open PRs"), null);
+  assert.equal(container.querySelectorAll(".review-requests .row").length, 1);
+});

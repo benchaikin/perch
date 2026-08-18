@@ -105,11 +105,19 @@ Precedence: per-plugin key → `global.repos` → the daemon's working directory
   with stacked PRs grouped into a numbered chain. CI / review / mergeable status
   as chips (a spinner while CI builds), a **needs-rebase** badge, and health-colored
   markers (green = clean, red = needs attention). Click a row to open the PR.
+  Below each repo, a **Review requested** section covers the other direction:
+  the open PRs people are waiting on *you* to review, with their author and the
+  same status chips. Those rows only open the PR — the owner-only actions
+  (Merge, Resolve conflicts, Open agent) are withheld, and they never affect the
+  tab's PR count or health tint. Direct review requests only; ones routed through
+  a team aren't matched. Turn the section off with the **Show review requests**
+  setting.
 - **Hero Sync** — one button cascading-rebases a whole stack onto trunk
   (`gh stack sync`), with in-progress + outcome feedback.
 - **Desktop notifications** — native macOS banners when a PR changes status
-  (CI pass/fail, approved, changes requested, conflict, needs rebase, opened/closed);
-  click to open the PR. The daemon watches even when the panel is closed.
+  (CI pass/fail, approved, changes requested, conflict, needs rebase, opened/closed)
+  or when someone requests your review; click to open the PR. The daemon watches
+  even when the panel is closed.
 - **Worktrees & Dex panels** — glance at every git worktree across your repos
   (branch, dirty state, ahead/behind) and your open [dex](https://github.com/zeeg/dex)
   tasks (epics → tasks → subtasks). When you run AI agents in parallel worktrees,

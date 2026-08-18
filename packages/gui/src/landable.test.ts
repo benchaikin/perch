@@ -258,3 +258,30 @@ test("matches PRs inside a stack group by head ref (PR-ref companion)", () => {
   assert.equal(result.get("t1")?.number, 10);
   assert.equal(result.get("t2")?.number, 11);
 });
+
+test("a review-requested PR never matches a task, even on a colliding branch", () => {
+  // Someone else's PR happens to share the head-ref of a task's worktree branch.
+  // Matching it would label the task with a PR that isn't its own.
+  const theirs = pr({
+    headRefName: "feat/thing",
+    number: 99,
+    url: "https://example.test/theirs",
+    ciStatus: "fail",
+    author: "octocat",
+  });
+  const overviewWithOnlyRequests: PrOverview = {
+    repos: [{ name: "repo", groups: [], reviewRequests: [theirs] }],
+  };
+  const link_ = link({ t1: "feat/thing" });
+
+  assert.equal(deriveLandableByTaskId(link_, overviewWithOnlyRequests).size, 0);
+  assert.equal(deriveLandablePrByTaskId(link_, overviewWithOnlyRequests).size, 0);
+
+  // The task's OWN PR on that branch still wins, unperturbed by the collision.
+  const mine = pr({ headRefName: "feat/thing", number: 7, reviewDecision: "APPROVED" });
+  const both: PrOverview = {
+    repos: [{ name: "repo", groups: [{ kind: "pr", pr: mine }], reviewRequests: [theirs] }],
+  };
+  assert.equal(deriveLandableByTaskId(link_, both).get("t1"), "ready");
+  assert.equal(deriveLandablePrByTaskId(link_, both).get("t1")?.number, 7);
+});

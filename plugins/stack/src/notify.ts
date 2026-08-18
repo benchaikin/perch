@@ -30,6 +30,23 @@ function flatten(overview: PrOverview): Map<number, FlatPr> {
   return out;
 }
 
+/**
+ * The same flattening over `reviewRequests` — the PRs the user is a requested
+ * reviewer on. Kept separate from {@link flatten} on purpose: these are other
+ * people's PRs, so they get exactly one transition (the request arriving) and
+ * none of the CI / conflict / rebase / closed notifications {@link diffPr}
+ * raises for PRs the user owns.
+ */
+function flattenReviewRequests(overview: PrOverview): Map<number, FlatPr> {
+  const out = new Map<number, FlatPr>();
+  for (const repo of overview.repos) {
+    for (const pr of repo.reviewRequests ?? []) {
+      out.set(pr.number, { pr, repo: repo.name });
+    }
+  }
+  return out;
+}
+
 /** Collect a single repo's PRs (standalone + stack layers) into `out`. */
 function collectRepo(repo: PrRepo, out: Map<number, FlatPr>): void {
   for (const group of repo.groups) {
@@ -63,6 +80,10 @@ function isSettled(status: PrInfo["ciStatus"]): boolean {
  * - `conflict` onset (false → true, incl. mergeable → CONFLICTING).
  * - `needsRebase` onset (false → true).
  * - A PR present only in `next` (opened) or only in `prev` (closed/merged).
+ *
+ * Plus one reviewer-side transition: a review request that appears in `next` but
+ * not `prev`. A request going away (review submitted, request withdrawn) is
+ * silent — there's nothing to act on.
  */
 export function prNotifications(prev: PrOverview | undefined, next: PrOverview): Notification[] {
   if (prev === undefined) return [];
@@ -95,6 +116,18 @@ export function prNotifications(prev: PrOverview | undefined, next: PrOverview):
       body: body(flat),
       level: "info",
       dedupeKey: `${number}:closed`,
+      openUrl: flat.pr.url,
+    });
+  }
+
+  const reviewedBefore = flattenReviewRequests(prev);
+  for (const [number, flat] of flattenReviewRequests(next)) {
+    if (reviewedBefore.has(number)) continue;
+    notes.push({
+      title: "Review requested",
+      body: body(flat),
+      level: "info",
+      dedupeKey: `${number}:review-requested`,
       openUrl: flat.pr.url,
     });
   }

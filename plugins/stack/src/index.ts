@@ -97,6 +97,12 @@ const StackConfig = z.object({
    * `merge`, which delegates the strategy to `gh stack merge`.
    */
   mergeMethod: z.enum(["squash", "merge", "rebase"]).default("squash"),
+  /**
+   * Also surface the open PRs you're a requested reviewer on, in a per-repo
+   * "Review requested" section of the My PRs panel. On by default; turning it
+   * off skips the extra `gh pr list --search` per repo per poll entirely.
+   */
+  showReviewRequests: z.boolean().default(true),
 });
 type StackConfig = z.infer<typeof StackConfig>;
 
@@ -181,6 +187,19 @@ function configMergeMethod(config: unknown): "squash" | "merge" | "rebase" {
   return "squash";
 }
 
+/**
+ * Whether to include review-requested PRs in the overview, defaulting to `true`
+ * when unset or malformed. Narrowed locally for the same reason as
+ * {@link configRepos}.
+ */
+function configShowReviewRequests(config: unknown): boolean {
+  if (config && typeof config === "object") {
+    const value = (config as StackConfig).showReviewRequests;
+    if (typeof value === "boolean") return value;
+  }
+  return true;
+}
+
 /** Best-effort message from a rejected `gh` invocation (carries gh's stderr). */
 function errorMessage(err: unknown): string {
   if (err && typeof err === "object" && "message" in err) {
@@ -221,6 +240,14 @@ export default definePlugin({
         { value: "merge", label: "Merge commit" },
         { value: "rebase", label: "Rebase" },
       ],
+    },
+    {
+      key: "showReviewRequests",
+      type: "boolean",
+      label: "Show review requests",
+      description:
+        "Also list the open PRs you've been asked to review, in a Review requested section under each repo. Off skips the extra GitHub lookup.",
+      default: true,
     },
   ]),
   capabilities: {
@@ -266,15 +293,17 @@ export default definePlugin({
     /**
      * The cross-repo "My PRs" overview: every configured repo's open PRs
      * (authored by the current user), with stacked PRs grouped together (spec
-     * `docs/prs-view.md`). Best-effort per repo — one repo's failure doesn't
-     * fail the whole overview.
+     * `docs/prs-view.md`), plus — unless `showReviewRequests` is off — the open
+     * PRs awaiting the user's review, in a separate `reviewRequests` field.
+     * Best-effort per repo — one repo's failure doesn't fail the whole overview.
      *
      * Opted into MCP: the cross-repo "my PRs + status" read is high-value for
      * agents (a single typed answer to "what are my open PRs and are they
      * green?" spanning all repos).
      */
     prs: read({
-      summary: "Your open PRs across all configured repos, with stacks grouped",
+      summary:
+        "Your open PRs across all configured repos (plus the ones awaiting your review), with stacks grouped",
       input: z.object({}).default({}),
       output: PrOverview,
       // Background (panel-closed) polling drops to 5min: PR status changes don't
@@ -287,6 +316,7 @@ export default definePlugin({
           repos: effectiveRepos(ctx.config, ctx.global),
           stackDirection: configStackDirection(ctx.config),
           reviewBotIgnore: configReviewBotIgnore(ctx.config),
+          showReviewRequests: configShowReviewRequests(ctx.config),
           log: ctx.log,
         }),
       // Diff each poll's overview against the previous one and surface notable PR

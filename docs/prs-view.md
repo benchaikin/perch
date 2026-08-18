@@ -31,13 +31,14 @@ Output: **`PrOverview`** — repos, each with a list of **`PrGroup`**s.
 /** Normalized CI rollup (same enum as stack.view). */
 CiStatus = "pass" | "fail" | "pending" | "none"
 
-/** One open PR authored by the current user. */
+/** One open PR — authored by the current user, or awaiting their review. */
 PrInfo = {
   number: number;
   title: string;
   url: string;
   headRefName: string;
   baseRefName: string;
+  author?: string;                                     // only on review requests
   ciStatus: CiStatus;                                  // default "none"
   reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED";
   mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
@@ -60,6 +61,7 @@ PrRepo = {
   name: string;               // basename of the repo path
   path?: string;              // the local path, when repos are configured
   groups: PrGroup[];
+  reviewRequests: PrInfo[];   // open PRs awaiting my review; default []
   error?: string;             // set (with groups: []) when this repo's lookup failed
 }
 
@@ -81,6 +83,40 @@ its basename):
 3. **Chain** the PRs into maximal `base→head` chains among *these* PRs (shared
    helper, see below). A chain of length ≥2 → `{ kind: "stack", layers }`
    (bottom→top); a PR not chained to another of yours → `{ kind: "pr", pr }`.
+
+### Review requests
+
+Alongside the authored list, and in the same repo cwd, a second parallel read
+lists the open PRs the user is a **requested reviewer** on:
+
+```
+gh pr list --search "review-requested:@me" --state open --json number,title,url,
+  headRefName,baseRefName,statusCheckRollup,reviewDecision,mergeable,author
+```
+
+Rows map through the same `rowToPrInfo` projection, plus `author` (whose PR it
+is). They land in `PrRepo.reviewRequests` — deliberately a **sibling** of
+`groups`, never part of it. Everything downstream that walks `groups` assumes
+"PRs I own": stack chaining, the notification diff, the GUI's dex↔PR landable
+join (which matches on `headRefName`, so a same-named branch on someone else's PR
+would mis-link a task), the PRs tab count/tint, and the dashboard's
+needs-rebase / ci-failing / ready-to-merge alerts. Keeping the two apart makes
+all of those correct by construction; each opts in explicitly if it ever should.
+
+Notes:
+
+- **Best-effort and isolated.** A failed review lookup yields `[]` and never sets
+  `PrRepo.error` — a search-index hiccup must not blank out a repo's own PRs.
+  (`--search` reads GitHub's search index, which trails the API by seconds;
+  harmless at a 60s poll.)
+- **No per-PR comment fetch.** The "review comments to address" badge means *my*
+  comments to address, so `fetchHumanReviewCommentCount` is not run for these —
+  which also keeps the per-poll `gh api` fan-out flat.
+- **Toggle:** `plugins.stack.showReviewRequests` (a boolean settings field,
+  default `true`). When false the extra `gh` call is not made at all.
+- **Team review requests are not covered.** `review-requested:@me` matches
+  *direct* requests only; a review routed through a team needs
+  `team-review-requested:<org>/<team>`, which needs the team name — out of scope.
 
 ### Shared chaining helper
 
@@ -105,9 +141,11 @@ grouping stands, and `tracked` stays `false`.
 
 ### Per-repo error resilience
 
-Each repo is fetched independently and best-effort: if a repo's `gh pr list`
-throws (e.g. a 504, no remote, auth), that repo gets `error` set to the message
-and `groups: []` — the rest of the overview is unaffected.
+Each repo is fetched independently and best-effort: if a repo's authored
+`gh pr list` throws (e.g. a 504, no remote, auth), that repo gets `error` set to
+the message and `groups: []` — the rest of the overview is unaffected, and its
+`reviewRequests` still surface. The review lookup is the mirror image: its
+failure is swallowed to `[]` and never sets `error`.
 
 ### Exposure
 
@@ -130,6 +168,13 @@ exposure.
 - The renderer draws the grouped list. A **Sync** button shows on `tracked` stack
   groups and invokes `stack.sync` with that repo. Clicking a PR row opens its URL
   in the browser (IPC → `shell.openExternal`).
+- Below a repo's groups, a labelled **Review requested** sub-section lists that
+  repo's `reviewRequests` (with the PR's author), hidden along with the groups by
+  the repo's collapse. Owner-only affordances are withheld there: **Merge**
+  (never merge a PR you don't own), and **Resolve conflicts** / **Open agent**
+  (both check out `headRefName` in a worktree, and for a PR from another author —
+  often a fork — that branch may not exist locally). Click-to-open stays. A repo
+  with only review requests renders its section rather than "No open PRs".
 - The **repo-switcher dropdown is retired** — the grouped all-repos view replaces
   it. (No repo filter — that's a future enhancement.)
 - The tray menu and `registry.changed` live-reload wiring are unchanged (reload

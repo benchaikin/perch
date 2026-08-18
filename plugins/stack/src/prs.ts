@@ -5,7 +5,9 @@
  * the current user's open PRs, groups stacked PRs together (via the shared
  * `base.ref → head.ref` chaining), and optionally enriches a stack group with
  * gh-stack's authoritative ordering + needs-rebase when the repo has local
- * gh-stack tracking.
+ * gh-stack tracking. Alongside those, and gated on `showReviewRequests`, it
+ * lists the open PRs the user is a requested reviewer on — kept in a separate
+ * `reviewRequests` field so nothing that reasons about "my PRs" sees them.
  *
  * Resilient by design: each repo is fetched independently and best-effort, so
  * one repo's failure (a 504, no remote, auth) sets that repo's `error` and
@@ -27,7 +29,7 @@ import {
 import { CiStatus } from "./graph.js";
 import type { Exec, ExecOptions } from "./provider.js";
 
-/** One open PR authored by the current user. */
+/** One open PR — authored by the current user, or awaiting their review. */
 export const PrInfo = z.object({
   /** PR number. */
   number: z.number().int(),
@@ -39,6 +41,11 @@ export const PrInfo = z.object({
   headRefName: z.string(),
   /** Base branch (what this PR merges into). */
   baseRefName: z.string(),
+  /**
+   * The PR's author login. Only populated for review-requested PRs — on your
+   * own PRs it is you, so the fetch doesn't ask GitHub for it.
+   */
+  author: z.string().optional(),
   /** Normalized CI rollup; `none` when there are no checks. */
   ciStatus: CiStatus.default("none"),
   /** GitHub review decision, passed through verbatim when present. */
@@ -84,6 +91,15 @@ export const PrRepo = z.object({
   path: z.string().optional(),
   /** Standalone PRs + stack groups for this repo. */
   groups: z.array(PrGroup),
+  /**
+   * Open PRs in this repo where the current user is a requested reviewer — the
+   * other half of a day's PR work. Deliberately a sibling of `groups` rather
+   * than part of it: every consumer of `groups` (stack chaining, notifications,
+   * dex↔PR landable linking, dashboard alerts) assumes "PRs I own", and keeping
+   * these separate makes those correct by construction. Best-effort — an empty
+   * array both when there are none and when the lookup failed.
+   */
+  reviewRequests: z.array(PrInfo).default([]),
   /** Set (with `groups: []`) when this repo's PR lookup failed. */
   error: z.string().optional(),
 });
@@ -134,7 +150,15 @@ type PrRow = {
   mergeable?: string | null;
   headRefName?: string;
   baseRefName?: string;
+  author?: { login?: string } | null;
 };
+
+/** `--json` fields for the authored list. */
+const AUTHORED_JSON_FIELDS =
+  "number,title,url,headRefName,baseRefName,statusCheckRollup,reviewDecision,mergeable";
+
+/** Same, plus `author` — on a review request the author is someone else. */
+const REVIEW_REQUESTED_JSON_FIELDS = `${AUTHORED_JSON_FIELDS},author`;
 
 const REVIEW_DECISIONS = ["APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED"] as const;
 const MERGEABLE_STATES = ["MERGEABLE", "CONFLICTING", "UNKNOWN"] as const;
@@ -149,6 +173,7 @@ function rowToPrInfo(row: PrRow): PrInfo {
     url: row.url,
     headRefName: row.headRefName,
     baseRefName: row.baseRefName,
+    author: row.author?.login,
     ciStatus: rollupToCiStatus(row.statusCheckRollup),
     reviewDecision: (REVIEW_DECISIONS as readonly string[]).includes(review) ? review : undefined,
     mergeable: (MERGEABLE_STATES as readonly string[]).includes(mergeable) ? mergeable : undefined,
@@ -178,6 +203,13 @@ export interface PrOverviewOptions {
   /** Resolved display order, surfaced verbatim on the overview (default
    *  `"bottom-to-top"`). Presentation-only — never reorders `layers`. */
   stackDirection?: StackDirection;
+  /**
+   * Also list the open PRs awaiting the user's review (`plugins.stack
+   * .showReviewRequests`, default true). When false the extra per-repo
+   * `gh pr list --search` is never run — no API cost for users who don't
+   * want the section.
+   */
+  showReviewRequests?: boolean;
   /** Working directory used as the single repo when no `repos` are configured. */
   cwd?: string;
   /** Injected command runner (tests inject a fixture). */
@@ -295,44 +327,97 @@ function groupPrs(prs: PrInfo[]): PrGroup[] {
   );
 }
 
-/** Fetch + group one repo's open PRs, best-effort (errors → `error` set). */
-async function overviewForRepo(
-  target: RepoTarget,
+/** Project a `gh pr list` stdout blob onto {@link PrInfo}s, skipping junk rows. */
+function parsePrRows(stdout: string): PrInfo[] {
+  const raw: unknown = JSON.parse(stdout.trim() || "[]");
+  if (!Array.isArray(raw)) return [];
+  const prs: PrInfo[] = [];
+  for (const row of raw as PrRow[]) {
+    if (row && typeof row.headRefName === "string" && typeof row.number === "number") {
+      prs.push(rowToPrInfo(row));
+    }
+  }
+  return prs;
+}
+
+/**
+ * List the open PRs in this repo awaiting the user's review.
+ *
+ * `--search` reads GitHub's search index (which trails the API by seconds —
+ * harmless at a 60s poll). Deliberately best-effort and isolated: a failure
+ * yields `[]` rather than propagating, so a search hiccup can never blank out
+ * the repo's own PRs or set its `error`.
+ *
+ * Note this covers *direct* requests only. Reviews routed through a team need
+ * `team-review-requested:<org>/<team>`, which needs the team name — out of scope
+ * (see `docs/prs-view.md`).
+ */
+async function fetchReviewRequests(
   exec: Exec,
-  hasGhStack: (cwd: string | undefined) => boolean,
-  reviewBotIgnore: readonly string[],
-  me: string | undefined,
+  execOpts: ExecOptions | undefined,
   log: ((m: string) => void) | undefined,
-): Promise<PrRepo> {
-  const execOpts: ExecOptions | undefined = target.cwd ? { cwd: target.cwd } : undefined;
-  let prsRaw: unknown;
+): Promise<PrInfo[]> {
   try {
-    const prOut = await exec(
+    const out = await exec(
       "gh",
       [
         "pr",
         "list",
-        "--author",
-        "@me",
+        "--search",
+        "review-requested:@me",
         "--state",
         "open",
         "--json",
-        "number,title,url,headRefName,baseRefName,statusCheckRollup,reviewDecision,mergeable",
+        REVIEW_REQUESTED_JSON_FIELDS,
       ],
       execOpts,
     );
-    prsRaw = JSON.parse(prOut.trim() || "[]");
+    return parsePrRows(out);
   } catch (err) {
-    return { name: target.name, path: target.path, groups: [], error: errorMessage(err) };
+    log?.(`review-requested lookup failed; skipping: ${errorMessage(err)}`);
+    return [];
   }
+}
 
-  const prs: PrInfo[] = [];
-  if (Array.isArray(prsRaw)) {
-    for (const row of prsRaw as PrRow[]) {
-      if (row && typeof row.headRefName === "string" && typeof row.number === "number") {
-        prs.push(rowToPrInfo(row));
-      }
-    }
+/** Everything {@link overviewForRepo} needs beyond the repo it is fetching. */
+interface RepoFetchDeps {
+  exec: Exec;
+  hasGhStack: (cwd: string | undefined) => boolean;
+  reviewBotIgnore: readonly string[];
+  showReviewRequests: boolean;
+  /** The authenticated login, resolved once per overview (best-effort). */
+  me: string | undefined;
+  log?: (message: string) => void;
+}
+
+/** Fetch + group one repo's open PRs, best-effort (errors → `error` set). */
+async function overviewForRepo(target: RepoTarget, deps: RepoFetchDeps): Promise<PrRepo> {
+  const { exec, hasGhStack, reviewBotIgnore, showReviewRequests, me, log } = deps;
+  const execOpts: ExecOptions | undefined = target.cwd ? { cwd: target.cwd } : undefined;
+
+  // Kick the review-requested search off alongside the authored list — the two
+  // are independent reads of the same repo. It never rejects (see above), so an
+  // early `error` return below can't leave it unhandled.
+  const reviewRequestsPromise = showReviewRequests
+    ? fetchReviewRequests(exec, execOpts, log)
+    : Promise.resolve([]);
+
+  let prs: PrInfo[];
+  try {
+    const prOut = await exec(
+      "gh",
+      ["pr", "list", "--author", "@me", "--state", "open", "--json", AUTHORED_JSON_FIELDS],
+      execOpts,
+    );
+    prs = parsePrRows(prOut);
+  } catch (err) {
+    return {
+      name: target.name,
+      path: target.path,
+      groups: [],
+      reviewRequests: await reviewRequestsPromise,
+      error: errorMessage(err),
+    };
   }
 
   const groups = groupPrs(prs);
@@ -366,7 +451,13 @@ async function overviewForRepo(
       : Promise.resolve(groups),
   ]);
 
-  return { name: target.name, path: target.path, groups: enriched };
+  // GitHub never requests a review from a PR's own author, so these sets can't
+  // overlap today — the number-keyed filter is a cheap guard against a future
+  // `--search` change quietly double-listing a PR.
+  const mine = new Set(prs.map((pr) => pr.number));
+  const reviewRequests = (await reviewRequestsPromise).filter((pr) => !mine.has(pr.number));
+
+  return { name: target.name, path: target.path, groups: enriched, reviewRequests };
 }
 
 /** Build the cross-repo {@link PrOverview}. */
@@ -383,10 +474,14 @@ export async function buildPrOverview(options: PrOverviewOptions = {}): Promise<
   // behavior), never breaks the overview.
   const me = await cachedCurrentUserLogin(exec, options.cwd ? { cwd: options.cwd } : undefined);
 
-  const repos = await Promise.all(
-    targets.map((target) =>
-      overviewForRepo(target, exec, hasGhStack, reviewBotIgnore, me, options.log),
-    ),
-  );
+  const deps: RepoFetchDeps = {
+    exec,
+    hasGhStack,
+    reviewBotIgnore,
+    showReviewRequests: options.showReviewRequests ?? true,
+    me,
+    log: options.log,
+  };
+  const repos = await Promise.all(targets.map((target) => overviewForRepo(target, deps)));
   return PrOverview.parse({ repos, stackDirection: options.stackDirection });
 }

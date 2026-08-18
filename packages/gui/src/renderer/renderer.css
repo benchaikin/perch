@@ -539,6 +539,46 @@ body.liquid-glass {
   gap: 2px;
 }
 
+/* The per-repo "Review requested" sub-section: the PRs someone is waiting on you
+   for, listed under that repo's own PRs. Indented like a stack group but with a
+   neutral rule — these rows carry no health obligation of yours. */
+.review-requests {
+  border-left: 2px solid var(--rule);
+  padding-left: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.review-requests-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.review-requests-label {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.review-requests-count {
+  font-size: 10px;
+}
+
+/* The author of a PR you were asked to review — a quiet trailing note next to
+   the PR number, never wide enough to crowd out the title. */
+.pr-author {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--muted);
+}
+
 /* `.btn.btn-sm` (not `.btn-sm`) so it out-specifies `.btn { flex: 1 }` and the
    stack Sync button stays compact instead of stretching full-width. */
 .btn.btn-sm {

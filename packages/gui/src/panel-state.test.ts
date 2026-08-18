@@ -15,6 +15,7 @@ import {
   prAlertConditions,
   prCanMerge,
   reviewChip,
+  STACK_TAB_ID,
   toPrRow,
   type PrOverview,
 } from "./panel-state.js";
@@ -847,4 +848,101 @@ test("buildPanelState joins the agent fleet onto the matching dex row", () => {
     },
   });
   assert.equal(bare.dex.rows[0]!.agent, undefined);
+});
+
+/** A PR someone else opened and asked you to review. */
+const theirPr = {
+  ...basePr,
+  number: 40,
+  title: "Their change",
+  url: "https://github.com/o/r/pull/40",
+  headRefName: "their-feature",
+  author: "octocat",
+};
+
+test("toPrRow marks a review-requested row and withholds Merge", () => {
+  const mergeable = { ...theirPr, mergeable: "MERGEABLE" as const, ciStatus: "pass" as const };
+  // The same PR, read as one of yours, would be one-click mergeable.
+  assert.equal(toPrRow(mergeable, "r").canMerge, true);
+
+  const row = toPrRow(mergeable, "r", { reviewRequested: true });
+  assert.equal(row.reviewRequested, true);
+  assert.equal(row.canMerge, false);
+  assert.equal(row.author, "octocat");
+  // Status chips are derived exactly as they are for your own PRs.
+  assert.ok(row.chips.length > 0);
+});
+
+test("buildPanelState renders a repo's review requests in their own list", () => {
+  const overview: PrOverview = {
+    repos: [
+      {
+        name: "main",
+        groups: [{ kind: "pr", pr: { ...basePr, number: 9 } }],
+        reviewRequests: [theirPr, { ...theirPr, number: 41, author: "hubot" }],
+      },
+    ],
+  };
+  const repo = buildPanelState({ overview, daemonUp: true, syncAvailable: true }).repos[0]!;
+
+  // Your own PR stays in `groups`; theirs land only in `reviewRequests`.
+  assert.equal(repo.groups.length, 1);
+  assert.deepEqual(
+    repo.reviewRequests.map((r) => r.number),
+    [40, 41],
+  );
+  assert.ok(repo.reviewRequests.every((r) => r.reviewRequested));
+});
+
+test("a repo with only review requests renders instead of 'no open PRs'", () => {
+  const overview: PrOverview = {
+    repos: [{ name: "main", groups: [], reviewRequests: [theirPr] }],
+  };
+  const state = buildPanelState({ overview, daemonUp: true, syncAvailable: true });
+  assert.equal(state.status, "ok");
+  assert.equal(state.repos[0]!.reviewRequests.length, 1);
+});
+
+test("review requests leave the PRs tab count and tint alone", () => {
+  const failing = { ...theirPr, ciStatus: "fail" as const, conflict: true };
+  const mine: PrOverview = {
+    repos: [{ name: "main", groups: [{ kind: "pr", pr: { ...basePr, ciStatus: "pass" } }] }],
+  };
+  const withRequests: PrOverview = {
+    repos: [
+      {
+        name: "main",
+        groups: [{ kind: "pr", pr: { ...basePr, ciStatus: "pass" } }],
+        reviewRequests: [failing, { ...failing, number: 41 }],
+      },
+    ],
+  };
+  const badge = (overview: PrOverview) =>
+    buildPanelState({ overview, daemonUp: true, syncAvailable: true }).tabs.find(
+      (t) => t.id === STACK_TAB_ID,
+    )?.badge;
+
+  // Two red PRs of someone else's must not turn your own tab badge red, nor
+  // inflate its count.
+  assert.deepEqual(badge(withRequests), badge(mine));
+});
+
+test("deriveStackAlerts never raises an alert for a review-requested PR", () => {
+  const actionable = {
+    ...theirPr,
+    needsRebase: true,
+    ciStatus: "fail" as const,
+    humanReviewCommentCount: 3,
+  };
+  const overview: PrOverview = {
+    repos: [{ name: "r", groups: [], reviewRequests: [actionable] }],
+  };
+  assert.deepEqual(deriveStackAlerts(overview), []);
+
+  // The identical PR under `groups` (i.e. one of yours) does raise them — the
+  // exclusion is about ownership, not about the PR's state.
+  assert.equal(
+    deriveStackAlerts({ repos: [{ name: "r", groups: [{ kind: "pr", pr: actionable }] }] }).length,
+    3,
+  );
 });

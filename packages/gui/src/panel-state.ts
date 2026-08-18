@@ -73,6 +73,8 @@ export interface PrInfo {
   url: string;
   headRefName: string;
   baseRefName: string;
+  /** The PR's author login — only sent for review-requested PRs. */
+  author?: string;
   ciStatus?: CiStatus;
   reviewDecision?: ReviewDecision;
   mergeable?: Mergeable;
@@ -94,6 +96,13 @@ export interface PrRepo {
   name: string;
   path?: string;
   groups: PrGroup[];
+  /**
+   * Open PRs in this repo awaiting the user's review. A sibling of `groups`, not
+   * part of it — everything that reasons about "my PRs" (stack chaining, the tab
+   * badge, dashboard alerts, the dex↔PR landable join) walks `groups` and must
+   * not see other people's PRs. Optional on the wire: older daemons omit it.
+   */
+  reviewRequests?: PrInfo[];
   error?: string;
 }
 
@@ -149,6 +158,14 @@ export interface PrRow {
   baseRefName: string;
   /** The repo this PR belongs to (name) — passed to the resolve-conflicts action. */
   repo: string;
+  /**
+   * True when this row is a PR someone asked the user to review rather than one
+   * they authored. Owner-only affordances (Merge, Resolve conflicts, Open agent)
+   * are withheld on such a row — its branch may not even exist locally.
+   */
+  reviewRequested: boolean;
+  /** The PR's author login, shown on review-requested rows. */
+  author?: string;
   /** Status chips (CI / review / mergeable), already mapped to glyphs + tones. */
   chips: Chip[];
   /** True when this PR's base advanced past it — render a "needs rebase" badge. */
@@ -207,6 +224,8 @@ export interface RepoSection {
   error?: string;
   /** Standalone PR rows + nested stack groups, in overview order. */
   groups: GroupRow[];
+  /** Rows for the PRs awaiting the user's review, rendered in their own section. */
+  reviewRequests: PrRow[];
 }
 
 /** A transient status toast (e.g. the outcome of a Sync). */
@@ -591,6 +610,10 @@ export function prAlertConditions(pr: PrInfo): StackAlertCondition[] {
  * the overview. Pure: same overview → same specs, so the main process can diff it
  * against the last-raised set to reconcile the daemon's alert store (raise the
  * new, clear the resolved). Returns `[]` for an absent overview.
+ *
+ * Walks `groups` only: needs-rebase, ci-failing, review-comments and
+ * ready-to-merge are all the *author's* problems, so a repo's `reviewRequests`
+ * never raise an alert.
  */
 export function deriveStackAlerts(overview: PrOverview | undefined): StackAlertSpec[] {
   if (!overview) return [];
@@ -618,8 +641,18 @@ export function deriveStackAlerts(overview: PrOverview | undefined): StackAlertS
   return specs;
 }
 
+/** How a row was reached: the user's own PR, or one awaiting their review. */
+export interface PrRowOptions {
+  /**
+   * Mark the row as a PR the user was asked to review. Forces `canMerge` off —
+   * the Merge button must never appear on a PR the user doesn't own — and lets
+   * the renderer withhold the other owner-only affordances.
+   */
+  reviewRequested?: boolean;
+}
+
 /** Derive a single rendered PR row from a raw {@link PrInfo} in repo `repoName`. */
-export function toPrRow(pr: PrInfo, repoName: string): PrRow {
+export function toPrRow(pr: PrInfo, repoName: string, options: PrRowOptions = {}): PrRow {
   const chips: Chip[] = [ciChip(pr.ciStatus ?? "none")];
   const review = reviewChip(pr.reviewDecision);
   if (review) {
@@ -643,10 +676,12 @@ export function toPrRow(pr: PrInfo, repoName: string): PrRow {
     branch: pr.headRefName,
     baseRefName: pr.baseRefName,
     repo: repoName,
+    reviewRequested: options.reviewRequested ?? false,
+    author: pr.author,
     chips,
     needsRebase: pr.needsRebase ?? false,
     conflict: pr.conflict ?? false,
-    canMerge: prCanMerge(pr),
+    canMerge: !options.reviewRequested && prCanMerge(pr),
     humanReviewCommentCount: pr.humanReviewCommentCount ?? 0,
     health: prHealth(pr),
   };
@@ -685,14 +720,16 @@ function toGroupRow(group: PrGroup, repoName: string, direction: StackDirection)
   };
 }
 
-/** Total PR count across a repo's groups (a stack counts as its layers). */
+/** Total PR count across a repo's groups (a stack counts as its layers).
+ *  Deliberately excludes `reviewRequests` — this feeds the "my PRs" counts. */
 function repoPrCount(repo: PrRepo): number {
   let n = 0;
   for (const g of repo.groups) n += g.kind === "stack" ? g.layers.length : 1;
   return n;
 }
 
-/** Total rendered PR rows across all repo sections (a stack counts its layers). */
+/** Total rendered PR rows across all repo sections (a stack counts its layers).
+ *  Only the user's own PRs — someone else's red CI must not tint the PRs tab. */
 function panelPrCount(repos: RepoSection[]): number {
   let n = 0;
   for (const repo of repos) {
@@ -701,7 +738,8 @@ function panelPrCount(repos: RepoSection[]): number {
   return n;
 }
 
-/** Worst (most severe) health across all rendered PR rows: bad > warn > ok. */
+/** Worst (most severe) health across the user's own rendered PR rows (review
+ *  requests excluded — see {@link panelPrCount}): bad > warn > ok. */
 function worstRepoHealth(repos: RepoSection[]): Health {
   const rank: Record<Health, number> = { ok: 0, warn: 1, bad: 2 };
   let worst: Health = "ok";
@@ -935,10 +973,17 @@ export function buildPanelState(input: BuildInput): PanelState {
     name: repo.name,
     error: repo.error,
     groups: repo.groups.map((g) => toGroupRow(g, repo.name, direction)),
+    reviewRequests: (repo.reviewRequests ?? []).map((pr) =>
+      toPrRow(pr, repo.name, { reviewRequested: true }),
+    ),
   }));
 
-  // "Empty" when every repo has neither PRs nor an error to surface.
-  const anyContent = overview.repos.some((r) => repoPrCount(r) > 0 || r.error);
+  // "Empty" when every repo has no PRs of the user's, nothing awaiting their
+  // review, and no error to surface. A repo with only review requests still has
+  // a section to render, so it must not fall through to "No open PRs".
+  const anyContent = overview.repos.some(
+    (r) => repoPrCount(r) > 0 || (r.reviewRequests?.length ?? 0) > 0 || r.error,
+  );
   const tabs = buildTabs({
     repos,
     services: live.services,
