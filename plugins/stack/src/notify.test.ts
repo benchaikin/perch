@@ -25,7 +25,17 @@ function pr(over: Partial<PrInfo> & { number: number }): PrInfo {
 function overview(prs: PrInfo[], repoName = "r"): PrOverview {
   return {
     stackDirection: "bottom-to-top",
-    repos: [{ name: repoName, groups: prs.map((p) => ({ kind: "pr", pr: p })) }],
+    repos: [
+      { name: repoName, groups: prs.map((p) => ({ kind: "pr", pr: p })), reviewRequests: [] },
+    ],
+  };
+}
+
+/** A single-repo overview holding only PRs awaiting the user's review. */
+function reviewRequestOverview(prs: PrInfo[], repoName = "r"): PrOverview {
+  return {
+    stackDirection: "bottom-to-top",
+    repos: [{ name: repoName, groups: [], reviewRequests: prs }],
   };
 }
 
@@ -213,17 +223,77 @@ test("PRs are matched by number across repos and stack groups", () => {
             ],
           },
         ],
+        reviewRequests: [],
       },
     ],
   };
   const next: PrOverview = {
     stackDirection: "bottom-to-top",
     repos: [
-      { name: "a", groups: [{ kind: "pr", pr: pr({ number: 19, ciStatus: "pass" }) }] },
-      { name: "b", groups: [{ kind: "pr", pr: pr({ number: 20, ciStatus: "pass" }) }] },
+      {
+        name: "a",
+        groups: [{ kind: "pr", pr: pr({ number: 19, ciStatus: "pass" }) }],
+        reviewRequests: [],
+      },
+      {
+        name: "b",
+        groups: [{ kind: "pr", pr: pr({ number: 20, ciStatus: "pass" }) }],
+        reviewRequests: [],
+      },
     ],
   };
   const notes = prNotifications(prev, next);
   assert.equal(notes.length, 1);
   assert.equal(byKey(notes, "20:ci:pass").title, "CI passed");
+});
+
+test("a new review request → exactly one Review requested notification", () => {
+  const prev = reviewRequestOverview([]);
+  const next = reviewRequestOverview([
+    pr({ number: 55, title: "Their change", author: "octocat" }),
+  ]);
+  const notes = prNotifications(prev, next);
+  assert.equal(notes.length, 1);
+  const note = byKey(notes, "55:review-requested");
+  assert.equal(note.title, "Review requested");
+  assert.equal(note.level, "info");
+  assert.equal(note.body, "#55 Their change (r)");
+  assert.equal(note.openUrl, "https://github.com/o/r/pull/55");
+});
+
+test("a standing review request → nothing on later polls", () => {
+  const request = pr({ number: 55 });
+  assert.deepEqual(
+    prNotifications(reviewRequestOverview([request]), reviewRequestOverview([{ ...request }])),
+    [],
+  );
+});
+
+test("a review request going away is silent", () => {
+  assert.deepEqual(
+    prNotifications(reviewRequestOverview([pr({ number: 55 })]), reviewRequestOverview([])),
+    [],
+  );
+});
+
+test("a review-requested PR's own churn raises nothing — it isn't my PR", () => {
+  // CI flips, a conflict appears, the base advances, comments land: every one of
+  // these is the author's problem, not the reviewer's.
+  const before = pr({ number: 55, ciStatus: "pending" });
+  const after = pr({
+    number: 55,
+    ciStatus: "fail",
+    conflict: true,
+    needsRebase: true,
+    reviewDecision: "CHANGES_REQUESTED",
+    humanReviewCommentCount: 3,
+  });
+  assert.deepEqual(
+    prNotifications(reviewRequestOverview([before]), reviewRequestOverview([after])),
+    [],
+  );
+});
+
+test("prev undefined → no Review requested notification on the first poll", () => {
+  assert.deepEqual(prNotifications(undefined, reviewRequestOverview([pr({ number: 55 })])), []);
 });
