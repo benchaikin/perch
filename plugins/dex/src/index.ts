@@ -207,7 +207,8 @@ const EditInputSchema = z.object({
  * (a `project` basename the GUI passes, or an explicit `repo` path) so the author
  * agent's `dex create` lands in the right store. `start` regains the worker
  * handoff in the seeded prompt; `parentId` nests the new task under a parent;
- * `agentModel` overrides the author agent's model for this one creation.
+ * `agentModel` overrides the author agent's model for this one creation; `files`
+ * carries absolute paths the author agent should read as context before writing.
  * All must be declared here — a bare `z.object` strips undeclared keys, so
  * omitting them silently drops the flags before `runNew` sees them.
  */
@@ -218,6 +219,12 @@ export const NewInputSchema = z.object({
   start: z.boolean().optional(),
   parentId: z.string().optional(),
   agentModel: z.string().optional(),
+  // A bare string is accepted alongside the list because the CLI's flag parser
+  // (`packages/cli/src/args.ts`) has no array support — repeated `--files a
+  // --files b` is last-wins — so `perch dex new --files <abs-path>` attaches one
+  // file and `--stdin-json` is the way to pass several. `normalizeAttachedFiles`
+  // lifts the single string and drops anything non-absolute.
+  files: z.union([z.string(), z.array(z.string())]).optional(),
 });
 
 /**

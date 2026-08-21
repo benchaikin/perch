@@ -19,6 +19,7 @@
  * directly with stubs, mirroring `spawn.ts`.
  */
 import type { spawn as nodeSpawn } from "node:child_process";
+import { isAbsolute } from "node:path";
 
 import {
   buildAgentLaunchCommand,
@@ -63,6 +64,44 @@ export interface NewInput {
    * value never reaches the shell — it simply emits no `--model`.
    */
   agentModel?: string;
+  /**
+   * Absolute paths of files the user attached to the composition (screenshots,
+   * design mocks, spec docs, logs). Only PATHS travel — nothing here reads or
+   * copies file bytes; the author agent (which has Read and can view images) does
+   * the reading, seeded by {@link newTaskPrompt}'s ATTACHED FILES block. A bare
+   * string is accepted as a one-element list so `perch dex new --files <path>`
+   * works despite the CLI flag parser having no array support (see
+   * `NewInputSchema`); {@link normalizeAttachedFiles} does the lifting.
+   */
+  files?: string[] | string;
+}
+
+/**
+ * The most attachments a single composition carries into the prompt. The whole
+ * prompt rides as ONE shell-quoted argv (`buildAgentLaunchCommand` → `shellQuote`),
+ * so an unbounded path list would eat ARG_MAX; extras past this are dropped.
+ */
+export const MAX_ATTACHED_FILES = 20;
+
+/**
+ * Normalize the attached-file list before it reaches the prompt: lift a bare
+ * string to a one-element list, trim, drop empties, drop RELATIVE paths (they'd
+ * resolve against the agent's cwd — the repo — and silently mean a different
+ * file), dedupe, and cap at {@link MAX_ATTACHED_FILES}. Takes `unknown` so any junk
+ * value (a non-array, non-string entries) normalizes away to `[]` rather than
+ * throwing, keeping {@link runNew}'s never-throws contract.
+ */
+export function normalizeAttachedFiles(files: unknown): string[] {
+  const raw = typeof files === "string" ? [files] : Array.isArray(files) ? files : [];
+  const seen = new Set<string>();
+  for (const entry of raw) {
+    if (typeof entry !== "string") continue;
+    const path = entry.trim();
+    if (!path || !isAbsolute(path)) continue;
+    seen.add(path);
+    if (seen.size >= MAX_ATTACHED_FILES) break;
+  }
+  return [...seen];
 }
 
 /** The `dex.new` action result, surfaced to every projected surface. */
@@ -143,8 +182,30 @@ export function resolveNewRepo(
  * definition already inside an epic, so the prompt biases to a SINGLE sub-task and
  * tells the agent NOT to spin up a fresh epic — unlike the top-level path, which
  * judges single-task-vs-epic from scratch.
+ *
+ * When `files` is non-empty an ATTACHED FILES block follows the description: the
+ * absolute paths one per line, with instructions to READ them before the code and
+ * to FOLD what matters into the authored description (so the task doesn't end up
+ * depending on a path that may be temporary or deleted). It sits before the
+ * reconcile block — and so, in `start` mode, before the worker handoff — so the
+ * worker inherits that context through the description the author writes. An empty
+ * list emits nothing, leaving the prompt byte-identical to the no-attachment one.
  */
-export function newTaskPrompt(description: string, start = false, parentId?: string): string {
+export function newTaskPrompt(
+  description: string,
+  start = false,
+  parentId?: string,
+  files: string[] = [],
+): string {
+  const attached =
+    files.length === 0
+      ? ""
+      : `ATTACHED FILES — the user attached these as context for this work (screenshots, ` +
+        `design mocks, specs, logs). READ them FIRST, before the code, and treat them as ` +
+        `part of the description above:\n${files.join("\n")}\n\n` +
+        `Fold whatever matters from them into the task description you write — do NOT leave ` +
+        `the authored task depending on these paths, which may be temporary or deleted by the ` +
+        `time someone works it.\n\n`;
   const closing = start
     ? `Once authored, do NOT stop — START WORKING the new task by handing it to a ` +
       `separate worker agent: take the id \`dex create\` returned (for an epic, the ` +
@@ -177,7 +238,7 @@ export function newTaskPrompt(description: string, start = false, parentId?: str
   if (parentId) {
     return (
       `Here is a rough description of work to create as a SUB-TASK of the existing dex ` +
-      `task \`${parentId}\`:\n\n${description}\n\n` +
+      `task \`${parentId}\`:\n\n${description}\n\n${attached}` +
       `Author this as well-formed dex work for THIS repository (your cwd), nested UNDER ` +
       `\`${parentId}\` as its child. First read the relevant code to ground the work in how ` +
       `things actually work here — find the real reuse points, the files to touch, and the ` +
@@ -197,6 +258,7 @@ export function newTaskPrompt(description: string, start = false, parentId?: str
   }
   return (
     `Here is a rough description of work to create as dex task(s):\n\n${description}\n\n` +
+    attached +
     `Author this as well-formed dex work for THIS repository (your cwd). First read the ` +
     `relevant code to ground the work in how things actually work here — find the real ` +
     `reuse points, the files to touch, and the gotchas.\n\n` +
@@ -241,9 +303,10 @@ export function newTaskTitle(description: string, maxLength = 40): string {
 /**
  * Spawn a Claude agent in the target dex repo, seeded to author a new task from
  * `input.description`. Never throws: an empty description, an ambiguous repo, or a
- * terminal-launch error returns a clean `{ ok:false, message }`. The agent runs in
- * AUTO MODE (like the other agent launches), in the repo dir so its `dex create`
- * writes to the right store. The created task is asynchronous — it appears on the
+ * terminal-launch error returns a clean `{ ok:false, message }` (an unusable
+ * `files` value normalizes away instead — see {@link normalizeAttachedFiles}).
+ * The agent runs in AUTO MODE (like the other agent launches), in the repo dir so
+ * its `dex create` writes to the right store. The created task is asynchronous — it appears on the
  * panel's next `dex.tasks` refresh, not immediately.
  */
 export async function runNew(input: NewInput, deps: NewDeps): Promise<NewResult> {
@@ -268,10 +331,15 @@ export async function runNew(input: NewInput, deps: NewDeps): Promise<NewResult>
     ? { ...deps.agent, model: input.agentModel.trim() }
     : deps.agent;
 
+  // Paths only — the author agent reads the files itself. Anything unusable
+  // (relative, blank, duplicated, past the cap) is dropped rather than failing
+  // the launch: a bad attachment must not cost the user their description.
+  const files = normalizeAttachedFiles(input.files);
+
   const launched = spawnInTerminal({
     command: buildAgentLaunchCommand(
       dir,
-      newTaskPrompt(description, input.start, input.parentId),
+      newTaskPrompt(description, input.start, input.parentId, files),
       agent,
     ),
     terminal: deps.terminal,

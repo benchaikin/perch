@@ -214,6 +214,14 @@ export const Channels = {
    */
   dexNew: "perch:dex-new",
   /**
+   * Renderer → main `invoke`: open a native multi-select file picker for the
+   * New-task composer's attachments (payload: none), resolving with the chosen
+   * absolute paths (`[]` on cancel). Main owns it because `dialog.showOpenDialog`
+   * is a main-process API and the sheet must be parented to the panel window —
+   * the panel hides on blur, so an unparented picker would dismiss it.
+   */
+  dexPickFiles: "perch:dex-pick-files",
+  /**
    * Renderer → main `invoke`: fetch the active (non-dismissed) alerts, newest
    * first (payload: none). Main forwards to the daemon's `alerts.list`. The
    * Dashboard pane polls this on an interval rather than riding {@link
@@ -377,6 +385,14 @@ export interface DexNewRequest {
    * whitelists it before it reaches the spawned `claude --model`.
    */
   agentModel?: string;
+  /**
+   * Absolute paths of the files attached in the composer (picked or dropped) —
+   * screenshots, mocks, specs, logs. Only paths travel; the author agent reads
+   * them itself, seeded by `dex.new`'s ATTACHED FILES prompt block. Omitted (not
+   * an empty array) when nothing is attached, so the daemon-side prompt is
+   * byte-identical to the no-attachment one.
+   */
+  files?: string[];
 }
 
 /**
@@ -527,6 +543,20 @@ export interface PerchBridge {
    * authored asynchronously and appears on the next board refresh.
    */
   dexNew(request: DexNewRequest): Promise<void>;
+  /**
+   * Ask the main process to open a native multi-select file picker over the panel
+   * for the New-task composer's attachments. Resolves with the chosen absolute
+   * paths, or `[]` when the user cancels (so a cancel changes nothing).
+   */
+  dexPickFiles(): Promise<string[]>;
+  /**
+   * Resolve the absolute path of a dropped `File`. Electron 33 removed
+   * `File.path`, so only the preload (which can reach `webUtils`) can answer
+   * this; the renderer holds no Node/Electron API of its own. Returns `""` for a
+   * file with no path on disk (a drag out of a browser), which the caller skips
+   * rather than sending on as a junk path. Synchronous — it's a lookup, not IPC.
+   */
+  pathForFile(file: File): string;
   /**
    * Fetch the active (non-dismissed) alerts, newest first. The Dashboard pane
    * polls this on an interval and routes each alert to its plugin's registered

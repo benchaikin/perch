@@ -56,6 +56,8 @@ const CASES: Array<[keyof PerchActions, unknown, boolean]> = [
   ["dexAddBlocker", { blockedId: "a", blockerId: "b" }, true],
   ["dexRemoveBlocker", { blockedId: "a", blockerId: "b" }, true],
   ["dexNew", { description: "do a thing" }, true],
+  ["dexPickFiles", undefined, true],
+  ["pathForFile", new File([], "shot.png"), true],
   ["alertsList", undefined, true],
   ["alertsDismiss", "alert-id", true],
 ];
