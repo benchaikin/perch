@@ -174,6 +174,23 @@ export function Panel(): JSX.Element {
     setRefreshing(false);
   }, [state]);
 
+  // A file dropped anywhere the composer's own drop zone doesn't cover would
+  // otherwise navigate the panel to that `file://` URL — the window would simply
+  // become the file, with no way back. Swallow file drags at the window level;
+  // scoped to `Files` so the board's task-row drag (a `text/plain` dependency
+  // gesture) keeps its exact drop-target semantics, invalid targets included.
+  useEffect(() => {
+    const swallowFileDrag = (e: DragEvent): void => {
+      if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+    };
+    window.addEventListener("dragover", swallowFileDrag);
+    window.addEventListener("drop", swallowFileDrag);
+    return () => {
+      window.removeEventListener("dragover", swallowFileDrag);
+      window.removeEventListener("drop", swallowFileDrag);
+    };
+  }, []);
+
   function selectTab(id: string): void {
     setActiveId(id);
     actions.setActiveTab(id); // persist so it's restored next open

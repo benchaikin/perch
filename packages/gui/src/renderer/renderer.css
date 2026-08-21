@@ -30,9 +30,9 @@ body {
    class the body keeps its opaque --bg fill and all surfaces use their solid values. */
 body.liquid-glass {
   background: transparent;
-  --hover-bg:        rgba(var(--fg-rgb), 0.08);
+  --hover-bg: rgba(var(--fg-rgb), 0.08);
   --hover-bg-strong: rgba(var(--fg-rgb), 0.15);
-  --chip-bg:         rgba(var(--fg-rgb), 0.10);
+  --chip-bg: rgba(var(--fg-rgb), 0.1);
 }
 
 /* In light mode the pale --muted (#929aaa) and friends were tuned for contrast
@@ -40,9 +40,9 @@ body.liquid-glass {
    so step them down one Nord shade each. */
 @media (prefers-color-scheme: light) {
   body.liquid-glass {
-    --muted:       #616e88; /* nord3-bright, was #929aaa */
+    --muted: #616e88; /* nord3-bright, was #929aaa */
     --badge-muted: #4c566a; /* nord3,        was #616e88 */
-    --dot-muted:   #616e88; /* nord3-bright, was #929aaa */
+    --dot-muted: #616e88; /* nord3-bright, was #929aaa */
   }
 }
 
@@ -955,6 +955,71 @@ body.liquid-glass {
    the right edge, so it works whether or not the project selector is present. */
 .dex-new-controls select:last-of-type {
   margin-right: auto;
+}
+/* The composer's drop zone: everything under the header (textarea, attachment
+   chips, footer controls), so a file dropped anywhere inside the dialog attaches.
+   It inherits the dialog's column layout + gap and carries the `flex: 1` that used
+   to grow the textarea directly, so the corner grabber still grows the composer.
+   `min-height: 0` lets it actually shrink inside the flex column. */
+.dex-new-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-height: 0;
+}
+/* Attachment chips: one per picked/dropped file, basename shown with the full path
+   as the tooltip. Wraps so a long list grows downward rather than clipping. */
+.dex-new-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.dex-new-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 4px 2px 8px;
+  font-size: 11px;
+  color: var(--fg);
+  background: var(--chip-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+/* A long filename ellipsizes rather than stretching the chip past the dialog. */
+.dex-new-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dex-new-file-remove {
+  flex: none;
+  padding: 0 2px;
+  font-size: 10px;
+  color: var(--muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.dex-new-file-remove:hover:not(:disabled) {
+  color: var(--fg);
+}
+.dex-new-file-remove:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+/* Why a drop attached nothing (items with no path on disk) — inline, since the
+   panel's notice toast is pushed from main and the renderer has none of its own. */
+.dex-new-drop-error {
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--warn);
+  background: rgba(var(--warn-rgb), 0.12);
+  border-radius: 4px;
 }
 
 /* Task detail view (replaces the list when a task is selected). */

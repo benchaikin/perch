@@ -101,6 +101,12 @@ export function createActions(bridge: () => PerchActions): PerchActions {
     dexNew(request) {
       return bridge().dexNew(request);
     },
+    dexPickFiles() {
+      return bridge().dexPickFiles();
+    },
+    pathForFile(file) {
+      return bridge().pathForFile(file);
+    },
     alertsList() {
       return bridge().alertsList();
     },

@@ -1146,6 +1146,26 @@ async function newDexTask(request: DexNewRequest): Promise<void> {
 }
 
 /**
+ * Open a native multi-select file picker for the New-task composer's attachments
+ * and resolve with the chosen ABSOLUTE paths (`[]` on cancel, so a cancel changes
+ * nothing in the composer). Parented to the panel when it's alive — the same shape
+ * as the delete/remove confirmations (`showMessageBox(panel, …)`), which is what
+ * keeps the sheet attached to a window that hides on blur — with the bare-options
+ * fallback `addRepoFlow` uses. Nothing is read here: only paths travel onward.
+ */
+async function pickDexFiles(): Promise<string[]> {
+  const pickerOptions = {
+    title: "Attach files",
+    properties: ["openFile" as const, "multiSelections" as const],
+  };
+  const picked =
+    panel && !panel.isDestroyed()
+      ? await dialog.showOpenDialog(panel, pickerOptions)
+      : await dialog.showOpenDialog(pickerOptions);
+  return picked.canceled ? [] : picked.filePaths;
+}
+
+/**
  * Fetch the active alerts for the Dashboard pane's poll. Forwards to the daemon's
  * `alerts.list` (already sorted newest-first daemon-side). Returns `[]` when the
  * daemon is down so the pane simply renders its empty state instead of erroring —
@@ -1970,6 +1990,7 @@ function registerIpc(): void {
     removeDexBlocker(request),
   );
   ipcMain.handle(Channels.dexNew, (_event, request: DexNewRequest) => newDexTask(request));
+  ipcMain.handle(Channels.dexPickFiles, () => pickDexFiles());
   // The Dashboard pane polls alerts directly (it owns plugin-opaque payloads), so
   // these bypass the pushed PanelState and forward straight to the daemon.
   ipcMain.handle(Channels.alertsList, () => listAlerts());

@@ -754,6 +754,17 @@ function newTaskTargetProject(projects: string[], picked: string | undefined): s
 }
 
 /**
+ * The trailing segment of an absolute path — what an attachment chip shows, with
+ * the full path as its tooltip. Hand-rolled because the renderer is sandboxed
+ * browser code with no `node:path`; a trailing slash is tolerated so a path that
+ * ends in one still names something.
+ */
+function pathBasename(path: string): string {
+  const segments = path.split("/").filter((segment) => segment.length > 0);
+  return segments[segments.length - 1] ?? path;
+}
+
+/**
  * The "New task from a description" control: a "+" button that arms the New-task
  * dialog for `scope` (toggling it closed if already armed for that scope). The
  * create-a-task counterpart to the per-row spawn play button — that spawns an
@@ -1016,6 +1027,13 @@ export function Dialog({
  * remount it. The mount effect focuses the textarea ONCE when the dialog opens (not
  * per render), so the same push can't steal focus mid-type either.
  *
+ * Files ride along too: "Attach files" opens a native multi-select picker (main
+ * owns it — see `Channels.dexPickFiles`), and dropping files on the dialog body adds
+ * them. Only ABSOLUTE PATHS travel — nothing is read or copied here; the author
+ * agent reads the files itself. They render as removable chips and thread to
+ * `dex.new` as `files`. An attachment alone is NOT a submission: both actions stay
+ * gated on a non-empty description.
+ *
  * When armed for a `parent` (a {@link subtaskScope}) the dialog authors a CHILD of
  * that task: the header names the parent instead of a repo, the project selector is
  * suppressed (a sub-task MUST land in its parent's store), and submit passes the
@@ -1039,8 +1057,25 @@ function DexNewDialog({
   const [agentModel, setAgentModel] = useState<string>(AGENT_MODEL_DEFAULT);
   // Which action is launching (so only that button spins), or undefined when idle.
   const [pending, setPending] = useState<"add" | "start" | undefined>(undefined);
+  // Absolute paths of the attached files, in pick/drop order. Same lifetime as
+  // `draft` — it dies with the dialog's unmount, so there's nothing to reset on
+  // success, and (unlike the dialog size) nothing to persist: attachments are
+  // per-composition.
+  const [files, setFiles] = useState<string[]>([]);
+  // Why the last drop attached nothing (a browser drag carries no path on disk).
+  // Cleared by the next successful attach; the panel has no renderer-local toast,
+  // so it surfaces inline, the way the completer surfaces dex's refusal.
+  const [dropError, setDropError] = useState<string | undefined>(undefined);
   const inFlight = pending !== undefined;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Add paths, dropping blanks and collapsing duplicates against what's already
+  // attached, so picking or dropping the same file twice is a no-op.
+  function attach(paths: string[]): void {
+    const added = paths.filter((path) => path.length > 0);
+    if (added.length > 0) setDropError(undefined);
+    setFiles((current) => [...new Set([...current, ...added])]);
+  }
 
   // Grab focus once, when the dialog opens (this runs on mount only — the dialog
   // mounts when armed and unmounts when closed). Not on every render, so a
@@ -1099,6 +1134,10 @@ function DexNewDialog({
       // An empty pick ("Use default") rides as undefined so the daemon inherits the
       // configured default rather than seeing an explicit empty override.
       const agentModelOverride = agentModel || undefined;
+      // Omitted entirely (not an empty array) with nothing attached, so a plain
+      // composition's request — and the prompt the daemon builds from it — is
+      // exactly what it was before attachments existed.
+      const attachments = files.length > 0 ? { files } : {};
       await actions.dexNew(
         parent
           ? {
@@ -1107,12 +1146,14 @@ function DexNewDialog({
               start,
               parentId: parent.id,
               agentModel: agentModelOverride,
+              ...attachments,
             }
           : {
               description,
               project: newTaskTargetProject(projects, project),
               start,
               agentModel: agentModelOverride,
+              ...attachments,
             },
       );
       setComposing(undefined);
@@ -1132,91 +1173,154 @@ function DexNewDialog({
       closeClassName="dex-new-cancel"
       size={{ saved: savedDialogSize, onPersist: actions.setNewTaskDialogSize }}
     >
-      <textarea
-        ref={textareaRef}
-        className="dex-new-input"
-        placeholder="Describe the task you want — an agent will read the code and author it."
-        rows={3}
-        value={draft}
-        disabled={inFlight}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault(); // Enter submits; Shift+Enter falls through to a newline.
-            void submit();
+      {/* A file drop anywhere in the composer attaches. Gated on the drag carrying
+          FILES so the board's own task-row drag (`text/plain` + the drag store) is
+          untouched — a dependency edge can't be mistaken for an attachment, or the
+          other way round. */}
+      <div
+        className="dex-new-body"
+        onDragOver={(e) => {
+          if (inFlight || !e.dataTransfer?.types.includes("Files")) return;
+          e.preventDefault(); // marks this a drop zone (and lets `drop` fire)
+          e.dataTransfer.dropEffect = "copy";
+        }}
+        onDrop={(e) => {
+          if (inFlight || !e.dataTransfer?.types.includes("Files")) return;
+          e.preventDefault();
+          // Electron 33 removed `File.path`; the preload resolves it via
+          // `webUtils`. A file with no path on disk (dragged out of a browser)
+          // yields "" — skip it and say why rather than sending a junk path.
+          const paths = [...e.dataTransfer.files].map((file) => actions.pathForFile(file));
+          attach(paths);
+          if (paths.some((path) => path.length === 0)) {
+            setDropError("Some dropped items aren't files on disk and weren't attached.");
           }
         }}
-      />
-      <div className="dex-new-controls">
-        {/* The author agent's model for this one creation. Unlike the project
-            selector, it's useful with a single repo, so it always shows; the
-            first option ("Use default") inherits the configured agent model. */}
-        <select
-          className="dex-new-model"
+      >
+        <textarea
+          ref={textareaRef}
+          className="dex-new-input"
+          placeholder="Describe the task you want — an agent will read the code and author it."
+          rows={3}
+          value={draft}
           disabled={inFlight}
-          title="Author agent model"
-          value={agentModel}
-          onChange={(e) => setAgentModel(e.target.value)}
-        >
-          {AGENT_MODEL_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-        {/* A project selector only when several repos' tasks share the board, so the
-            target store is unambiguous; one (or zero) project needs no choice. A
-            sub-task is locked to its parent's store, so it never offers one. */}
-        {!parent && projects.length > 1 && (
-          <select
-            className="dex-new-project"
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault(); // Enter submits; Shift+Enter falls through to a newline.
+              void submit();
+            }
+          }}
+        />
+        {files.length > 0 && (
+          <ul className="dex-new-files">
+            {files.map((path) => (
+              <li key={path} className="dex-new-file" title={path}>
+                <span className="dex-new-file-name">{pathBasename(path)}</span>
+                <button
+                  className="dex-new-file-remove"
+                  disabled={inFlight}
+                  title={`Remove ${path}`}
+                  aria-label={`Remove ${pathBasename(path)}`}
+                  onClick={() => setFiles((current) => current.filter((p) => p !== path))}
+                >
+                  <i className="fa-solid fa-xmark" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {dropError && (
+          <div className="dex-new-drop-error" role="alert">
+            {dropError}
+          </div>
+        )}
+        <div className="dex-new-controls">
+          {/* Attach context for the author agent to read before it writes — a
+              screenshot, a mock, a spec, a log. Main owns the native picker (the
+              panel hides on blur, so the sheet must be parented to it); a cancel
+              resolves empty and changes nothing. */}
+          <button
+            className="btn btn-sm dex-new-attach"
             disabled={inFlight}
-            title="Target repository"
-            value={project ?? projects[0]}
-            onChange={(e) => setProject(e.target.value)}
+            title="Attach files for the author agent to read"
+            aria-label="Attach files"
+            onClick={() => void actions.dexPickFiles().then(attach)}
           >
-            {projects.map((p) => (
-              <option key={p} value={p}>
-                {p}
+            <i className="fa-solid fa-paperclip" /> Attach files
+          </button>
+          {/* The author agent's model for this one creation. Unlike the project
+              selector, it's useful with a single repo, so it always shows; the
+              first option ("Use default") inherits the configured agent model. */}
+          <select
+            className="dex-new-model"
+            disabled={inFlight}
+            title="Author agent model"
+            value={agentModel}
+            onChange={(e) => setAgentModel(e.target.value)}
+          >
+            {AGENT_MODEL_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
               </option>
             ))}
           </select>
-        )}
-        {/* Author the task AND immediately spawn a worker agent on it. Hidden when
-            the target repo is in Auto, where the daemon spawns a worker anyway. */}
-        {!targetIsAuto && (
+          {/* A project selector only when several repos' tasks share the board, so the
+              target store is unambiguous; one (or zero) project needs no choice. A
+              sub-task is locked to its parent's store, so it never offers one. */}
+          {!parent && projects.length > 1 && (
+            <select
+              className="dex-new-project"
+              disabled={inFlight}
+              title="Target repository"
+              value={project ?? projects[0]}
+              onChange={(e) => setProject(e.target.value)}
+            >
+              {projects.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          )}
+          {/* Author the task AND immediately spawn a worker agent on it. Hidden when
+              the target repo is in Auto, where the daemon spawns a worker anyway. */}
+          {!targetIsAuto && (
+            <button
+              className="btn btn-sm dex-new-start"
+              disabled={!canSubmit}
+              title={
+                pending === "start"
+                  ? "Spawning the author agent…"
+                  : "Add task and start an agent working it"
+              }
+              aria-label="Add task and start immediately"
+              onClick={() => void submit(true)}
+            >
+              <i
+                className={
+                  pending === "start" ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-rocket"
+                }
+              />{" "}
+              Add task and start immediately
+            </button>
+          )}
+          {/* The default action — what Enter triggers: author the task only. */}
           <button
-            className="btn btn-sm dex-new-start"
+            className="btn btn-sm btn-primary dex-new-submit"
             disabled={!canSubmit}
-            title={
-              pending === "start"
-                ? "Spawning the author agent…"
-                : "Add task and start an agent working it"
-            }
-            aria-label="Add task and start immediately"
-            onClick={() => void submit(true)}
+            title={pending === "add" ? "Spawning the author agent…" : "Add task (Enter)"}
+            aria-label="Add task"
+            onClick={() => void submit()}
           >
             <i
               className={
-                pending === "start" ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-rocket"
+                pending === "add" ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-plus"
               }
             />{" "}
-            Add task and start immediately
+            Add task
           </button>
-        )}
-        {/* The default action — what Enter triggers: author the task only. */}
-        <button
-          className="btn btn-sm btn-primary dex-new-submit"
-          disabled={!canSubmit}
-          title={pending === "add" ? "Spawning the author agent…" : "Add task (Enter)"}
-          aria-label="Add task"
-          onClick={() => void submit()}
-        >
-          <i
-            className={pending === "add" ? "fa-solid fa-circle-notch fa-spin" : "fa-solid fa-plus"}
-          />{" "}
-          Add task
-        </button>
+        </div>
       </div>
     </Dialog>
   );

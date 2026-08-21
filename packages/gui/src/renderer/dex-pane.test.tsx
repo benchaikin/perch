@@ -42,6 +42,13 @@ let dexCompleteCalls: DexCompleteRequest[];
  *  queue falls back to a generic success so the completer closes as it does live. */
 let dexCompleteResults: DexCompleteResult[];
 let dexNewCalls: DexNewRequest[];
+/** How many times the composer opened the native picker, and the paths each call
+ *  hands back (FIFO; an exhausted queue is a cancel — the empty list). */
+let dexPickFilesCalls: number;
+let dexPickFilesResults: string[][];
+/** Path the fake `pathForFile` resolves per dropped File name ("" ⇒ no path on
+ *  disk, the browser-drag case). */
+let droppedFilePaths: Map<string, string>;
 let setDexViewModeCalls: DexViewMode[];
 /** PR URLs the actionable landable chip opened via `window.perch.openPr`. */
 let openPrCalls: string[];
@@ -105,6 +112,15 @@ const bridge = {
       dexNewResolve = resolve;
     });
   },
+  dexPickFiles() {
+    dexPickFilesCalls += 1;
+    return Promise.resolve(dexPickFilesResults.shift() ?? []);
+  },
+  // The real bridge resolves a dropped File's path via Electron's `webUtils`;
+  // jsdom Files carry no path, so the fake keys off the name the test gave it.
+  pathForFile(file: File) {
+    return droppedFilePaths.get(file.name) ?? "";
+  },
   setDexViewMode(mode: DexViewMode) {
     setDexViewModeCalls.push(mode);
   },
@@ -126,6 +142,9 @@ beforeEach(() => {
   actionResolvers = [];
   dexNewCalls = [];
   dexNewResolve = undefined;
+  dexPickFilesCalls = 0;
+  dexPickFilesResults = [];
+  droppedFilePaths = new Map();
   setDexViewModeCalls = [];
   openPrCalls = [];
   (globalThis as unknown as { window: { perch: PerchBridge } }).window.perch = bridge;
@@ -1094,7 +1113,9 @@ test("the optimistic in-flight state clears when a push drops the deleted row", 
 
 /** Arm the dialog (click the + control) and return its textarea + the two actions. */
 function armComposer(container: HTMLElement): {
+  dialog: HTMLElement;
   textarea: HTMLTextAreaElement;
+  attach: HTMLButtonElement;
   submit: HTMLButtonElement;
   start: HTMLButtonElement;
 } {
@@ -1102,7 +1123,9 @@ function armComposer(container: HTMLElement): {
   const dialog = container.querySelector(".dex-new-dialog");
   assert.ok(dialog, "the + control opens the New-task dialog");
   return {
+    dialog: dialog as HTMLElement,
     textarea: dialog!.querySelector(".dex-new-input") as HTMLTextAreaElement,
+    attach: dialog!.querySelector(".dex-new-attach") as HTMLButtonElement,
     submit: dialog!.querySelector(".dex-new-submit") as HTMLButtonElement,
     start: dialog!.querySelector(".dex-new-start") as HTMLButtonElement,
   };
@@ -1145,6 +1168,129 @@ test("Enter triggers the plain Add task path only (never starts an agent)", () =
   fireEvent.keyDown(textarea, { key: "Enter" });
   assert.equal(dexNewCalls.length, 1, "Enter submits");
   assert.equal(dexNewCalls[0]!.start, false, "Enter never starts an agent");
+});
+
+/** Chip labels (basenames) currently shown in the composer, in order. */
+function attachedChips(dialog: HTMLElement): string[] {
+  return [...dialog.querySelectorAll(".dex-new-file-name")].map((el) => el.textContent ?? "");
+}
+
+/** Drop `files` (name → resolved absolute path, "" for a no-path browser drag) on
+ *  the composer body, the way a Finder drag arrives. */
+function dropFiles(dialog: HTMLElement, files: Record<string, string>): void {
+  const dropped = Object.entries(files).map(([name, path]) => {
+    droppedFilePaths.set(name, path);
+    return new File([], name);
+  });
+  const dataTransfer = { types: ["Files"], files: dropped, dropEffect: "none" };
+  const body = dialog.querySelector(".dex-new-body")!;
+  fireEvent.dragOver(body, { dataTransfer });
+  fireEvent.drop(body, { dataTransfer });
+}
+
+test("Attach files opens the picker; picked paths become chips (duplicates collapse)", async () => {
+  const { container } = render(<DexPane section={section([row({ id: "a", name: "A" })])} />);
+  const { dialog, attach } = armComposer(container);
+  assert.equal(attachedChips(dialog).length, 0, "nothing is attached until the user picks");
+
+  dexPickFilesResults.push(["/shots/broken.png", "/docs/spec.md"]);
+  await act(async () => {
+    fireEvent.click(attach);
+  });
+  assert.equal(dexPickFilesCalls, 1);
+  assert.deepEqual(attachedChips(dialog), ["broken.png", "spec.md"]);
+  // The chip's tooltip carries the full path the basename stands in for.
+  assert.equal(dialog.querySelector(".dex-new-file")!.getAttribute("title"), "/shots/broken.png");
+
+  // A second pick that repeats a path adds only the new one.
+  dexPickFilesResults.push(["/docs/spec.md", "/logs/trace.txt"]);
+  await act(async () => {
+    fireEvent.click(attach);
+  });
+  assert.deepEqual(attachedChips(dialog), ["broken.png", "spec.md", "trace.txt"]);
+});
+
+test("cancelling the picker changes nothing; a chip's × removes exactly that path", async () => {
+  const { container } = render(<DexPane section={section([row({ id: "a", name: "A" })])} />);
+  const { dialog, attach } = armComposer(container);
+  dexPickFilesResults.push(["/a.png", "/b.png"]);
+  await act(async () => {
+    fireEvent.click(attach);
+  });
+
+  // A cancel resolves empty — the existing chips are untouched.
+  dexPickFilesResults.push([]);
+  await act(async () => {
+    fireEvent.click(attach);
+  });
+  assert.deepEqual(attachedChips(dialog), ["a.png", "b.png"]);
+
+  fireEvent.click(dialog.querySelector(".dex-new-file-remove")!);
+  assert.deepEqual(attachedChips(dialog), ["b.png"], "only the removed path goes");
+});
+
+test("dropping files attaches them; an item with no path on disk is skipped, not sent", () => {
+  const { container } = render(<DexPane section={section([row({ id: "a", name: "A" })])} />);
+  const { dialog } = armComposer(container);
+
+  dropFiles(dialog, { "shot.png": "/shots/shot.png", "from-browser.png": "" });
+  assert.deepEqual(attachedChips(dialog), ["shot.png"], "the pathless item is not attached");
+  assert.match(
+    dialog.querySelector(".dex-new-drop-error")!.textContent ?? "",
+    /aren't files on disk/,
+    "the skipped item is explained inline rather than silently dropped",
+  );
+});
+
+test("an attachment alone is not a submission — both actions stay gated on a description", async () => {
+  const { container } = render(<DexPane section={section([row({ id: "a", name: "A" })])} />);
+  const { textarea, attach, submit, start } = armComposer(container);
+  dexPickFilesResults.push(["/shots/broken.png"]);
+  await act(async () => {
+    fireEvent.click(attach);
+  });
+
+  assert.equal(submit.disabled, true, "a file with no description can't be submitted");
+  assert.equal(start.disabled, true, "…and can't be started either");
+  fireEvent.change(textarea, { target: { value: "fix this" } });
+  assert.equal(submit.disabled, false, "the description is what enables submission");
+});
+
+test("submitting threads the attached paths through dexNew (both actions)", async () => {
+  const { container } = render(<DexPane section={section([row({ id: "a", name: "A" })])} />);
+  const first = armComposer(container);
+  dexPickFilesResults.push(["/shots/broken.png", "/docs/spec.md"]);
+  await act(async () => {
+    fireEvent.click(first.attach);
+  });
+  fireEvent.change(first.textarea, { target: { value: "fix the header" } });
+  fireEvent.click(first.submit);
+  assert.deepEqual(dexNewCalls[0]!.files, ["/shots/broken.png", "/docs/spec.md"]);
+
+  // The start path sends the same list.
+  cleanup();
+  const second = render(<DexPane section={section([row({ id: "a", name: "A" })])} />);
+  const composer = armComposer(second.container);
+  dexPickFilesResults.push(["/shots/broken.png"]);
+  await act(async () => {
+    fireEvent.click(composer.attach);
+  });
+  fireEvent.change(composer.textarea, { target: { value: "fix the header" } });
+  fireEvent.click(composer.start);
+  assert.equal(dexNewCalls[1]!.start, true);
+  assert.deepEqual(dexNewCalls[1]!.files, ["/shots/broken.png"]);
+});
+
+test("with nothing attached the request omits `files` entirely", () => {
+  const { container } = render(<DexPane section={section([row({ id: "a", name: "A" })])} />);
+  const { textarea, submit } = armComposer(container);
+  fireEvent.change(textarea, { target: { value: "no attachments here" } });
+  fireEvent.click(submit);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(dexNewCalls[0]!, "files"),
+    false,
+    "an unattached composition's payload is exactly what it was before attachments",
+  );
 });
 
 test("an Auto-mode target repo hides 'Add task and start immediately' (Manual keeps it)", () => {
@@ -1399,6 +1545,25 @@ test("a sub-task's 'start immediately' authors the child then starts it (parentI
   assert.equal(dexNewCalls.length, 1);
   assert.equal(dexNewCalls[0]!.parentId, "parent1");
   assert.equal(dexNewCalls[0]!.start, true);
+});
+
+test("a sub-task composition carries its attachments through too", async () => {
+  const { container } = render(
+    <DexPane section={section([row({ id: "parent1", name: "The Parent", project: "beta" })])} />,
+  );
+  fireEvent.click(container.querySelector(".dex-row .dex-new-subtask")!);
+  const dialog = container.querySelector(".dex-new-dialog") as HTMLElement;
+  dexPickFilesResults.push(["/docs/spec.md"]);
+  await act(async () => {
+    fireEvent.click(dialog.querySelector(".dex-new-attach")!);
+  });
+  fireEvent.change(dialog.querySelector(".dex-new-input")!, { target: { value: "child work" } });
+
+  fireEvent.click(dialog.querySelector(".dex-new-submit") as HTMLButtonElement);
+  assert.equal(dexNewCalls.length, 1);
+  assert.equal(dexNewCalls[0]!.parentId, "parent1");
+  assert.equal(dexNewCalls[0]!.project, "beta");
+  assert.deepEqual(dexNewCalls[0]!.files, ["/docs/spec.md"]);
 });
 
 test("the row's new-sub-task control toggles closed when re-clicked and never opens row detail", () => {

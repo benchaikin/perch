@@ -8,7 +8,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { newTaskPrompt, newTaskTitle, resolveNewRepo, runNew, type NewDeps } from "./new.js";
+import {
+  MAX_ATTACHED_FILES,
+  newTaskPrompt,
+  newTaskTitle,
+  normalizeAttachedFiles,
+  resolveNewRepo,
+  runNew,
+  type NewDeps,
+} from "./new.js";
 
 test("resolveNewRepo: explicit repo wins as given", () => {
   assert.deepEqual(resolveNewRepo({ repo: "/explicit/path" }, ["/work/perch"]), {
@@ -123,6 +131,77 @@ test("newTaskPrompt: parentId composes with start mode (author the sub-task, the
   assert.match(prompt, /dex create --parent abc123/);
   assert.match(prompt, /START WORKING/);
   assert.doesNotMatch(prompt, /Do NOT implement the work — only author it\./);
+});
+
+// ----- attached files ------------------------------------------------------
+
+test("normalizeAttachedFiles: trims, drops blanks, and lifts a bare string", () => {
+  assert.deepEqual(normalizeAttachedFiles(["  /a/shot.png  ", "", "   "]), ["/a/shot.png"]);
+  // A single string is the CLI shape (`--files <path>`), lifted to a one-element list.
+  assert.deepEqual(normalizeAttachedFiles("/a/spec.md"), ["/a/spec.md"]);
+});
+
+test("normalizeAttachedFiles: drops relative paths (they'd resolve against the repo)", () => {
+  assert.deepEqual(normalizeAttachedFiles(["docs/spec.md", "./shot.png", "../up.txt"]), []);
+  assert.deepEqual(normalizeAttachedFiles(["rel.md", "/abs.md"]), ["/abs.md"]);
+});
+
+test("normalizeAttachedFiles: dedupes, preserving first-seen order", () => {
+  assert.deepEqual(normalizeAttachedFiles(["/a.png", "/b.png", "/a.png"]), ["/a.png", "/b.png"]);
+});
+
+test("normalizeAttachedFiles: caps the list so the quoted prompt can't eat ARG_MAX", () => {
+  const many = Array.from({ length: MAX_ATTACHED_FILES + 5 }, (_, i) => `/f/${i}.png`);
+  const normalized = normalizeAttachedFiles(many);
+  assert.equal(normalized.length, MAX_ATTACHED_FILES);
+  assert.deepEqual(normalized, many.slice(0, MAX_ATTACHED_FILES));
+});
+
+test("normalizeAttachedFiles: junk values normalize away rather than throwing", () => {
+  assert.deepEqual(normalizeAttachedFiles(undefined), []);
+  assert.deepEqual(normalizeAttachedFiles(null), []);
+  assert.deepEqual(normalizeAttachedFiles(42), []);
+  assert.deepEqual(normalizeAttachedFiles({ files: "/a.png" }), []);
+  assert.deepEqual(normalizeAttachedFiles([null, 7, "/ok.png"]), ["/ok.png"]);
+});
+
+test("newTaskPrompt: an ATTACHED FILES block lists the paths and says to read them first", () => {
+  const prompt = newTaskPrompt("Fix the broken header", false, undefined, [
+    "/tmp/shot.png",
+    "/docs/spec.md",
+  ]);
+  assert.match(prompt, /ATTACHED FILES/);
+  assert.ok(prompt.includes("/tmp/shot.png"));
+  assert.ok(prompt.includes("/docs/spec.md"));
+  assert.match(prompt, /READ them FIRST/);
+  // The authored task must not end up depending on a path that may be gone later.
+  assert.match(prompt, /Fold whatever matters from them into the task description/);
+  // The block follows the description and precedes the authoring guidance.
+  assert.ok(prompt.indexOf("Fix the broken header") < prompt.indexOf("ATTACHED FILES"));
+  assert.ok(prompt.indexOf("ATTACHED FILES") < prompt.indexOf("Author this as well-formed"));
+});
+
+test("newTaskPrompt: no attachments leaves the prompt byte-identical", () => {
+  assert.equal(newTaskPrompt("Do a thing", false, undefined, []), newTaskPrompt("Do a thing"));
+  assert.equal(
+    newTaskPrompt("Do a thing", true, "epic1", []),
+    newTaskPrompt("Do a thing", true, "epic1"),
+  );
+  assert.doesNotMatch(newTaskPrompt("Do a thing"), /ATTACHED FILES/);
+});
+
+test("newTaskPrompt: start mode puts the attachments before the worker handoff", () => {
+  const prompt = newTaskPrompt("Fix the header", true, undefined, ["/tmp/shot.png"]);
+  // The worker inherits the context through the description the author writes, so
+  // the block must land before the handoff (same rule as the reconcile block).
+  assert.ok(prompt.indexOf("ATTACHED FILES") < prompt.indexOf("START WORKING"));
+});
+
+test("newTaskPrompt: a sub-task composition carries the attachments too", () => {
+  const prompt = newTaskPrompt("Fix the header", false, "epic1", ["/tmp/shot.png"]);
+  assert.match(prompt, /dex create --parent epic1/);
+  assert.match(prompt, /ATTACHED FILES/);
+  assert.ok(prompt.includes("/tmp/shot.png"));
 });
 
 test("newTaskPrompt: offers both the single-task and the epic/sub-task path", () => {
@@ -331,4 +410,41 @@ test("runNew: multiple repos with no target is a clean ambiguity error, nothing 
   assert.equal(res.ok, false);
   assert.match(res.message, /multiple dex repos/);
   assert.equal(term.calls, 0);
+});
+
+test("runNew: threads the attached files into the launched prompt", async () => {
+  const script = fakeWriteScript();
+  const res = await runNew(
+    { description: "Fix the header", files: ["/tmp/shot.png", "/docs/spec.md"] },
+    deps({ spawn: fakeSpawn().spawn, writeScript: script.writeScript }),
+  );
+  assert.equal(res.ok, true);
+  assert.ok(script.commands[0]!.includes("ATTACHED FILES"));
+  assert.ok(script.commands[0]!.includes("/tmp/shot.png"));
+  assert.ok(script.commands[0]!.includes("/docs/spec.md"));
+});
+
+test("runNew: normalizes the files before prompting (relative dropped, dupes collapsed)", async () => {
+  const script = fakeWriteScript();
+  const res = await runNew(
+    { description: "Fix the header", files: ["docs/rel.md", " /a.png ", "/a.png", ""] },
+    deps({ spawn: fakeSpawn().spawn, writeScript: script.writeScript }),
+  );
+  assert.equal(res.ok, true);
+  assert.ok(!script.commands[0]!.includes("docs/rel.md"));
+  // The one surviving path appears exactly once in the prompt's list.
+  assert.equal(script.commands[0]!.split("/a.png").length - 1, 1);
+});
+
+test("runNew: an unusable files value is normalized away, not a failed launch", async () => {
+  const term = fakeSpawn();
+  const script = fakeWriteScript();
+  const res = await runNew(
+    // The action's schema would reject this shape, but `runNew` never throws on it.
+    { description: "Fix the header", files: 42 as unknown as string[] },
+    deps({ spawn: term.spawn, writeScript: script.writeScript }),
+  );
+  assert.equal(res.ok, true);
+  assert.equal(term.calls, 1, "the launch still happens");
+  assert.ok(!script.commands[0]!.includes("ATTACHED FILES"));
 });

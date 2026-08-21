@@ -4,7 +4,7 @@
  * `contextBridge`. With `contextIsolation` on and `nodeIntegration` off, this is
  * the only channel between the renderer and the main process.
  */
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from "electron";
 import { Channels, type PerchBridge } from "./ipc.js";
 import type { PanelState } from "./panel-state.js";
 
@@ -91,6 +91,14 @@ const bridge: PerchBridge = {
   },
   dexNew(request) {
     return ipcRenderer.invoke(Channels.dexNew, request);
+  },
+  dexPickFiles() {
+    return ipcRenderer.invoke(Channels.dexPickFiles);
+  },
+  // The documented replacement for the `File.path` property Electron 33 removed:
+  // only the preload can reach `webUtils`, so the renderer asks across the bridge.
+  pathForFile(file) {
+    return webUtils.getPathForFile(file);
   },
   alertsList() {
     return ipcRenderer.invoke(Channels.alertsList);
