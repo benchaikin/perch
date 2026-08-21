@@ -6,6 +6,7 @@ import { test } from "node:test";
 
 import {
   buildServicesSection,
+  observedAuto,
   serviceButtons,
   serviceHealth,
   SERVICES_PANE_SCOPE,
@@ -467,4 +468,28 @@ test("buildServicesSection: the flat fallback reads + applies the pane-scope Aut
     section.controls.map((c) => c.action),
     ["startAll", "restartAll"],
   );
+});
+
+test("observedAuto reads the flat pane scope, a repo group, and an absent scope", () => {
+  const list: ServiceList = {
+    available: true,
+    services: [
+      { name: "api", status: "running", project: "ashby" },
+      { name: "ui", status: "running", project: "web" },
+    ],
+    auto: { ashby: true },
+  };
+  const section = buildServicesSection(list);
+  assert.equal(observedAuto(section, "ashby"), true);
+  assert.equal(observedAuto(section, "web"), false);
+  // A scope the section doesn't carry reads Manual, like an absent `auto` key.
+  assert.equal(observedAuto(section, "gone"), false);
+
+  const flat = buildServicesSection({
+    available: true,
+    services: [{ name: "api", status: "running" }],
+    auto: { [SERVICES_PANE_SCOPE]: true },
+  });
+  assert.equal(flat.grouped, false);
+  assert.equal(observedAuto(flat, SERVICES_PANE_SCOPE), true);
 });

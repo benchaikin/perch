@@ -417,3 +417,20 @@ export function buildServicesSection(
     auto: flatAuto,
   };
 }
+
+/**
+ * The Auto/Manual mode the pushed section reports for `scope`: `section.auto`
+ * for the flat-fallback sentinel ({@link SERVICES_PANE_SCOPE}), the matching
+ * repo group's `auto` when grouped. A scope the section doesn't carry (a repo
+ * dropped from config, or one whose group hasn't been pushed yet) reads Manual,
+ * matching how an absent `plugins.services.auto` key is read.
+ *
+ * This is the header pill's observed-clear test: a toggle stays in flight until
+ * the pushed state agrees with the mode that was written — the daemon applies a
+ * `config.update` a watch → reload → poll after the write resolves, so the write
+ * resolving is not the point at which the new mode is true.
+ */
+export function observedAuto(section: ServicesSection, scope: string): boolean {
+  if (scope === SERVICES_PANE_SCOPE) return section.auto;
+  return section.repoGroups.some((group) => group.project === scope && group.auto);
+}
