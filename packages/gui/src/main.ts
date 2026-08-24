@@ -732,36 +732,71 @@ async function serviceLogs(name: string): Promise<void> {
   }
 }
 
-/** Re-invoke `services.list` so the section reflects a just-changed Auto mode immediately. */
-async function refreshServicesList(): Promise<void> {
-  if (!client) return;
-  try {
-    buildInput.servicesList = (await client.invoke({ id: SERVICES_LIST_ID })) as ServiceList;
-  } catch {
-    // Best-effort: the subscription's next poll will reconcile the list anyway.
+/** How often {@link waitForServicesAutoApplied} re-reads the list, and how long it keeps trying. */
+const SERVICES_AUTO_POLL_MS = 300;
+const SERVICES_AUTO_APPLY_TIMEOUT_MS = 5_000;
+
+/**
+ * Re-invoke `services.list` until the daemon reports `scope` at `enabled`, and
+ * only then keep that read as the pushed list.
+ *
+ * `config.update` writes `perch.yaml` and nothing else — the daemon applies it
+ * over its own fs-watch → debounce → reload path, so a read taken right after
+ * the write still runs against the stale in-memory plugin config: its `auto` map
+ * is the OLD mode and its reconcile commands nothing. Pushing that read is what
+ * used to snap the header pill back to the mode the user had just turned off.
+ * Waiting instead lands the FIRST read that sees the new config, which is also
+ * the read whose reconcile names its commanded services in `reconciling` — so
+ * the applied mode and the row spinners surface in one push.
+ *
+ * Bounded, and never blocking: on timeout the pushed list is left alone and the
+ * `registry.changed` re-subscribe settles it.
+ */
+async function waitForServicesAutoApplied(scope: string, enabled: boolean): Promise<void> {
+  const deadline = Date.now() + SERVICES_AUTO_APPLY_TIMEOUT_MS;
+  for (;;) {
+    try {
+      const list = (await client?.invoke({ id: SERVICES_LIST_ID })) as ServiceList | undefined;
+      if (list && Boolean(list.auto?.[scope]) === enabled) {
+        buildInput.servicesList = list;
+        return;
+      }
+    } catch {
+      // Best-effort: the subscription's next poll will reconcile the list anyway.
+    }
+    if (Date.now() >= deadline) return;
+    await new Promise((resolve) => setTimeout(resolve, SERVICES_AUTO_POLL_MS));
   }
 }
 
 /**
  * Set a repo's Services Auto/Manual mode by persisting
  * `plugins.services.auto[<scope>]` via `config.update` (deep-merged, so other
- * repos' modes are untouched), then re-read the service list so the header
- * toggle reflects the persisted mode immediately. The Services analog of
- * {@link setDexAutoSpawn}: awaited by the renderer (via `ipcMain.handle`) so the
- * toggle clears its in-flight state when the write finishes; only a failure toasts.
+ * repos' modes are untouched), then waiting for the daemon to actually apply it
+ * before pushing, so the header toggle hands off to a list that reports the new
+ * mode. The Services analog of {@link setDexAutoSpawn}, but awaited by the
+ * renderer (via `ipcMain.handle`) for the *effect*, not the request: it resolves
+ * `false` when the write failed or the daemon is gone — the toggle's cue to drop
+ * its optimistic mode — and `true` once the write landed, after which the toggle
+ * clears on observing the mode in the pushed state. Only a failure toasts.
  */
-async function setServicesAuto(request: ServicesAutoRequest): Promise<void> {
-  if (!client) return;
+async function setServicesAuto(request: ServicesAutoRequest): Promise<boolean> {
+  if (!client) {
+    showNotice({ tone: "bad", text: `Set auto for ${request.scope} failed: daemon unavailable.` });
+    return false;
+  }
   try {
     await client.configUpdate({
       patch: { plugins: { services: { auto: { [request.scope]: request.enabled } } } },
     });
-    await refreshServicesList();
+    await waitForServicesAutoApplied(request.scope, request.enabled);
+    return true;
   } catch (err) {
     showNotice({
       tone: "bad",
       text: `Set auto for ${request.scope} failed: ${errorMessage(err)}`,
     });
+    return false;
   } finally {
     pushState();
   }

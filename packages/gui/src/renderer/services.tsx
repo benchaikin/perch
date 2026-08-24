@@ -12,8 +12,9 @@
  * state to track. Class names + titles match the old imperative builder so
  * renderer.css keeps matching.
  */
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  observedAuto,
   SERVICES_PANE_SCOPE,
   type ServiceAction,
   type ServiceHealth,
@@ -193,9 +194,9 @@ function ServicesControlEl({
 /**
  * The optimistic in-flight state for the Auto/Manual toggles: a `Map<scope,
  * enabled>` of the modes being written (so a clicked pill reads the new state and
- * disables until the next `services.list` poll catches up), plus the setter that
- * flips it. Threaded from {@link ServicesPane} to the group/section headers,
- * mirroring dex-pane's `autoSpawnPending`/`setAutoSpawn` context.
+ * disables until the daemon reports that mode), plus the setter that flips it.
+ * Threaded from {@link ServicesPane} to the group/section headers, mirroring
+ * dex-pane's `autoSpawnPending`/`setAutoSpawn` context.
  */
 interface AutoToggleState {
   pending: ReadonlyMap<string, boolean>;
@@ -203,13 +204,23 @@ interface AutoToggleState {
 }
 
 /**
+ * How long a pending Auto/Manual toggle stays lit waiting to observe its mode in
+ * the pushed state. Generous, because the apply path is a config write → fs-watch
+ * debounce → plugin reload → the next `services.list` read (whose reconcile may
+ * start several services in turn); this is only the backstop that keeps a mode
+ * the daemon never reports from wedging the pill on forever.
+ */
+const AUTO_APPLY_TIMEOUT_MS = 10_000;
+
+/**
  * The per-repo Auto/Manual toggle for the Services tab: one click flips the
  * repo's mode, persisted under `plugins.services.auto[<scope>]`. In Auto the
  * daemon keeps the repo's services running (restart crashed, start stopped) each
  * poll; Manual (the default) leaves lifecycle to the user. The displayed state
  * reads the optimistic override (while a write is in flight) ahead of the
- * pushed `enabled`, and the button disables until the write resolves — the
- * Services analog of {@link DexAutoSpawnToggle} (shares the `.auto-mode-pill` CSS).
+ * pushed `enabled`, and the button disables until the daemon reports the new
+ * mode — the Services analog of {@link DexAutoSpawnToggle} (shares the
+ * `.auto-mode-pill` CSS).
  */
 function ServicesAutoToggle({
   scope,
@@ -337,8 +348,51 @@ export function ServicesPane({
   // unmounts), matching the PRs/Dex/Worktrees panes.
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   // Optimistic Auto/Manual toggle state, keyed by scope — flips the pill on click
-  // and clears when the next `services.list` poll reports the persisted mode.
+  // and clears when the pushed section reports the daemon at that mode.
   const [autoPending, setAutoPending] = useState<ReadonlyMap<string, boolean>>(() => new Map());
+  // Pane-lifetime bookkeeping for the pending toggles: the per-scope safety
+  // timers, and a mounted flag so a write resolving after a tab switch doesn't
+  // set state on a torn-down root.
+  const pendingLife = useRef({
+    mounted: true,
+    timers: new Map<string, ReturnType<typeof setTimeout>>(),
+  });
+  useEffect(() => {
+    const life = pendingLife.current;
+    life.mounted = true;
+    return () => {
+      life.mounted = false;
+      for (const timer of life.timers.values()) clearTimeout(timer);
+      life.timers.clear();
+    };
+  }, []);
+
+  const clearAutoPending = useCallback((scope: string): void => {
+    const life = pendingLife.current;
+    const timer = life.timers.get(scope);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      life.timers.delete(scope);
+    }
+    if (!life.mounted) return;
+    setAutoPending((prev) => {
+      if (!prev.has(scope)) return prev;
+      const next = new Map(prev);
+      next.delete(scope);
+      return next;
+    });
+  }, []);
+
+  // Hand a pending toggle off to the pushed state only once that state agrees
+  // with what was written. `config.update` resolving means `perch.yaml` was
+  // written, not that the mode is live — the daemon applies it a watch → reload
+  // → `services.list` read later, so clearing on resolution snapped the pill back
+  // to the mode the user had just turned off for the length of the apply.
+  useEffect(() => {
+    for (const [scope, enabled] of autoPending) {
+      if (observedAuto(section, scope) === enabled) clearAutoPending(scope);
+    }
+  }, [section, autoPending, clearAutoPending]);
 
   function toggle(project: string): void {
     setCollapsed((prev) => {
@@ -350,24 +404,28 @@ export function ServicesPane({
   }
 
   // Flip the scope's mode optimistically (so the pill reads the new state and
-  // disables while in flight), persist it via main, and clear the override when
-  // it resolves — by then main has re-read the list, which reports the persisted
-  // mode. Keyed per scope so two repos can toggle independently.
+  // disables while in flight) and persist it via main; the effect above clears
+  // the override once the pushed state reports the new mode. Keyed per scope so
+  // two repos can toggle independently. A write that reports failure clears
+  // right away (main has toasted); the timer is the backstop for a mode the
+  // daemon never gets around to reporting.
   const auto: AutoToggleState = {
     pending: autoPending,
     setAuto(scope, enabled) {
       if (autoPending.has(scope)) return;
       setAutoPending((prev) => new Map(prev).set(scope, enabled));
+      pendingLife.current.timers.set(
+        scope,
+        setTimeout(() => clearAutoPending(scope), AUTO_APPLY_TIMEOUT_MS),
+      );
       void (async () => {
+        let applied = false;
         try {
-          await window.perch.servicesSetAuto({ scope, enabled });
-        } finally {
-          setAutoPending((prev) => {
-            const next = new Map(prev);
-            next.delete(scope);
-            return next;
-          });
+          applied = await window.perch.servicesSetAuto({ scope, enabled });
+        } catch {
+          applied = false;
         }
+        if (!applied) clearAutoPending(scope);
       })();
     },
   };

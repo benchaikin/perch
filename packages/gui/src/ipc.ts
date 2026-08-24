@@ -117,10 +117,10 @@ export const Channels = {
   /**
    * Renderer → main `invoke`: set a repo's Services Auto/Manual mode (payload: a
    * {@link ServicesAutoRequest} — the scope and desired enabled flag). Main writes
-   * `plugins.services.auto[<scope>]` via `config.update`, re-reads the service
-   * list so the toggle reflects the persisted mode, and resolves when the write
-   * finishes so the toggle can clear its in-flight state. The Services analog of
-   * {@link Channels.dexSetAutoSpawn}.
+   * `plugins.services.auto[<scope>]` via `config.update`, then waits for the
+   * daemon to actually apply it before pushing the list, and resolves `false`
+   * when the write failed (a notice has been shown) so the toggle can drop its
+   * optimistic mode. The Services analog of {@link Channels.dexSetAutoSpawn}.
    */
   servicesSetAuto: "perch:services-set-auto",
   /** Renderer → main: copy text to the clipboard (payload: the text). */
@@ -440,12 +440,14 @@ export interface PerchBridge {
   /**
    * Ask the main process to set a repo's Services Auto/Manual mode (payload: a
    * {@link ServicesAutoRequest} — the scope + desired enabled flag). Main persists
-   * `plugins.services.auto[<scope>]` and re-reads the service list. Resolves when
-   * the write finishes (or fails), so the caller can clear its in-flight UI; the
-   * error notice (if any) is pushed via panel state. The Services analog of
-   * {@link PerchBridge.dexSetAutoSpawn}.
+   * `plugins.services.auto[<scope>]`, then holds until the daemon reports the new
+   * mode (bounded) so the pushed list carries it. Resolves `true` once the write
+   * landed, `false` if it failed or the daemon is unreachable — the caller keeps
+   * its in-flight UI lit until the new mode is *observed* in the pushed state, and
+   * `false` is its cue to give that up (the error notice is pushed via panel
+   * state). The Services analog of {@link PerchBridge.dexSetAutoSpawn}.
    */
-  servicesSetAuto(request: ServicesAutoRequest): Promise<void>;
+  servicesSetAuto(request: ServicesAutoRequest): Promise<boolean>;
   /** Ask the main process to copy text to the system clipboard. */
   copyText(text: string): void;
   /** Tell the main process which tab is now selected, so it persists across opens. */

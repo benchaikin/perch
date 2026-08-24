@@ -12,7 +12,7 @@
  * system wires onto the container.
  */
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { JSDOM } from "jsdom";
 import {
   SERVICES_PANE_SCOPE,
@@ -38,17 +38,24 @@ const calls = {
   copyText: [] as string[],
   servicesSetAuto: [] as { scope: string; enabled: boolean }[],
 };
+/**
+ * What the next `servicesSetAuto` resolves with: `true` (the write landed — the
+ * pill then stays lit until the pushed section reports the new mode), `false`
+ * (main toasted a failure — the pill drops its optimistic mode), or `"hang"` for
+ * a write that never resolves.
+ */
+let setAutoResult: boolean | "hang" = true;
+
 (win as unknown as { perch: unknown }).perch = {
   serviceAction: (request: ServiceActionRequest) => calls.serviceAction.push(request),
   servicesBulk: (action: ServicesBulkAction, project?: string) =>
     calls.servicesBulk.push({ action, project }),
   serviceLogs: (name: string) => calls.serviceLogs.push(name),
   copyText: (text: string) => calls.copyText.push(text),
-  // Never resolves: the toggle's optimistic pending state persists so the test
-  // can observe the flipped pill (it settles when the next poll's section arrives).
   servicesSetAuto: (request: { scope: string; enabled: boolean }) => {
     calls.servicesSetAuto.push(request);
-    return new Promise<void>(() => {});
+    if (setAutoResult === "hang") return new Promise<boolean>(() => {});
+    return Promise.resolve(setAutoResult);
   },
 };
 
@@ -120,10 +127,44 @@ function mount(
   const container = win.document.createElement("div");
   win.document.body.append(container);
   const root = createRoot(container);
+  roots.push(root);
   const draw = (next: SectionInput): void =>
     flushSync(() => root.render(<ServicesPane section={asSection(next)} showTitle={showTitle} />));
   draw(input);
   return { container: container as unknown as HTMLElement, rerender: draw };
+}
+
+/**
+ * Every root {@link mount} made, torn down after the run. A clicked Auto/Manual
+ * pill arms a multi-second safety timer, so leaving a pane mounted would hold the
+ * test process open until it fires; unmounting runs the pane's timer cleanup.
+ */
+const roots: Array<{ unmount(): void }> = [];
+after(() => {
+  for (const root of roots) root.unmount();
+});
+
+/** Let the pending microtasks and React's scheduler run, so async state lands in the DOM. */
+async function settle(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  flushSync(() => {});
+}
+
+/** The pane's single Auto/Manual pill, as (label, disabled, spinning). */
+function pillState(
+  c: HTMLElement,
+  index = 0,
+): {
+  label: string | null;
+  disabled: boolean;
+  spinning: boolean;
+} {
+  const pill = [...c.querySelectorAll(".auto-mode-pill")][index] as HTMLButtonElement;
+  return {
+    label: pill.querySelector(".auto-mode-pill-label")!.textContent,
+    disabled: pill.disabled,
+    spinning: pill.querySelector(".fa-circle-notch") !== null,
+  };
 }
 
 /** Mount `<ServicesPane>` and return just the container (the common case). */
@@ -517,4 +558,116 @@ test("the flat fallback renders a pane-scoped Auto/Manual pill in its header", (
   assert.ok(pill);
   click(pill);
   assert.deepEqual(calls.servicesSetAuto.at(-1), { scope: SERVICES_PANE_SCOPE, enabled: true });
+});
+
+test("the pill keeps spinning while the pushed state still reports the old mode", async () => {
+  setAutoResult = true;
+  const { container: c, rerender } = mount({
+    visible: true,
+    rows: [],
+    controls: [],
+    grouped: true,
+    repoGroups: [group("ashby", runningRow("api"))],
+  });
+  flushSync(() => click(c.querySelector(".auto-mode-pill")!));
+  // The write resolves as soon as `perch.yaml` is written — long before the
+  // daemon applies it, so the section still reports Manual…
+  await settle();
+  rerender({
+    visible: true,
+    rows: [],
+    controls: [],
+    grouped: true,
+    repoGroups: [group("ashby", runningRow("api"))],
+  });
+  await settle();
+  // …and the pill holds the target label, disabled and spinning, rather than
+  // snapping back to the mode that was just turned off.
+  assert.deepEqual(pillState(c), { label: "Auto", disabled: true, spinning: true });
+
+  // The push that reports the applied mode is what hands the pill back over.
+  rerender({
+    visible: true,
+    rows: [],
+    controls: [],
+    grouped: true,
+    repoGroups: [{ ...group("ashby", runningRow("api")), auto: true }],
+  });
+  await settle();
+  assert.deepEqual(pillState(c), { label: "Auto", disabled: false, spinning: false });
+});
+
+test("turning Auto off clears as soon as the pushed state reports Manual", async () => {
+  setAutoResult = true;
+  const { container: c, rerender } = mount({
+    visible: true,
+    rows: [],
+    controls: [],
+    grouped: true,
+    repoGroups: [{ ...group("ashby", runningRow("api")), auto: true }],
+  });
+  flushSync(() => click(c.querySelector(".auto-mode-pill")!));
+  assert.deepEqual(calls.servicesSetAuto.at(-1), { scope: "ashby", enabled: false });
+  await settle();
+  assert.deepEqual(pillState(c), { label: "Manual", disabled: true, spinning: true });
+
+  rerender({
+    visible: true,
+    rows: [],
+    controls: [],
+    grouped: true,
+    repoGroups: [group("ashby", runningRow("api"))],
+  });
+  await settle();
+  assert.deepEqual(pillState(c), { label: "Manual", disabled: false, spinning: false });
+});
+
+test("a failed write drops the optimistic mode and re-enables the pill", async () => {
+  setAutoResult = false;
+  const c = render({
+    visible: true,
+    rows: [],
+    controls: [],
+    grouped: true,
+    repoGroups: [group("ashby", runningRow("api"))],
+  });
+  flushSync(() => click(c.querySelector(".auto-mode-pill")!));
+  assert.deepEqual(pillState(c), { label: "Auto", disabled: true, spinning: true });
+  // Main reports the write failed (and has toasted): the pill falls straight
+  // back to the pushed state instead of waiting for a mode that never lands.
+  await settle();
+  assert.deepEqual(pillState(c), { label: "Manual", disabled: false, spinning: false });
+  setAutoResult = true;
+});
+
+test("observing one scope's applied mode leaves another scope's toggle in flight", async () => {
+  setAutoResult = true;
+  const both: SectionInput = {
+    visible: true,
+    rows: [],
+    controls: [],
+    grouped: true,
+    repoGroups: [group("ashby", runningRow("api")), group("web", runningRow("ui"))],
+  };
+  const { container: c, rerender } = mount(both);
+  const pills = [...c.querySelectorAll(".auto-mode-pill")];
+  flushSync(() => click(pills[0]!));
+  flushSync(() => click(pills[1]!));
+  assert.deepEqual(calls.servicesSetAuto.slice(-2), [
+    { scope: "ashby", enabled: true },
+    { scope: "web", enabled: true },
+  ]);
+  await settle();
+
+  // Only ashby's mode has been applied; web's pill stays lit for its own write.
+  rerender({
+    ...both,
+    repoGroups: [
+      { ...group("ashby", runningRow("api")), auto: true },
+      group("web", runningRow("ui")),
+    ],
+  });
+  await settle();
+  assert.deepEqual(pillState(c, 0), { label: "Auto", disabled: false, spinning: false });
+  assert.deepEqual(pillState(c, 1), { label: "Auto", disabled: true, spinning: true });
 });
