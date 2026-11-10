@@ -12,7 +12,8 @@
  * Class names are kept byte-equivalent to the DOM builders (`row`, `branch`,
  * `pr`, `chips`, `stack-group`, `resolve-conflicts-btn`, `open-agent-btn`,
  * `merge-pr-btn`, the badge tones) so `renderer.css` keeps applying unchanged; the
- * "Review requested" sub-section follows the same convention with its own rules.
+ * "Review requested" and "Mentioned" sub-sections (`pr-subsection`) follow the same
+ * convention with their own rules.
  */
 import { useState } from "react";
 import type { GroupRow, PanelState, PrRow, RepoSection } from "../panel-state.js";
@@ -232,15 +233,15 @@ function PrRowView({ row, pos, flags }: { row: PrRow; pos?: number; flags: PrFla
 
       {/* A conflicting PR gets a one-click Resolve-conflicts button. Both this
           and Open-agent check out `headRefName` in a worktree, which for someone
-          else's PR (often a fork) may not exist locally — so a review-requested
-          row gets neither. Merge is already withheld via `canMerge`. */}
-      {!row.reviewRequested && row.conflict && flags.resolveConflictsAvailable && (
+          else's PR (often a fork) may not exist locally — so a not-mine row
+          (review-requested or mentioned) gets neither. Merge is already withheld via `canMerge`. */}
+      {!row.notMine && row.conflict && flags.resolveConflictsAvailable && (
         <ResolveConflictsButton row={row} resolvingConflicts={flags.resolvingConflicts} />
       )}
 
       {/* Every PR of your own gets an Open-agent button — hidden only when the
           action is absent. */}
-      {!row.reviewRequested && flags.openAgentAvailable && (
+      {!row.notMine && flags.openAgentAvailable && (
         <OpenAgentButton row={row} openingAgents={flags.openingAgents} />
       )}
     </div>
@@ -304,17 +305,25 @@ function GroupView({ group, flags }: { group: GroupRow; flags: PrFlags }): JSX.E
 }
 
 /**
- * The repo's "Review requested" sub-section: a labelled header with its own
- * count, then the PRs awaiting the user's review as ordinary rows. Only the
+ * A repo sub-section of other people's PRs ("Review requested", "Mentioned"): a
+ * labelled header with its own count, then the PRs as ordinary rows. Only the
  * click-to-open affordance survives here — the owner-only buttons are withheld
  * inside {@link PrRowView}. Hidden along with the groups by the repo's collapse.
  */
-function ReviewRequestsView({ rows, flags }: { rows: PrRow[]; flags: PrFlags }): JSX.Element {
+function PrSubsectionView({
+  label,
+  rows,
+  flags,
+}: {
+  label: string;
+  rows: PrRow[];
+  flags: PrFlags;
+}): JSX.Element {
   return (
-    <div className="review-requests">
-      <div className="review-requests-head">
-        <span className="review-requests-label">Review requested</span>
-        <span className="chip muted review-requests-count">{rows.length}</span>
+    <div className="pr-subsection">
+      <div className="pr-subsection-head">
+        <span className="pr-subsection-label">{label}</span>
+        <span className="chip muted pr-subsection-count">{rows.length}</span>
       </div>
       {rows.map((row) => (
         <PrRowView key={row.number} row={row} flags={flags} />
@@ -370,7 +379,10 @@ function RepoSectionView({
       {!collapsed &&
         repo.groups.map((group, i) => <GroupView key={i} group={group} flags={flags} />)}
       {!collapsed && repo.reviewRequests.length > 0 && (
-        <ReviewRequestsView rows={repo.reviewRequests} flags={flags} />
+        <PrSubsectionView label="Review requested" rows={repo.reviewRequests} flags={flags} />
+      )}
+      {!collapsed && repo.mentions.length > 0 && (
+        <PrSubsectionView label="Mentioned" rows={repo.mentions} flags={flags} />
       )}
     </section>
   );

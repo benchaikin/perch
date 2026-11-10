@@ -865,8 +865,8 @@ test("toPrRow marks a review-requested row and withholds Merge", () => {
   // The same PR, read as one of yours, would be one-click mergeable.
   assert.equal(toPrRow(mergeable, "r").canMerge, true);
 
-  const row = toPrRow(mergeable, "r", { reviewRequested: true });
-  assert.equal(row.reviewRequested, true);
+  const row = toPrRow(mergeable, "r", { notMine: true });
+  assert.equal(row.notMine, true);
   assert.equal(row.canMerge, false);
   assert.equal(row.author, "octocat");
   // Status chips are derived exactly as they are for your own PRs.
@@ -891,7 +891,7 @@ test("buildPanelState renders a repo's review requests in their own list", () =>
     repo.reviewRequests.map((r) => r.number),
     [40, 41],
   );
-  assert.ok(repo.reviewRequests.every((r) => r.reviewRequested));
+  assert.ok(repo.reviewRequests.every((r) => r.notMine));
 });
 
 test("a repo with only review requests renders instead of 'no open PRs'", () => {
@@ -945,4 +945,81 @@ test("deriveStackAlerts never raises an alert for a review-requested PR", () => 
     deriveStackAlerts({ repos: [{ name: "r", groups: [{ kind: "pr", pr: actionable }] }] }).length,
     3,
   );
+});
+
+test("buildPanelState renders a repo's mentions in their own not-mine list", () => {
+  const mergeable = {
+    ...theirPr,
+    number: 50,
+    mergeable: "MERGEABLE" as const,
+    ciStatus: "pass" as const,
+  };
+  const overview: PrOverview = {
+    repos: [
+      {
+        name: "main",
+        groups: [{ kind: "pr", pr: { ...basePr, number: 9 } }],
+        reviewRequests: [theirPr],
+        mentions: [mergeable],
+      },
+    ],
+  };
+  const repo = buildPanelState({ overview, daemonUp: true, syncAvailable: true }).repos[0]!;
+
+  assert.equal(repo.groups.length, 1);
+  assert.deepEqual(
+    repo.reviewRequests.map((r) => r.number),
+    [40],
+  );
+  assert.deepEqual(
+    repo.mentions.map((r) => r.number),
+    [50],
+  );
+  assert.equal(repo.mentions[0]!.notMine, true);
+  assert.equal(repo.mentions[0]!.canMerge, false);
+  assert.equal(repo.mentions[0]!.author, "octocat");
+});
+
+test("a repo with only mentions renders instead of 'no open PRs'", () => {
+  const overview: PrOverview = { repos: [{ name: "main", groups: [], mentions: [theirPr] }] };
+  const state = buildPanelState({ overview, daemonUp: true, syncAvailable: true });
+  assert.equal(state.status, "ok");
+  assert.equal(state.repos[0]!.mentions.length, 1);
+});
+
+test("a repo from an older daemon (no mentions field) gets an empty mentions list", () => {
+  const overview: PrOverview = { repos: [{ name: "main", groups: [], reviewRequests: [theirPr] }] };
+  assert.deepEqual(
+    buildPanelState({ overview, daemonUp: true, syncAvailable: true }).repos[0]!.mentions,
+    [],
+  );
+});
+
+test("mentions leave the PRs tab count and tint, and alerts, alone", () => {
+  const failing = {
+    ...theirPr,
+    ciStatus: "fail" as const,
+    conflict: true,
+    needsRebase: true,
+    humanReviewCommentCount: 3,
+  };
+  const mine: PrOverview = {
+    repos: [{ name: "main", groups: [{ kind: "pr", pr: { ...basePr, ciStatus: "pass" } }] }],
+  };
+  const withMentions: PrOverview = {
+    repos: [
+      {
+        name: "main",
+        groups: [{ kind: "pr", pr: { ...basePr, ciStatus: "pass" } }],
+        mentions: [failing, { ...failing, number: 41 }],
+      },
+    ],
+  };
+  const badge = (overview: PrOverview) =>
+    buildPanelState({ overview, daemonUp: true, syncAvailable: true }).tabs.find(
+      (t) => t.id === STACK_TAB_ID,
+    )?.badge;
+
+  assert.deepEqual(badge(withMentions), badge(mine));
+  assert.deepEqual(deriveStackAlerts(withMentions), deriveStackAlerts(mine));
 });

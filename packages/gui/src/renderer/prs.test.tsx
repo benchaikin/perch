@@ -315,9 +315,9 @@ test("a repo's review requests render in a labelled section with a count", () =>
     />,
   );
   getByText("Review requested");
-  const section = container.querySelector(".review-requests")!;
+  const section = container.querySelector(".pr-subsection")!;
   assert.ok(section, "expected a Review requested section");
-  assert.equal(section.querySelector(".review-requests-count")?.textContent, "2");
+  assert.equal(section.querySelector(".pr-subsection-count")?.textContent, "2");
   assert.equal(section.querySelectorAll(".row").length, 2);
   // The PR's author is on the row, so you can see whose PR it is.
   assert.equal(section.querySelector(".pr-author")?.textContent, "@octocat");
@@ -337,7 +337,7 @@ test("review-requested rows withhold Merge, Resolve conflicts and Open agent", (
 
 test("a review-requested row still opens the PR in the browser", () => {
   const { container } = render(<PrsPane state={stateWithReviewRequests([theirPr()])} />);
-  fireEvent.click(container.querySelector(".review-requests .row")!);
+  fireEvent.click(container.querySelector(".pr-subsection .row")!);
   assert.deepEqual(openPrCalls, ["https://example.com/pr/40"]);
 });
 
@@ -350,13 +350,13 @@ test("your own PRs keep their action buttons alongside a review-requested sectio
   // Exactly one Resolve/Open-agent pair — on your PR, not on theirs.
   assert.equal(container.querySelectorAll(".resolve-conflicts-btn").length, 1);
   assert.equal(container.querySelectorAll(".open-agent-btn").length, 1);
-  assert.equal(container.querySelectorAll(".review-requests .open-agent-btn").length, 0);
+  assert.equal(container.querySelectorAll(".pr-subsection .open-agent-btn").length, 0);
 });
 
 test("collapsing a repo hides its review requests along with its groups", () => {
   const { container } = render(<PrsPane state={stateWithReviewRequests([theirPr()])} />);
   fireEvent.click(container.querySelector(".pr-repo-header-btn")!);
-  assert.equal(container.querySelector(".review-requests"), null);
+  assert.equal(container.querySelector(".pr-subsection"), null);
 });
 
 test("a repo with only review requests renders its section, not 'No open PRs'", () => {
@@ -364,5 +364,59 @@ test("a repo with only review requests renders its section, not 'No open PRs'", 
     <PrsPane state={stateWithReviewRequests([theirPr()])} />,
   );
   assert.equal(queryByText("No open PRs"), null);
-  assert.equal(container.querySelectorAll(".review-requests .row").length, 1);
+  assert.equal(container.querySelectorAll(".pr-subsection .row").length, 1);
+});
+
+/** An `ok` PanelState for one repo's review requests + mentions. */
+function stateWithMentions(mentions: PrInfo[], reviewRequests: PrInfo[] = []): PanelState {
+  return buildPanelState({
+    daemonUp: true,
+    syncAvailable: false,
+    ...ALL_ACTIONS,
+    overview: { repos: [{ name: "acme/web", groups: [], reviewRequests, mentions }] },
+  });
+}
+
+test("a repo's mentions render in a Mentioned section below Review requested", () => {
+  const { container } = render(
+    <PrsPane
+      state={stateWithMentions(
+        [theirPr({ number: 50, title: "Ping" }), theirPr({ number: 51, title: "Pong" })],
+        [theirPr()],
+      )}
+    />,
+  );
+  const sections = [...container.querySelectorAll(".pr-subsection")];
+  assert.deepEqual(
+    sections.map((s) => s.querySelector(".pr-subsection-label")?.textContent),
+    ["Review requested", "Mentioned"],
+  );
+  const mentioned = sections[1]!;
+  assert.equal(mentioned.querySelector(".pr-subsection-count")?.textContent, "2");
+  assert.equal(mentioned.querySelectorAll(".row").length, 2);
+  assert.equal(mentioned.querySelector(".pr-author")?.textContent, "@octocat");
+});
+
+test("mentioned rows withhold Merge, Resolve conflicts and Open agent but still open the PR", () => {
+  const state = stateWithMentions([
+    theirPr({ mergeable: "MERGEABLE", ciStatus: "pass", reviewDecision: "APPROVED" }),
+    theirPr({ number: 41, mergeable: "CONFLICTING", conflict: true }),
+  ]);
+  const { container } = render(<PrsPane state={state} />);
+  assert.equal(container.querySelector(".merge-pr-btn"), null);
+  assert.equal(container.querySelector(".resolve-conflicts-btn"), null);
+  assert.equal(container.querySelector(".open-agent-btn"), null);
+  fireEvent.click(container.querySelector(".pr-subsection .row")!);
+  assert.deepEqual(openPrCalls, ["https://example.com/pr/40"]);
+});
+
+test("a repo with only mentions renders its section; collapsing hides it", () => {
+  const { container, queryByText, getByText } = render(
+    <PrsPane state={stateWithMentions([theirPr()])} />,
+  );
+  assert.equal(queryByText("No open PRs"), null);
+  getByText("Mentioned");
+  assert.equal(queryByText("Review requested"), null);
+  fireEvent.click(container.querySelector(".pr-repo-header-btn")!);
+  assert.equal(container.querySelector(".pr-subsection"), null);
 });

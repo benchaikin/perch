@@ -31,16 +31,19 @@ function flatten(overview: PrOverview): Map<number, FlatPr> {
 }
 
 /**
- * The same flattening over `reviewRequests` — the PRs the user is a requested
- * reviewer on. Kept separate from {@link flatten} on purpose: these are other
- * people's PRs, so they get exactly one transition (the request arriving) and
- * none of the CI / conflict / rebase / closed notifications {@link diffPr}
- * raises for PRs the user owns.
+ * The same flattening over one of the "someone else's PR" siblings of `groups`
+ * — `reviewRequests` or `mentions`. Kept separate from {@link flatten} on
+ * purpose: these are other people's PRs, so they get exactly one transition
+ * (arriving in the list) and none of the CI / conflict / rebase / closed
+ * notifications {@link diffPr} raises for PRs the user owns.
  */
-function flattenReviewRequests(overview: PrOverview): Map<number, FlatPr> {
+function flattenOthers(
+  overview: PrOverview,
+  field: "reviewRequests" | "mentions",
+): Map<number, FlatPr> {
   const out = new Map<number, FlatPr>();
   for (const repo of overview.repos) {
-    for (const pr of repo.reviewRequests ?? []) {
+    for (const pr of repo[field] ?? []) {
       out.set(pr.number, { pr, repo: repo.name });
     }
   }
@@ -81,9 +84,11 @@ function isSettled(status: PrInfo["ciStatus"]): boolean {
  * - `needsRebase` onset (false → true).
  * - A PR present only in `next` (opened) or only in `prev` (closed/merged).
  *
- * Plus one reviewer-side transition: a review request that appears in `next` but
- * not `prev`. A request going away (review submitted, request withdrawn) is
- * silent — there's nothing to act on.
+ * Plus two reviewer-side transitions: a review request, or a mention, that
+ * appears in `next` but not `prev`. Either going away is silent — there's
+ * nothing to act on. A PR that moves from review-requested (or the user's own)
+ * into mentions — e.g. the user submitted their review but is still @-mentioned
+ * — is not a new mention and stays silent too.
  */
 export function prNotifications(prev: PrOverview | undefined, next: PrOverview): Notification[] {
   if (prev === undefined) return [];
@@ -120,14 +125,26 @@ export function prNotifications(prev: PrOverview | undefined, next: PrOverview):
     });
   }
 
-  const reviewedBefore = flattenReviewRequests(prev);
-  for (const [number, flat] of flattenReviewRequests(next)) {
+  const reviewedBefore = flattenOthers(prev, "reviewRequests");
+  for (const [number, flat] of flattenOthers(next, "reviewRequests")) {
     if (reviewedBefore.has(number)) continue;
     notes.push({
       title: "Review requested",
       body: body(flat),
       level: "info",
       dedupeKey: `${number}:review-requested`,
+      openUrl: flat.pr.url,
+    });
+  }
+
+  const mentionedBefore = flattenOthers(prev, "mentions");
+  for (const [number, flat] of flattenOthers(next, "mentions")) {
+    if (mentionedBefore.has(number) || reviewedBefore.has(number) || before.has(number)) continue;
+    notes.push({
+      title: "You were mentioned",
+      body: body(flat),
+      level: "info",
+      dedupeKey: `${number}:mentioned`,
       openUrl: flat.pr.url,
     });
   }

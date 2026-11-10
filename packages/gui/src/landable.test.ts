@@ -285,3 +285,24 @@ test("a review-requested PR never matches a task, even on a colliding branch", (
   assert.equal(deriveLandableByTaskId(link_, both).get("t1"), "ready");
   assert.equal(deriveLandablePrByTaskId(link_, both).get("t1")?.number, 7);
 });
+
+test("a mentioned PR never matches a task, even on a colliding branch", () => {
+  const theirs = pr({
+    headRefName: "feat/thing",
+    number: 99,
+    url: "https://example.test/theirs",
+    reviewDecision: "APPROVED",
+    author: "octocat",
+  });
+  const link_ = link({ t1: "feat/thing" });
+
+  const onlyMentions: PrOverview = { repos: [{ name: "repo", groups: [], mentions: [theirs] }] };
+  assert.equal(deriveLandableByTaskId(link_, onlyMentions).size, 0);
+  assert.equal(deriveLandablePrByTaskId(link_, onlyMentions).size, 0);
+
+  const mine = pr({ headRefName: "feat/thing", number: 7, reviewDecision: "APPROVED" });
+  const both: PrOverview = {
+    repos: [{ name: "repo", groups: [{ kind: "pr", pr: mine }], mentions: [theirs] }],
+  };
+  assert.equal(deriveLandablePrByTaskId(link_, both).get("t1")?.number, 7);
+});
