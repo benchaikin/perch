@@ -539,10 +539,10 @@ body.liquid-glass {
   gap: 2px;
 }
 
-/* The per-repo "Review requested" sub-section: the PRs someone is waiting on you
-   for, listed under that repo's own PRs. Indented like a stack group but with a
-   neutral rule — these rows carry no health obligation of yours. */
-.review-requests {
+/* The per-repo "Review requested" / "Mentioned" sub-sections: the PRs someone is
+   waiting on you for, listed under that repo's own PRs. Indented like a stack
+   group but with a neutral rule — these rows carry no health obligation of yours. */
+.pr-subsection {
   border-left: 2px solid var(--rule);
   padding-left: 6px;
   display: flex;
@@ -550,24 +550,24 @@ body.liquid-glass {
   gap: 2px;
 }
 
-.review-requests-head {
+.pr-subsection-head {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
-.review-requests-label {
+.pr-subsection-label {
   font-size: 10px;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 
-.review-requests-count {
+.pr-subsection-count {
   font-size: 10px;
 }
 
-/* The author of a PR you were asked to review — a quiet trailing note next to
+/* The author of someone else's PR (review-requested or mentioned) — a quiet trailing note next to
    the PR number, never wide enough to crowd out the title. */
 .pr-author {
   flex: 0 1 auto;

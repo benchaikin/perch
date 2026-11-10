@@ -103,6 +103,11 @@ const StackConfig = z.object({
    * off skips the extra `gh pr list --search` per repo per poll entirely.
    */
   showReviewRequests: z.boolean().default(true),
+  /**
+   * Also surface the open PRs that @-mention you, in a per-repo "Mentioned"
+   * section of the My PRs panel. On by default; off skips that search entirely.
+   */
+  showMentions: z.boolean().default(true),
 });
 type StackConfig = z.infer<typeof StackConfig>;
 
@@ -200,6 +205,18 @@ function configShowReviewRequests(config: unknown): boolean {
   return true;
 }
 
+/**
+ * Whether to include PRs that @-mention the user, defaulting to `true` when
+ * unset or malformed. Narrowed locally for the same reason as {@link configRepos}.
+ */
+function configShowMentions(config: unknown): boolean {
+  if (config && typeof config === "object") {
+    const value = (config as StackConfig).showMentions;
+    if (typeof value === "boolean") return value;
+  }
+  return true;
+}
+
 /** Best-effort message from a rejected `gh` invocation (carries gh's stderr). */
 function errorMessage(err: unknown): string {
   if (err && typeof err === "object" && "message" in err) {
@@ -249,6 +266,14 @@ export default definePlugin({
         "Also list the open PRs you've been asked to review, in a Review requested section under each repo. Off skips the extra GitHub lookup.",
       default: true,
     },
+    {
+      key: "showMentions",
+      type: "boolean",
+      label: "Show mentions",
+      description:
+        "Also list the open PRs that @-mention you, in a Mentioned section under each repo. Off skips the extra GitHub lookup.",
+      default: true,
+    },
   ]),
   capabilities: {
     view: read({
@@ -293,8 +318,9 @@ export default definePlugin({
     /**
      * The cross-repo "My PRs" overview: every configured repo's open PRs
      * (authored by the current user), with stacked PRs grouped together (spec
-     * `docs/prs-view.md`), plus — unless `showReviewRequests` is off — the open
-     * PRs awaiting the user's review, in a separate `reviewRequests` field.
+     * `docs/prs-view.md`), plus the open PRs awaiting the user's review
+     * (`reviewRequests`, unless `showReviewRequests` is off) and the open PRs
+     * that @-mention them (`mentions`, unless `showMentions` is off).
      * Best-effort per repo — one repo's failure doesn't fail the whole overview.
      *
      * Opted into MCP: the cross-repo "my PRs + status" read is high-value for
@@ -303,7 +329,7 @@ export default definePlugin({
      */
     prs: read({
       summary:
-        "Your open PRs across all configured repos (plus the ones awaiting your review), with stacks grouped",
+        "Your open PRs across all configured repos (plus the ones awaiting your review or mentioning you), with stacks grouped",
       input: z.object({}).default({}),
       output: PrOverview,
       // Background (panel-closed) polling drops to 5min: PR status changes don't
@@ -317,6 +343,7 @@ export default definePlugin({
           stackDirection: configStackDirection(ctx.config),
           reviewBotIgnore: configReviewBotIgnore(ctx.config),
           showReviewRequests: configShowReviewRequests(ctx.config),
+          showMentions: configShowMentions(ctx.config),
           log: ctx.log,
         }),
       // Diff each poll's overview against the previous one and surface notable PR

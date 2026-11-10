@@ -62,6 +62,7 @@ PrRepo = {
   path?: string;              // the local path, when repos are configured
   groups: PrGroup[];
   reviewRequests: PrInfo[];   // open PRs awaiting my review; default []
+  mentions: PrInfo[];         // open PRs that @-mention me (not mine, not review-requested); default []
   error?: string;             // set (with groups: []) when this repo's lookup failed
 }
 
@@ -118,6 +119,34 @@ Notes:
   *direct* requests only; a review routed through a team needs
   `team-review-requested:<org>/<team>`, which needs the team name — out of scope.
 
+### Mentions
+
+A third parallel read, same cwd, lists the open PRs that **@-mention** the user
+(in the body or a comment):
+
+```
+gh pr list --search "mentions:@me" --state open --json <same fields as review requests>
+```
+
+Both searches share one best-effort `fetchSearch` helper. Results land in
+`PrRepo.mentions`, another sibling of `groups` for the same reasons as
+`reviewRequests`.
+
+- **Dedupe — a PR appears in at most one section.** Precedence is
+  *mine > review-requested > mentioned*. Unlike review requests, `mentions:@me`
+  routinely matches the user's **own** PRs (reviewers and bots @-ing them there),
+  so the ownership filter is load-bearing. It drops a mention whose number is in
+  the authored list, and also any whose `author` is the authenticated login — so
+  even when the authored lookup failed (and the repo shows `error`), the user's
+  own PRs can't leak into Mentioned. With `showReviewRequests` off there is no
+  review-request list to dedupe against, so a PR that is both review-requested
+  and mentioning the user shows under Mentioned.
+- **@user only.** A team mention (`@org/team`) doesn't match `mentions:@me`.
+- **Best-effort and isolated**, exactly like review requests: a failed lookup
+  logs, yields `[]`, and never sets `PrRepo.error`. No per-PR comment fetch.
+- **Toggle:** `plugins.stack.showMentions` (boolean settings field, default
+  `true`). When false the extra `gh` call is not made at all.
+
 ### Shared chaining helper
 
 The `base.ref → head.ref` chaining logic is extracted from
@@ -144,8 +173,8 @@ grouping stands, and `tracked` stays `false`.
 Each repo is fetched independently and best-effort: if a repo's authored
 `gh pr list` throws (e.g. a 504, no remote, auth), that repo gets `error` set to
 the message and `groups: []` — the rest of the overview is unaffected, and its
-`reviewRequests` still surface. The review lookup is the mirror image: its
-failure is swallowed to `[]` and never sets `error`.
+`reviewRequests` and `mentions` still surface. The review and mentions lookups
+are the mirror image: their failure is swallowed to `[]` and never sets `error`.
 
 ### Exposure
 
@@ -175,6 +204,9 @@ exposure.
   (both check out `headRefName` in a worktree, and for a PR from another author —
   often a fork — that branch may not exist locally). Click-to-open stays. A repo
   with only review requests renders its section rather than "No open PRs".
+- Below that, a **Mentioned** sub-section lists the repo's `mentions` the same
+  way — author, status chips, click-to-open only, collapsed with the repo — and
+  likewise never counts toward the tab's PR count or health tint.
 - The **repo-switcher dropdown is retired** — the grouped all-repos view replaces
   it. (No repo filter — that's a future enhancement.)
 - The tray menu and `registry.changed` live-reload wiring are unchanged (reload

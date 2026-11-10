@@ -77,6 +77,10 @@ interface RepoFixture {
   reviewRequests?: string;
   /** An error to reject the review-requested lookup with (degradation cases). */
   reviewRequestsError?: Error;
+  /** `gh pr list --search mentions:@me` stdout for this repo. */
+  mentions?: string;
+  /** An error to reject the mentions lookup with (degradation cases). */
+  mentionsError?: Error;
   /** PR number → `gh api …/comments` stdout (a JSON array of `{login,type}`). */
   comments?: Record<number, string>;
 }
@@ -101,6 +105,10 @@ function fakeExec(
     const repo = byCwd[opts?.cwd ?? ""];
     if (!repo) return Promise.reject(new Error(`no fixture for cwd ${opts?.cwd}`));
     if (cmd === "gh" && args.includes("pr") && args.includes("list")) {
+      if (args.includes("mentions:@me")) {
+        if (repo.mentionsError) return Promise.reject(repo.mentionsError);
+        return Promise.resolve(repo.mentions ?? "[]");
+      }
       if (args.includes("--search")) {
         if (repo.reviewRequestsError) return Promise.reject(repo.reviewRequestsError);
         return Promise.resolve(repo.reviewRequests ?? "[]");
@@ -132,11 +140,16 @@ const prGroups = (groups: PrGroup[]): Extract<PrGroup, { kind: "pr" }>[] =>
   groups.filter((g): g is Extract<PrGroup, { kind: "pr" }> => g.kind === "pr");
 
 /** The `gh pr list` calls a fake exec saw, split by which list they ran. */
-function prListCalls(calls: Call[]): { authored: Call[]; reviewRequested: Call[] } {
+function prListCalls(calls: Call[]): {
+  authored: Call[];
+  reviewRequested: Call[];
+  mentions: Call[];
+} {
   const lists = calls.filter((c) => c.cmd === "gh" && c.args[0] === "pr" && c.args[1] === "list");
   return {
     authored: lists.filter((c) => !c.args.includes("--search")),
-    reviewRequested: lists.filter((c) => c.args.includes("--search")),
+    reviewRequested: lists.filter((c) => c.args.includes("review-requested:@me")),
+    mentions: lists.filter((c) => c.args.includes("mentions:@me")),
   };
 }
 
@@ -596,4 +609,186 @@ test("a PR in both lists is listed once, under the author's own groups", async (
   const { exec } = fakeExec({ "/work/a": { prs: REPO_A_PRS, reviewRequests: REPO_A_PRS } });
   const overview = await buildPrOverview({ repos: ["/work/a"], exec, hasGhStack: () => false });
   assert.deepEqual(overview.repos[0]!.reviewRequests, []);
+});
+
+/** Open PRs that @-mention me in repo A: someone else's, one of mine, and one by me. */
+const REPO_A_MENTIONS = JSON.stringify([
+  {
+    number: 50,
+    title: "Ping me on this design",
+    url: "https://github.com/o/a/pull/50",
+    headRefName: "design-doc",
+    baseRefName: "main",
+    statusCheckRollup: [{ status: "COMPLETED", conclusion: "SUCCESS" }],
+    reviewDecision: "REVIEW_REQUIRED",
+    mergeable: "MERGEABLE",
+    author: { login: "octocat" },
+  },
+  {
+    // My own PR #10 — a reviewer @-ing me on it.
+    number: 10,
+    title: "Standalone fix",
+    url: "https://github.com/o/a/pull/10",
+    headRefName: "fix-typo",
+    baseRefName: "main",
+    statusCheckRollup: [],
+    reviewDecision: null,
+    mergeable: "MERGEABLE",
+    author: { login: "me" },
+  },
+  {
+    // Also review-requested — that stronger ask wins.
+    number: 40,
+    title: "Add retry to the poller",
+    url: "https://github.com/o/a/pull/40",
+    headRefName: "poller-retry",
+    baseRefName: "main",
+    statusCheckRollup: [],
+    reviewDecision: null,
+    mergeable: "MERGEABLE",
+    author: { login: "octocat" },
+  },
+]);
+
+test("lists the PRs that mention me per repo, with the author, in that repo's cwd", async () => {
+  const { exec, calls } = fakeExec({ "/work/a": { mentions: REPO_A_MENTIONS } });
+  const overview = await buildPrOverview({ repos: ["/work/a"], exec, hasGhStack: () => false });
+
+  const repo = overview.repos[0]!;
+  // #10 is authored by me — dropped via `author === me` even with no authored PRs.
+  assert.deepEqual(
+    repo.mentions.map((pr) => [pr.number, pr.author]),
+    [
+      [50, "octocat"],
+      [40, "octocat"],
+    ],
+  );
+  assert.equal(repo.mentions[0]!.ciStatus, "pass");
+
+  const { mentions } = prListCalls(calls);
+  assert.equal(mentions.length, 1);
+  assert.equal(mentions[0]!.cwd, "/work/a");
+  assert.ok(mentions[0]!.args.includes("open"));
+  const jsonFields = mentions[0]!.args[mentions[0]!.args.indexOf("--json") + 1]!;
+  assert.ok(jsonFields.split(",").includes("author"));
+});
+
+test("a mention that is mine or review-requested is listed only in that stronger section", async () => {
+  const { exec } = fakeExec({
+    "/work/a": {
+      prs: REPO_A_PRS,
+      reviewRequests: REPO_A_REVIEW_REQUESTS,
+      mentions: REPO_A_MENTIONS,
+    },
+  });
+  const overview = await buildPrOverview({ repos: ["/work/a"], exec, hasGhStack: () => false });
+  const repo = overview.repos[0]!;
+
+  assert.deepEqual(
+    repo.mentions.map((pr) => pr.number),
+    [50],
+  );
+  assert.deepEqual(
+    repo.reviewRequests.map((pr) => pr.number),
+    [40, 41],
+  );
+  const grouped = repo.groups.flatMap((g) => (g.kind === "stack" ? g.layers : [g.pr]));
+  assert.deepEqual(
+    grouped.map((pr) => pr.number).sort((a, b) => a - b),
+    [10, 11, 12],
+  );
+});
+
+test("mentions dedupe by number against my PRs even when the login is unknown", async () => {
+  const mineByNumber = JSON.stringify(
+    JSON.parse(REPO_A_MENTIONS).map((pr: { author: unknown }) => ({ ...pr, author: null })),
+  );
+  const { exec } = fakeExec(
+    { "/work/a": { prs: REPO_A_PRS, mentions: mineByNumber } },
+    new Error("gh: no user"),
+  );
+  const overview = await buildPrOverview({ repos: ["/work/a"], exec, hasGhStack: () => false });
+  assert.deepEqual(
+    overview.repos[0]!.mentions.map((pr) => pr.number),
+    [50, 40],
+  );
+});
+
+test("a failed authored lookup still keeps my own PRs out of mentions", async () => {
+  const { exec } = fakeExec({
+    "/work/a": {
+      prError: new Error("gh: 504"),
+      reviewRequests: REPO_A_REVIEW_REQUESTS,
+      mentions: REPO_A_MENTIONS,
+    },
+  });
+  const overview = await buildPrOverview({ repos: ["/work/a"], exec, hasGhStack: () => false });
+
+  const repo = overview.repos[0]!;
+  assert.match(repo.error ?? "", /504/);
+  assert.deepEqual(
+    repo.mentions.map((pr) => pr.number),
+    [50],
+  );
+});
+
+test("with review requests off, a review-requested mention shows under mentions", async () => {
+  const { exec } = fakeExec({
+    "/work/a": {
+      prs: REPO_A_PRS,
+      reviewRequests: REPO_A_REVIEW_REQUESTS,
+      mentions: REPO_A_MENTIONS,
+    },
+  });
+  const overview = await buildPrOverview({
+    repos: ["/work/a"],
+    exec,
+    hasGhStack: () => false,
+    showReviewRequests: false,
+  });
+  assert.deepEqual(
+    overview.repos[0]!.mentions.map((pr) => pr.number),
+    [50, 40],
+  );
+});
+
+test("a failed mentions lookup yields [] + a log line, leaving the repo alone", async () => {
+  const { exec } = fakeExec({
+    "/work/a": { prs: REPO_A_PRS, mentionsError: new Error("gh: search unavailable") },
+  });
+  const logs: string[] = [];
+  const overview = await buildPrOverview({
+    repos: ["/work/a"],
+    exec,
+    hasGhStack: () => false,
+    log: (m) => logs.push(m),
+  });
+
+  const repo = overview.repos[0]!;
+  assert.equal(repo.error, undefined);
+  assert.deepEqual(repo.mentions, []);
+  assert.equal(repo.groups.length, 2);
+  assert.ok(logs.some((m) => m.startsWith("mentions lookup failed; skipping:")));
+});
+
+test("showMentions: false skips the mentions gh call entirely", async () => {
+  const { exec, calls } = fakeExec({ "/work/a": { prs: REPO_A_PRS, mentions: REPO_A_MENTIONS } });
+  const overview = await buildPrOverview({
+    repos: ["/work/a"],
+    exec,
+    hasGhStack: () => false,
+    showMentions: false,
+  });
+
+  const { authored, reviewRequested, mentions } = prListCalls(calls);
+  assert.equal(authored.length, 1);
+  assert.equal(reviewRequested.length, 1);
+  assert.equal(mentions.length, 0);
+  assert.deepEqual(overview.repos[0]!.mentions, []);
+});
+
+test("the per-PR review-comment fetch never runs for a mention", async () => {
+  const { exec, calls } = fakeExec({ "/work/a": { mentions: REPO_A_MENTIONS } });
+  await buildPrOverview({ repos: ["/work/a"], exec, hasGhStack: () => false });
+  assert.equal(calls.filter((c) => c.args.some((a) => a.includes("/comments"))).length, 0);
 });

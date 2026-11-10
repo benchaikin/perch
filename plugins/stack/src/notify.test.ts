@@ -26,7 +26,12 @@ function overview(prs: PrInfo[], repoName = "r"): PrOverview {
   return {
     stackDirection: "bottom-to-top",
     repos: [
-      { name: repoName, groups: prs.map((p) => ({ kind: "pr", pr: p })), reviewRequests: [] },
+      {
+        name: repoName,
+        groups: prs.map((p) => ({ kind: "pr", pr: p })),
+        reviewRequests: [],
+        mentions: [],
+      },
     ],
   };
 }
@@ -35,7 +40,7 @@ function overview(prs: PrInfo[], repoName = "r"): PrOverview {
 function reviewRequestOverview(prs: PrInfo[], repoName = "r"): PrOverview {
   return {
     stackDirection: "bottom-to-top",
-    repos: [{ name: repoName, groups: [], reviewRequests: prs }],
+    repos: [{ name: repoName, groups: [], reviewRequests: prs, mentions: [] }],
   };
 }
 
@@ -224,6 +229,7 @@ test("PRs are matched by number across repos and stack groups", () => {
           },
         ],
         reviewRequests: [],
+        mentions: [],
       },
     ],
   };
@@ -234,11 +240,13 @@ test("PRs are matched by number across repos and stack groups", () => {
         name: "a",
         groups: [{ kind: "pr", pr: pr({ number: 19, ciStatus: "pass" }) }],
         reviewRequests: [],
+        mentions: [],
       },
       {
         name: "b",
         groups: [{ kind: "pr", pr: pr({ number: 20, ciStatus: "pass" }) }],
         reviewRequests: [],
+        mentions: [],
       },
     ],
   };
@@ -296,4 +304,60 @@ test("a review-requested PR's own churn raises nothing — it isn't my PR", () =
 
 test("prev undefined → no Review requested notification on the first poll", () => {
   assert.deepEqual(prNotifications(undefined, reviewRequestOverview([pr({ number: 55 })])), []);
+});
+
+/** A single-repo overview holding PRs awaiting review and PRs that mention the user. */
+function othersOverview(reviewRequests: PrInfo[], mentions: PrInfo[], repoName = "r"): PrOverview {
+  return {
+    stackDirection: "bottom-to-top",
+    repos: [{ name: repoName, groups: [], reviewRequests, mentions }],
+  };
+}
+
+test("a new mention → exactly one You were mentioned notification", () => {
+  const prev = othersOverview([], []);
+  const next = othersOverview([], [pr({ number: 60, title: "Ping", author: "octocat" })]);
+  const notes = prNotifications(prev, next);
+  assert.equal(notes.length, 1);
+  const note = byKey(notes, "60:mentioned");
+  assert.equal(note.title, "You were mentioned");
+  assert.equal(note.level, "info");
+  assert.equal(note.body, "#60 Ping (r)");
+  assert.equal(note.openUrl, "https://github.com/o/r/pull/60");
+});
+
+test("a standing mention, its churn, or its disappearance → nothing", () => {
+  const before = pr({ number: 60, ciStatus: "pending" });
+  const after = pr({ number: 60, ciStatus: "fail", conflict: true, needsRebase: true });
+  assert.deepEqual(prNotifications(othersOverview([], [before]), othersOverview([], [after])), []);
+  assert.deepEqual(prNotifications(othersOverview([], [before]), othersOverview([], [])), []);
+});
+
+test("a mention becoming a review request fires only Review requested", () => {
+  const p = pr({ number: 60 });
+  const notes = prNotifications(othersOverview([], [p]), othersOverview([p], []));
+  assert.deepEqual(
+    notes.map((n) => n.dedupeKey),
+    ["60:review-requested"],
+  );
+});
+
+test("a review request becoming a mention (review submitted) is silent", () => {
+  const p = pr({ number: 60 });
+  assert.deepEqual(prNotifications(othersOverview([p], []), othersOverview([], [p])), []);
+});
+
+test("mentions never feed the owner diff — no New PR / PR closed for them", () => {
+  const p = pr({ number: 60 });
+  const withMention: PrOverview = {
+    stackDirection: "bottom-to-top",
+    repos: [{ name: "r", groups: [], reviewRequests: [], mentions: [p] }],
+  };
+  const notes = prNotifications(othersOverview([], []), withMention);
+  assert.ok(!notes.some((n) => n.dedupeKey === "60:opened"));
+  assert.deepEqual(prNotifications(withMention, othersOverview([], [])), []);
+});
+
+test("prev undefined → no You were mentioned notification on the first poll", () => {
+  assert.deepEqual(prNotifications(undefined, othersOverview([], [pr({ number: 60 })])), []);
 });

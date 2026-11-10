@@ -73,7 +73,7 @@ export interface PrInfo {
   url: string;
   headRefName: string;
   baseRefName: string;
-  /** The PR's author login — only sent for review-requested PRs. */
+  /** The PR's author login — only sent for review-requested and mentioned PRs. */
   author?: string;
   ciStatus?: CiStatus;
   reviewDecision?: ReviewDecision;
@@ -103,6 +103,12 @@ export interface PrRepo {
    * not see other people's PRs. Optional on the wire: older daemons omit it.
    */
   reviewRequests?: PrInfo[];
+  /**
+   * Open PRs in this repo that @-mention the user, disjoint from `groups` and
+   * `reviewRequests`. A sibling for the same reason as `reviewRequests`.
+   * Optional on the wire: older daemons omit it.
+   */
+  mentions?: PrInfo[];
   error?: string;
 }
 
@@ -159,12 +165,13 @@ export interface PrRow {
   /** The repo this PR belongs to (name) — passed to the resolve-conflicts action. */
   repo: string;
   /**
-   * True when this row is a PR someone asked the user to review rather than one
-   * they authored. Owner-only affordances (Merge, Resolve conflicts, Open agent)
-   * are withheld on such a row — its branch may not even exist locally.
+   * True when this row is someone else's PR (review-requested or mentioning the
+   * user) rather than one they authored. Owner-only affordances (Merge, Resolve
+   * conflicts, Open agent) are withheld on such a row — its branch may not even
+   * exist locally.
    */
-  reviewRequested: boolean;
-  /** The PR's author login, shown on review-requested rows. */
+  notMine: boolean;
+  /** The PR's author login, shown on other people's rows. */
   author?: string;
   /** Status chips (CI / review / mergeable), already mapped to glyphs + tones. */
   chips: Chip[];
@@ -226,6 +233,8 @@ export interface RepoSection {
   groups: GroupRow[];
   /** Rows for the PRs awaiting the user's review, rendered in their own section. */
   reviewRequests: PrRow[];
+  /** Rows for the PRs that @-mention the user, rendered in their own section. */
+  mentions: PrRow[];
 }
 
 /** A transient status toast (e.g. the outcome of a Sync). */
@@ -613,6 +622,7 @@ export function prAlertConditions(pr: PrInfo): StackAlertCondition[] {
  *
  * Walks `groups` only: needs-rebase, ci-failing, review-comments and
  * ready-to-merge are all the *author's* problems, so a repo's `reviewRequests`
+ * and `mentions`
  * never raise an alert.
  */
 export function deriveStackAlerts(overview: PrOverview | undefined): StackAlertSpec[] {
@@ -641,14 +651,14 @@ export function deriveStackAlerts(overview: PrOverview | undefined): StackAlertS
   return specs;
 }
 
-/** How a row was reached: the user's own PR, or one awaiting their review. */
+/** How a row was reached: the user's own PR, or someone else's. */
 export interface PrRowOptions {
   /**
-   * Mark the row as a PR the user was asked to review. Forces `canMerge` off —
-   * the Merge button must never appear on a PR the user doesn't own — and lets
-   * the renderer withhold the other owner-only affordances.
+   * Mark the row as someone else's PR (review-requested or mentioning the user).
+   * Forces `canMerge` off — the Merge button must never appear on a PR the user
+   * doesn't own — and lets the renderer withhold the other owner-only affordances.
    */
-  reviewRequested?: boolean;
+  notMine?: boolean;
 }
 
 /** Derive a single rendered PR row from a raw {@link PrInfo} in repo `repoName`. */
@@ -676,12 +686,12 @@ export function toPrRow(pr: PrInfo, repoName: string, options: PrRowOptions = {}
     branch: pr.headRefName,
     baseRefName: pr.baseRefName,
     repo: repoName,
-    reviewRequested: options.reviewRequested ?? false,
+    notMine: options.notMine ?? false,
     author: pr.author,
     chips,
     needsRebase: pr.needsRebase ?? false,
     conflict: pr.conflict ?? false,
-    canMerge: !options.reviewRequested && prCanMerge(pr),
+    canMerge: !options.notMine && prCanMerge(pr),
     humanReviewCommentCount: pr.humanReviewCommentCount ?? 0,
     health: prHealth(pr),
   };
@@ -721,7 +731,8 @@ function toGroupRow(group: PrGroup, repoName: string, direction: StackDirection)
 }
 
 /** Total PR count across a repo's groups (a stack counts as its layers).
- *  Deliberately excludes `reviewRequests` — this feeds the "my PRs" counts. */
+ *  Deliberately excludes `reviewRequests` and `mentions` — this feeds the "my
+ *  PRs" counts. */
 function repoPrCount(repo: PrRepo): number {
   let n = 0;
   for (const g of repo.groups) n += g.kind === "stack" ? g.layers.length : 1;
@@ -739,7 +750,7 @@ function panelPrCount(repos: RepoSection[]): number {
 }
 
 /** Worst (most severe) health across the user's own rendered PR rows (review
- *  requests excluded — see {@link panelPrCount}): bad > warn > ok. */
+ *  requests and mentions excluded — see {@link panelPrCount}): bad > warn > ok. */
 function worstRepoHealth(repos: RepoSection[]): Health {
   const rank: Record<Health, number> = { ok: 0, warn: 1, bad: 2 };
   let worst: Health = "ok";
@@ -974,15 +985,21 @@ export function buildPanelState(input: BuildInput): PanelState {
     error: repo.error,
     groups: repo.groups.map((g) => toGroupRow(g, repo.name, direction)),
     reviewRequests: (repo.reviewRequests ?? []).map((pr) =>
-      toPrRow(pr, repo.name, { reviewRequested: true }),
+      toPrRow(pr, repo.name, { notMine: true }),
     ),
+    mentions: (repo.mentions ?? []).map((pr) => toPrRow(pr, repo.name, { notMine: true })),
   }));
 
   // "Empty" when every repo has no PRs of the user's, nothing awaiting their
-  // review, and no error to surface. A repo with only review requests still has
-  // a section to render, so it must not fall through to "No open PRs".
+  // review or mentioning them, and no error to surface. A repo with only review
+  // requests or mentions still has a section to render, so it must not fall
+  // through to "No open PRs".
   const anyContent = overview.repos.some(
-    (r) => repoPrCount(r) > 0 || (r.reviewRequests?.length ?? 0) > 0 || r.error,
+    (r) =>
+      repoPrCount(r) > 0 ||
+      (r.reviewRequests?.length ?? 0) > 0 ||
+      (r.mentions?.length ?? 0) > 0 ||
+      r.error,
   );
   const tabs = buildTabs({
     repos,

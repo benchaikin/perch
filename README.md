@@ -111,12 +111,14 @@ Precedence: per-plugin key → `global.repos` → the daemon's working directory
   (Merge, Resolve conflicts, Open agent) are withheld, and they never affect the
   tab's PR count or health tint. Direct review requests only; ones routed through
   a team aren't matched. Turn the section off with the **Show review requests**
-  setting.
+  setting. A **Mentioned** section likewise lists open PRs that @-mention you
+  (minus your own and ones already awaiting your review), toggled by **Show
+  mentions**.
 - **Hero Sync** — one button cascading-rebases a whole stack onto trunk
   (`gh stack sync`), with in-progress + outcome feedback.
 - **Desktop notifications** — native macOS banners when a PR changes status
   (CI pass/fail, approved, changes requested, conflict, needs rebase, opened/closed)
-  or when someone requests your review; click to open the PR. The daemon watches
+  or when someone requests your review or @-mentions you on a PR; click to open the PR. The daemon watches
   even when the panel is closed.
 - **Worktrees & Dex panels** — glance at every git worktree across your repos
   (branch, dirty state, ahead/behind) and your open [dex](https://github.com/zeeg/dex)
