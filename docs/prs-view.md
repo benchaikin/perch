@@ -132,6 +132,21 @@ Both searches share one best-effort `fetchSearch` helper. Results land in
 `PrRepo.mentions`, another sibling of `groups` for the same reasons as
 `reviewRequests`.
 
+**Inline review comments need a second source.** GitHub's `mentions:` search
+doesn't index inline review (diff) comments, so a mention there never matches.
+Alongside the search, the user's repo notifications from the last 30 days are
+read and filtered to `reason: "mention"` on pull requests:
+
+```
+gh api "repos/{owner}/{repo}/notifications?all=true&participating=true&since=<30d ago>" --paginate
+```
+
+Each PR number the search didn't already return is fetched with
+`gh pr view <n> --json <same fields>,state` and kept only if `OPEN`. Search
+results lead, notification-only PRs follow. `all=true` keeps read notifications,
+but GitHub moves a thread's `reason` to the latest event, so a later comment can
+retire a review-comment mention from this source.
+
 - **Dedupe — a PR appears in at most one section.** Precedence is
   *mine > review-requested > mentioned*. Unlike review requests, `mentions:@me`
   routinely matches the user's **own** PRs (reviewers and bots @-ing them there),
@@ -141,11 +156,13 @@ Both searches share one best-effort `fetchSearch` helper. Results land in
   own PRs can't leak into Mentioned. With `showReviewRequests` off there is no
   review-request list to dedupe against, so a PR that is both review-requested
   and mentioning the user shows under Mentioned.
-- **@user only.** A team mention (`@org/team`) doesn't match `mentions:@me`.
-- **Best-effort and isolated**, exactly like review requests: a failed lookup
-  logs, yields `[]`, and never sets `PrRepo.error`. No per-PR comment fetch.
+- **@user only.** A team mention (`@org/team`) doesn't match `mentions:@me`, and
+  arrives as `reason: "team_mention"`, which the notifications filter skips.
+- **Best-effort and isolated**, exactly like review requests: each failed lookup
+  (search, notifications, or one `gh pr view`) logs and drops only its own
+  results, and never sets `PrRepo.error`. No per-PR comment fetch.
 - **Toggle:** `plugins.stack.showMentions` (boolean settings field, default
-  `true`). When false the extra `gh` call is not made at all.
+  `true`). When false none of the mention `gh` calls are made.
 
 ### Shared chaining helper
 
