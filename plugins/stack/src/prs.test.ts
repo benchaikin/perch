@@ -81,6 +81,12 @@ interface RepoFixture {
   mentions?: string;
   /** An error to reject the mentions lookup with (degradation cases). */
   mentionsError?: Error;
+  /** `gh api …/notifications --jq <subject.url>` stdout (one PR API url per line). */
+  mentionNotifications?: string;
+  /** An error to reject the notifications lookup with. */
+  mentionNotificationsError?: Error;
+  /** PR number → `gh pr view <n> --json …` stdout; a missing number rejects. */
+  prViews?: Record<number, string>;
   /** PR number → `gh api …/comments` stdout (a JSON array of `{login,type}`). */
   comments?: Record<number, string>;
 }
@@ -115,6 +121,14 @@ function fakeExec(
       }
       if (repo.prError) return Promise.reject(repo.prError);
       return Promise.resolve(repo.prs ?? "[]");
+    }
+    if (cmd === "gh" && args[0] === "pr" && args[1] === "view") {
+      const view = repo.prViews?.[Number(args[2])];
+      return view ? Promise.resolve(view) : Promise.reject(new Error(`gh: no PR ${args[2]}`));
+    }
+    if (cmd === "gh" && args[0] === "api" && args[1]!.includes("/notifications")) {
+      if (repo.mentionNotificationsError) return Promise.reject(repo.mentionNotificationsError);
+      return Promise.resolve(repo.mentionNotifications ?? "");
     }
     if (cmd === "gh" && args[0] === "stack" && args[1] === "view") {
       if (repo.stackView) return Promise.resolve(repo.stackView);
@@ -791,4 +805,98 @@ test("the per-PR review-comment fetch never runs for a mention", async () => {
   const { exec, calls } = fakeExec({ "/work/a": { mentions: REPO_A_MENTIONS } });
   await buildPrOverview({ repos: ["/work/a"], exec, hasGhStack: () => false });
   assert.equal(calls.filter((c) => c.args.some((a) => a.includes("/comments"))).length, 0);
+});
+
+const notificationUrls = (...numbers: number[]): string =>
+  numbers.map((n) => `https://api.github.com/repos/o/a/pulls/${n}`).join("\n") + "\n";
+
+const prView = (number: number, state: string, author = "reviewer"): string =>
+  JSON.stringify({
+    number,
+    title: `PR ${number}`,
+    url: `https://github.com/o/a/pull/${number}`,
+    headRefName: `branch-${number}`,
+    baseRefName: "main",
+    statusCheckRollup: [],
+    reviewDecision: null,
+    mergeable: "MERGEABLE",
+    author: { login: author },
+    state,
+  });
+
+test("mentions in inline review comments come from notifications, after search results", async () => {
+  const { exec, calls } = fakeExec({
+    "/work/a": {
+      mentions: REPO_A_MENTIONS,
+      // #50 is already in the search results; #60 (inline review comment) isn't.
+      mentionNotifications: notificationUrls(50, 60, 60),
+      prViews: { 60: prView(60, "OPEN") },
+    },
+  });
+  const overview = await buildPrOverview({ repos: ["/work/a"], exec, hasGhStack: () => false });
+
+  assert.deepEqual(
+    overview.repos[0]!.mentions.map((pr) => [pr.number, pr.author]),
+    [
+      [50, "octocat"],
+      [40, "octocat"],
+      [60, "reviewer"],
+    ],
+  );
+  const notificationCall = calls.find((c) => c.args[1]?.includes("/notifications"))!;
+  assert.equal(notificationCall.cwd, "/work/a");
+  assert.match(notificationCall.args[1]!, /all=true/);
+  const views = calls.filter((c) => c.args[0] === "pr" && c.args[1] === "view");
+  assert.deepEqual(
+    views.map((c) => c.args[2]),
+    ["60"],
+  );
+});
+
+test("a notification-only mention is dropped when the PR is closed, mine, or unreadable", async () => {
+  const { exec } = fakeExec({
+    "/work/a": {
+      prs: REPO_A_PRS,
+      mentionNotifications: notificationUrls(61, 62, 63, 64),
+      prViews: {
+        61: prView(61, "MERGED"),
+        62: prView(62, "OPEN", "me"),
+        64: prView(64, "OPEN"),
+      },
+    },
+  });
+  const overview = await buildPrOverview({ repos: ["/work/a"], exec, hasGhStack: () => false });
+  assert.deepEqual(
+    overview.repos[0]!.mentions.map((pr) => pr.number),
+    [64],
+  );
+});
+
+test("a failed notifications lookup keeps the search mentions and logs", async () => {
+  const { exec } = fakeExec({
+    "/work/a": {
+      mentions: REPO_A_MENTIONS,
+      mentionNotificationsError: new Error("gh: 403"),
+    },
+  });
+  const logs: string[] = [];
+  const overview = await buildPrOverview({
+    repos: ["/work/a"],
+    exec,
+    hasGhStack: () => false,
+    log: (m) => logs.push(m),
+  });
+  assert.deepEqual(
+    overview.repos[0]!.mentions.map((pr) => pr.number),
+    [50, 40],
+  );
+  assert.ok(logs.some((m) => m.startsWith("mention notifications lookup failed; skipping:")));
+});
+
+test("showMentions: false skips the notifications lookup too", async () => {
+  const { exec, calls } = fakeExec({
+    "/work/a": { prs: REPO_A_PRS, mentionNotifications: notificationUrls(60) },
+  });
+  await buildPrOverview({ repos: ["/work/a"], exec, hasGhStack: () => false, showMentions: false });
+  assert.equal(calls.filter((c) => c.args[1]?.includes("/notifications")).length, 0);
 });

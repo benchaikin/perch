@@ -400,15 +400,89 @@ function fetchReviewRequests(
 }
 
 /**
- * The open PRs in this repo that @-mention the user (body or comments). Direct
- * @user mentions only — a team mention doesn't match `mentions:@me`.
+ * How far back the notifications fallback looks. Bounds the per-poll
+ * pagination and `gh pr view` fan-out; older mentions on still-open PRs are
+ * usually also in the search index.
  */
-function fetchMentions(
+const MENTION_NOTIFICATION_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * PR numbers in this repo the user was @-mentioned on, per their notifications
+ * (`reason: "mention"`). `all=true` keeps already-read notifications. Best-effort.
+ */
+async function fetchMentionNotificationNumbers(
+  exec: Exec,
+  execOpts: ExecOptions | undefined,
+  log: ((m: string) => void) | undefined,
+): Promise<number[]> {
+  const since = new Date(Date.now() - MENTION_NOTIFICATION_WINDOW_MS).toISOString();
+  try {
+    const out = await exec(
+      "gh",
+      [
+        "api",
+        `repos/{owner}/{repo}/notifications?all=true&participating=true&since=${since}`,
+        "--paginate",
+        "--jq",
+        '.[] | select(.reason == "mention" and .subject.type == "PullRequest") | .subject.url',
+      ],
+      execOpts,
+    );
+    const numbers = out
+      .split("\n")
+      .map((line) => Number(line.trim().match(/\/pulls\/(\d+)$/)?.[1]))
+      .filter((n) => Number.isInteger(n) && n > 0);
+    return [...new Set(numbers)];
+  } catch (err) {
+    log?.(`mention notifications lookup failed; skipping: ${errorMessage(err)}`);
+    return [];
+  }
+}
+
+/** One PR by number, or `undefined` if it isn't open or the lookup fails. */
+async function fetchOpenPr(
+  exec: Exec,
+  number: number,
+  execOpts: ExecOptions | undefined,
+  log: ((m: string) => void) | undefined,
+): Promise<PrInfo | undefined> {
+  try {
+    const out = await exec(
+      "gh",
+      ["pr", "view", String(number), "--json", `${REVIEW_REQUESTED_JSON_FIELDS},state`],
+      execOpts,
+    );
+    const row = JSON.parse(out) as PrRow & { state?: string };
+    if (row.state !== "OPEN" || typeof row.headRefName !== "string") return undefined;
+    return rowToPrInfo(row);
+  } catch (err) {
+    log?.(`mentioned PR #${number} lookup failed; skipping: ${errorMessage(err)}`);
+    return undefined;
+  }
+}
+
+/**
+ * The open PRs in this repo that @-mention the user. Direct @user mentions only —
+ * a team mention matches neither source.
+ *
+ * GitHub's `mentions:@me` search covers the PR body and conversation comments
+ * but NOT inline review (diff) comments, so mentions there come from the user's
+ * notifications instead. Search results lead; notification-only PRs follow.
+ */
+async function fetchMentions(
   exec: Exec,
   execOpts: ExecOptions | undefined,
   log: ((m: string) => void) | undefined,
 ): Promise<PrInfo[]> {
-  return fetchSearch("mentions:@me", "mentions", exec, execOpts, log);
+  const [searched, notified] = await Promise.all([
+    fetchSearch("mentions:@me", "mentions", exec, execOpts, log),
+    fetchMentionNotificationNumbers(exec, execOpts, log),
+  ]);
+  const known = new Set(searched.map((pr) => pr.number));
+  const extra = await Promise.all(
+    notified.filter((n) => !known.has(n)).map((n) => fetchOpenPr(exec, n, execOpts, log)),
+  );
+  return [...searched, ...extra.filter((pr): pr is PrInfo => pr !== undefined)];
 }
 
 /**
